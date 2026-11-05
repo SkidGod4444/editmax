@@ -53,10 +53,10 @@ final class PlayerController: ObservableObject {
             .sink { [weak self, weak document] _ in guard let self, let document else { return }; self.viewingProject = nil; self.rebuild(document.project) }
             .store(in: &cancellables)
         ProxyStore.shared.$version.dropFirst().receive(on: DispatchQueue.main)
-            .sink { [weak self, weak document] _ in guard let document, document.project.settings.useProxies else { return }; self?.rebuild(document.project) }
+            .sink { [weak self, weak document] _ in guard let document, document.project.settings.useProxies else { return }; self?.rebuild(document.project, reason: "proxy-version") }
             .store(in: &cancellables)
         IsolatedAudio.shared.$version.dropFirst().receive(on: DispatchQueue.main)   // an isolated sound file became ready: play it
-            .sink { [weak self, weak document] _ in guard let document else { return }; self?.rebuild(document.project) }
+            .sink { [weak self, weak document] v in guard let document else { return }; self?.rebuild(document.project, reason: "isolated-audio-version-\(v)") }
             .store(in: &cancellables)
         document.$seekRequest
             .compactMap { $0 }
@@ -69,7 +69,7 @@ final class PlayerController: ObservableObject {
         rebuild(document.project)
     }
 
-    func rebuild(_ project: Project) {
+    func rebuild(_ project: Project, reason: String = "revision") {
         rebuildTask?.cancel()
         rebuildTask = Task {
             do {
@@ -80,6 +80,7 @@ final class PlayerController: ObservableObject {
                 item.audioMix = out.audioMix
                 let keep = player.currentTime()
                 player.replaceCurrentItem(with: item)
+                DebugLog.event("player-rebuild", ["reason": reason, "audioTracks": out.composition.tracks(withMediaType: .audio).count])
                 renderSize = out.renderSize
                 lastOutput = out
                 buildError = nil
@@ -87,6 +88,7 @@ final class PlayerController: ObservableObject {
                 if keep.isValid, keep.seconds < out.duration.seconds { await item.seek(to: keep, toleranceBefore: .zero, toleranceAfter: .zero) }
                 if scopesEnabled { try? await Task.sleep(for: .milliseconds(150)); sampleScopes() }
             } catch {
+                DebugLog.error("player-rebuild-failed", error, ["reason": reason])
                 buildError = error.localizedDescription
             }
         }

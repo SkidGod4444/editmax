@@ -131,6 +131,7 @@ enum CompositionBuilder {
                 let isolated = clip.audio.needsIsolation ? IsolatedAudio.readyURL(for: audioAsset, amount: clip.audio.voiceIsolation) : nil
                 let aav = isolated.map { AVURLAsset(url: $0) } ?? (audioAsset.id == asset.id ? av : (assetCache[audioAsset.id] ?? AVURLAsset(url: proxies[audioAsset.id] ?? audioAsset.url)))
                 if isolated == nil { assetCache[audioAsset.id] = aav }
+                if clip.audio.needsIsolation { DebugLog.event("audio-source", ["preview": forPreview, "clip": clip.name, "isolation": clip.audio.voiceIsolation, "isolated": isolated != nil, "file": (isolated ?? proxies[audioAsset.id] ?? audioAsset.url).lastPathComponent]) }
                 var aclip = clip; if let s = clip.audioSourceIn { aclip.sourceIn = s }
                 let asegments = audioAsset.id == asset.id && clip.audioSourceIn == nil ? segments : TimeMap.segments(aclip, assetDuration: audioAsset.duration)
                 if let a = audio[slot], let atr = try await aav.loadTracks(withMediaType: .audio).first, let prm = params[slot] {

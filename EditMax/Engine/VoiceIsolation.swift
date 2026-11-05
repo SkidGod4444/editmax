@@ -106,6 +106,7 @@ final class IsolatedAudio: ObservableObject {
         do {
             let out = try await task.value
             version += 1
+            DebugLog.event("voice-isolation-ready", ["key": k, "version": version])
             return out
         } catch {
             failed[k] = error.localizedDescription

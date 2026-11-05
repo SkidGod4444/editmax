@@ -96,8 +96,8 @@ it without asking: download `codemax-darwin-<arch>` into `~/Library/Application 
 then swap it in, keeping the previous copy as `codemax.prev`. A release that fails the check is deleted and never
 retried; an updated copy that cannot start, or crashes twice in ten minutes, is rolled back to the previous copy or the
 bundled one (every build ships its own codemax as the floor). State in `bin/update-state.json`; “Check now” and the
-status are in the Agents tab. Releases need codemax's `release.yml` workflow (tag `vX.Y.Z` → binaries attached); until
-the first tagged release exists the check finds no binary and keeps the bundled copy. Tests: `EDITMAX_UPDATE_URL=<json>
+status are in the Agents tab. Releases come from codemax's `release.yml` workflow (tag `vX.Y.Z` → binaries attached;
+v0.1.21 is the first). Verified against the real release: 0.1.21 bundled, 0.1.21 latest, nothing to do. Tests: `EDITMAX_UPDATE_URL=<json>
 EDITMAX_UPDATE_NOW=1` point the updater at a local fake release.
 
 **Debug logs.** `~/Library/Application Support/EditMax/logs/editmax.log` (NDJSON events: codemax and sidecar launches,

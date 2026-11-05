@@ -23,7 +23,8 @@ Working:
 - Live preview with AVPlayer + Core Animation overlays; frame stepping
 - Export to H.264/AAC MP4 (`File > Export Video…`, ⌘E, or the `export_video` tool), verified with ffprobe
 - MCP server on `http://127.0.0.1:19790/mcp` (port and token in `~/Library/Application Support/EditMax/mcp.json`), 22 tools
-- Captions: on-device transcription (Apple SpeechAnalyzer, macOS 26+) with word timings, six text presets, one click or one tool call
+- Captions: on-device transcription with word timings (Apple SpeechAnalyzer on macOS 26+; SFSpeechRecognizer on macOS 15–25, on-device
+  where the Mac has the model, else Apple's servers), six text presets, one click or one tool call
 - Timeline: frame thumbnails and a waveform band in video clips, full waveforms in audio clips (peaks cached per file in
   `~/Library/Application Support/EditMax/waveforms/`), pinned track headers, lane grid, follows the playhead, add-track buttons, hide/mute per track
 - Agents tab with copy-ready commands for Claude Code, Codex and generic JSON config
@@ -69,8 +70,10 @@ Tools: `list_projects`, `inspect_timeline`, `list_assets`, `import_media`, `inse
 
 ## Captions
 
-Inspector → Captions → pick a style → “Add captions”, or ask the agent. `Transcriber` runs Apple's on-device SpeechAnalyzer
-(macOS 26+; the first run per language downloads its model, nothing is uploaded) and caches the words with timings on the
+Inspector → Captions → pick a style → “Add captions”, or ask the agent. `Transcriber` runs Apple's on-device SpeechAnalyzer on macOS 26+
+(the first run per language downloads its model, nothing is uploaded); on macOS 15–25 it falls back to SFSpeechRecognizer,
+on-device when the Mac has that language's model and otherwise through Apple's speech servers one minute at a time (the
+inspector says which; the system asks for the speech-recognition permission once). Either way it caches the words with timings on the
 project per asset (`Project.transcripts`, saved with the file, left out of history snapshots). `Captioner` groups the words
 into lines (per-preset word and character limits, pauses, sentence ends), maps them through each clip's trim and speed to
 timeline seconds, and adds them as text overlays with a shared group id. Presets (`CaptionPresets`): title, subtitle

@@ -242,7 +242,7 @@ struct ProjectInspector: View {
                         Button("Remove \(captionCount)") { captionStatus = nil; _ = try? ToolExecutor(document: document, origin: .user).removeCaptions(group: nil) }.pointer()
                     }
                 }
-                Text(captionStatus ?? (Transcriber.isAvailable ? "Speech is recognized on this Mac; nothing is uploaded." : "Captions need macOS 26 or newer."))
+                Text(captionStatus ?? Transcriber.privacyNote)
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section {

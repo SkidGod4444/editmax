@@ -6,8 +6,8 @@ import CoreText
 import AppKit
 
 /// Turns a `Project` into AVFoundation objects for preview and export.
-/// Video/audio clips become composition tracks; images and text become a Core Animation overlay layer
-/// (driven by `AVSynchronizedLayer` in preview and `AVVideoCompositionCoreAnimationTool` on export).
+/// Video/audio clips become composition tracks; stills, titles, color and transitions are drawn by `EditMaxCompositor`
+/// (a custom video compositor, so the same code runs in preview, export and `AVAssetReader`).
 enum CompositionBuilder {
     struct Output {
         let composition: AVMutableComposition
@@ -22,7 +22,7 @@ enum CompositionBuilder {
     /// Builds the AVFoundation composition for a project. Every project track gets two video and two audio composition
     /// tracks (A/B): consecutive clips alternate between them, which is what lets a transition overlap the clip before it.
     /// `forPreview` swaps in proxy files where the project asks for them and they exist; the export never does.
-    static func build(_ project: Project, forPreview: Bool = false, depth: Int = 0) async throws -> Output {
+    static func build(_ project: Project, forPreview: Bool = false, depth: Int = 0, compositor: AVVideoCompositing.Type = EditMaxCompositor.self) async throws -> Output {
         var proxies: [UUID: URL] = (forPreview && project.settings.useProxies) ? await MainActor.run { Dictionary(uniqueKeysWithValues: project.assets.compactMap { a in ProxyStore.shared.ready(for: a).map { (a.id, $0) } }) } : [:]
         // Nested sequences play their cached render (rendered now when the cache has none for the current content).
         for a in project.assets where a.sequenceID != nil {
@@ -164,7 +164,7 @@ enum CompositionBuilder {
         // One instruction per segment between edges (clip starts, ends, transition ends, extended tails), on quantized
         // boundaries: a gap or an empty range makes AVFoundation reject the whole composition ("Operation Stopped").
         let videoComp = AVMutableVideoComposition()
-        videoComp.customVideoCompositorClass = EditMaxCompositor.self
+        videoComp.customVideoCompositorClass = compositor
         videoComp.renderSize = renderSize
         videoComp.frameDuration = CMTime(value: 1, timescale: CMTimeScale(max(1, project.settings.fps.rounded())))
         let q = { (s: Double) -> Int64 in min(total.value, max(0, CMTime(seconds: s, preferredTimescale: timescale).value)) }

@@ -49,7 +49,11 @@ Working:
   a Rec.709 image; the creative look still runs last. Sources are decoded to 16-bit half floats
   (`kCVPixelFormatType_64RGBAHalf`), so 10-bit footage keeps its precision through the LUT: on a 10-bit ramp stretched
   ×6 the exported staircase matches the ideal (RMS 0.95 vs 0.93, max step 2) where the 8-bit decode had steps of 9.
-  Limits: exports are still 8-bit H.264 (no 10-bit HEVC or HDR delivery yet), proxies are 8-bit so the preview with
+  10-bit delivery: `export_video preset: hevc10` (export panel: Format → HEVC 10-bit) writes HEVC Main 10, 4:2:0,
+  `hvc1`, Rec.709 tags, at about 0.25 bits per pixel per frame (1080p30 ≈ 15 Mb/s ceiling; simple content comes out
+  far smaller), through `AVAssetReader` + `AVAssetWriter` with `EditMaxCompositor10` (16-bit half-float frames). The
+  audio mix (volume keyframes, ducking, EQ/gate taps) is rendered by `AVAssetReaderAudioMixOutput` to AAC 192 kb/s.
+  Limits: SDR only (no HLG/PQ transfer tags, no D-Gamut), MP4 container only, proxies are 8-bit so the preview with
   proxies on can band where the export does not, and untagged 8-bit sources shift by up to 2 levels on saturated colors
   versus the old BGRA decode (VideoToolbox rounds the two conversions differently).
 - App icon: `EditMax/Resources/AppIcon.svg` is the source (a play triangle cut into three beveled metal strips on a

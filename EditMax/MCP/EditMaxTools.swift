@@ -77,8 +77,8 @@ enum EditMaxTools {
              inputSchema: schema(["seconds": num("Timeline time"), "play": .object(["type": "boolean", "description": "Start playing from there (default false)"]), "project": projectArg], required: ["seconds"])),
         Tool(name: "capture_frame", description: "Render the frame at a timeline time as a PNG image so you can see what the viewer sees (video, images and text).",
              inputSchema: schema(["seconds": num("Timeline time"), "max_width": int("Image width in pixels (default 960)"), "project": projectArg], required: ["seconds"]), annotations: .init(readOnlyHint: true)),
-        Tool(name: "export_video", description: "Render the whole timeline to an H.264/AAC MP4 at the project resolution. Blocks until done; expect roughly real time or faster.",
-             inputSchema: schema(["path": str("Absolute output path ending in .mp4"), "preset": str("high (default), medium (720p) or low (480p)"), "project": projectArg], required: ["path"])),
+        Tool(name: "export_video", description: "Render the whole timeline to an MP4 at the project resolution: H.264/AAC 8-bit by default, or hevc10 for a 10-bit HEVC Main 10 master (4:2:0, Rec.709 tags, about 0.25 bits per pixel) to hand to a colorist. Blocks until done; expect roughly real time or faster.",
+             inputSchema: schema(["path": str("Absolute output path ending in .mp4"), "preset": str("high (default, H.264), medium (720p), low (480p) or hevc10 (10-bit HEVC, project resolution)"), "project": projectArg], required: ["path"])),
         Tool(name: "add_track", description: "Add a video or audio track. New tracks go to the bottom row; the top row covers the rows below it in the picture.",
              inputSchema: schema(["kind": str("video or audio"), "name": str("Optional name (default V2, A2…)"), "project": projectArg], required: ["kind"])),
         Tool(name: "move_track", description: "Move a track to another row (0 = top). The top row covers the rows below it in the picture.",
@@ -256,7 +256,8 @@ enum EditMaxTools {
             let png = try await x.captureFrame(at: try reqNum("seconds"), maxWidth: i("max_width") ?? 960)
             return Payload(text: "Frame at \(d("seconds")!)s (\(png.count) bytes PNG)", value: nil, image: png)
         case "export_video":
-            let preset = ExportService.Preset.allCases.first { $0.rawValue.lowercased().hasPrefix((s("preset") ?? "high").lowercased()) } ?? .high
+            let want = (s("preset") ?? "high").lowercased().filter { $0.isLetter || $0.isNumber }   // "hevc10", "hevc", "high", "med"…
+            let preset = ExportService.Preset.allCases.first { $0.rawValue.lowercased().filter { $0.isLetter || $0.isNumber }.hasPrefix(want) } ?? .high
             return try payload(try await x.exportVideo(to: try req("path"), preset: preset))
         case "ui_layout":
             return try payload(try UIDriver.layout(prefix: s("prefix")))

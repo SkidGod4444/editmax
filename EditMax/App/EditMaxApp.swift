@@ -92,12 +92,16 @@ struct EditorRootView: View {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.mpeg4Movie]
         panel.nameFieldStringValue = document.displayName + ".mp4"
+        let format = ExportFormatBox()
+        let host = NSHostingView(rootView: ExportFormatPicker(box: format))
+        host.frame = NSRect(x: 0, y: 0, width: 420, height: 48)
+        panel.accessoryView = host
         guard panel.runModal() == .OK, let url = panel.url else { return }
         state.isExporting = true
         state.exportStatus = "Exporting…"
         Task {
             do {
-                let r = try await ToolExecutor(document: document, origin: .user).exportVideo(to: url.path) { p in
+                let r = try await ToolExecutor(document: document, origin: .user).exportVideo(to: url.path, preset: format.preset) { p in
                     Task { @MainActor in state.exportStatus = "Exporting… \(Int(p * 100))%" }
                 }
                 state.exportStatus = "Exported \(Timecode.string(r.duration)) to \(url.lastPathComponent)"
@@ -152,3 +156,17 @@ struct WindowFocusObserver: NSViewRepresentable {
 }
 
 extension Notification.Name { static let editmaxExport = Notification.Name("io.openhorizon.editmax.export") }
+
+/// The format choice in the export save panel.
+final class ExportFormatBox: ObservableObject { @Published var preset: ExportService.Preset = .high }
+struct ExportFormatPicker: View {
+    @ObservedObject var box: ExportFormatBox
+    var body: some View {
+        Picker("Format", selection: $box.preset) {
+            Text("H.264, 8-bit (plays everywhere)").tag(ExportService.Preset.high)
+            Text("HEVC 10-bit, Main 10 (for grading)").tag(ExportService.Preset.hevc10)
+        }
+        .pickerStyle(.menu).pointer().uiFrame("export.format")
+        .padding(.horizontal, 12).padding(.vertical, 8)
+    }
+}

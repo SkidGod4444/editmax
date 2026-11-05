@@ -56,7 +56,7 @@ final class EditMaxInstruction: NSObject, AVVideoCompositionInstructionProtocol 
 
 /// Draws every frame of the preview, the export and `capture_frame`: picture transforms and crops, color correction,
 /// fades, transitions, stills and titles, all through Core Image on the GPU. One code path, so what plays is what exports.
-final class EditMaxCompositor: NSObject, AVVideoCompositing {
+class EditMaxCompositor: NSObject, AVVideoCompositing {
     /// No color management: pixel values pass through untouched, so a frame that is not graded exports as it came in,
     /// within decoder rounding (VideoToolbox's YUV → half-float conversion differs from its YUV → BGRA one by up to 2
     /// levels on saturated colors; with management, Core Image lifted shadows by treating decoded video and PNGs as linear).
@@ -95,6 +95,14 @@ final class EditMaxCompositor: NSObject, AVVideoCompositing {
             request.finish(withComposedVideoFrame: out)
         }
     }
+}
+
+/// The compositor for the 10-bit HEVC export: the same drawing, but it hands the encoder 16-bit half-float frames so
+/// the grade is not cut to 8 bits on the way out. A subclass, because the preview's compositor keeps running meanwhile.
+final class EditMaxCompositor10: EditMaxCompositor {
+    private static let attrs10: [String: Any] = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_64RGBAHalf,
+                                                 kCVPixelBufferMetalCompatibilityKey as String: true]
+    override var requiredPixelBufferAttributesForRenderContext: [String: Any] { Self.attrs10 }
 }
 
 /// Pure frame maths on CIImages (origin bottom-left, as Core Image has it). Also used by the still-frame capture.

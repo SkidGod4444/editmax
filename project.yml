@@ -1,0 +1,72 @@
+name: EditMax
+options:
+  bundleIdPrefix: io.openhorizon
+  deploymentTarget:
+    macOS: "15.0"
+  createIntermediateGroups: true
+packages:
+  MCP:
+    url: https://github.com/modelcontextprotocol/swift-sdk.git
+    exactVersion: 0.12.1
+targets:
+  EditMax:
+    type: application
+    platform: macOS
+    sources:
+      - path: EditMax
+      # codemax, the bundled agent runtime (scripts/vendor-codemax.sh builds it from ../codemax-cli).
+      - path: Vendor/codemax
+        buildPhase:
+          copyFiles:
+            destination: resources
+            subpath: bin
+      # The API-key chat sidecar (Claude Agent SDK + Vercel AI SDK; scripts/vendor-agent.sh builds it from agent/).
+      - path: Vendor/editmax-agent
+        buildPhase:
+          copyFiles:
+            destination: resources
+            subpath: bin
+    preBuildScripts:
+      - name: Vendor codemax
+        shell: /bin/bash
+        script: '"$SRCROOT/scripts/vendor-codemax.sh"'
+        basedOnDependencyAnalysis: false
+      - name: Vendor agent sidecar
+        shell: /bin/bash
+        script: '"$SRCROOT/scripts/vendor-agent.sh"'
+        basedOnDependencyAnalysis: false
+    dependencies:
+      - package: MCP
+        product: MCP
+    info:
+      path: EditMax/Resources/Info.plist
+      properties:
+        CFBundleDisplayName: EditMax
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
+        LSMinimumSystemVersion: "15.0"
+        NSHighResolutionCapable: true
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: EditMax Project
+            CFBundleTypeRole: Editor
+            LSHandlerRank: Owner
+            LSItemContentTypes: [io.openhorizon.editmax.project]
+        UTExportedTypeDeclarations:
+          - UTTypeIdentifier: io.openhorizon.editmax.project
+            UTTypeDescription: EditMax Project
+            UTTypeConformsTo: [public.json, public.data]
+            UTTypeTagSpecification:
+              public.filename-extension: [editmax]
+    settings:
+      base:
+        SWIFT_VERSION: "5.0"
+        SWIFT_STRICT_CONCURRENCY: minimal
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGNING_REQUIRED: "NO"
+        CODE_SIGN_STYLE: Manual
+        ENABLE_HARDENED_RUNTIME: "NO"
+        GENERATE_INFOPLIST_FILE: "NO"
+        MACOSX_DEPLOYMENT_TARGET: "15.0"
+        PRODUCT_BUNDLE_IDENTIFIER: io.openhorizon.editmax
+        SWIFT_EMIT_LOC_STRINGS: "NO"
+        ENABLE_USER_SCRIPT_SANDBOXING: "NO"

@@ -1,0 +1,8 @@
+*.xcodeproj
+xcuserdata/
+DerivedData/
+build/
+.build/
+.DS_Store
+*.swp
+Vendor/

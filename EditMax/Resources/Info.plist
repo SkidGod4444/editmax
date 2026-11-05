@@ -13,6 +13,8 @@
 			<string>EditMax Project</string>
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
+			<key>CFBundleTypeIconFile</key>
+			<string>ProjectDoc</string>
 			<key>LSHandlerRank</key>
 			<string>Owner</string>
 			<key>LSItemContentTypes</key>
@@ -36,7 +38,7 @@
 	<key>CFBundleShortVersionString</key>
 	<string>0.1.0</string>
 	<key>CFBundleVersion</key>
-	<string>1</string>
+	<string>3</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>15.0</string>
 	<key>NSHighResolutionCapable</key>
@@ -51,6 +53,8 @@
 			</array>
 			<key>UTTypeDescription</key>
 			<string>EditMax Project</string>
+			<key>UTTypeIconFile</key>
+			<string>ProjectDoc</string>
 			<key>UTTypeIdentifier</key>
 			<string>io.openhorizon.editmax.project</string>
 			<key>UTTypeTagSpecification</key>

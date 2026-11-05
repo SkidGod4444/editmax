@@ -44,7 +44,7 @@ targets:
         CFBundleDisplayName: EditMax
         CFBundleIconFile: AppIcon
         CFBundleShortVersionString: "0.1.0"
-        CFBundleVersion: "1"
+        CFBundleVersion: "3"
         LSMinimumSystemVersion: "15.0"
         NSHighResolutionCapable: true
         CFBundleDocumentTypes:
@@ -52,10 +52,12 @@ targets:
             CFBundleTypeRole: Editor
             LSHandlerRank: Owner
             LSItemContentTypes: [io.openhorizon.editmax.project]
+            CFBundleTypeIconFile: ProjectDoc
         UTExportedTypeDeclarations:
           - UTTypeIdentifier: io.openhorizon.editmax.project
             UTTypeDescription: EditMax Project
             UTTypeConformsTo: [public.json, public.data]
+            UTTypeIconFile: ProjectDoc
             UTTypeTagSpecification:
               public.filename-extension: [editmax]
     settings:

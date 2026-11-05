@@ -1,5 +1,7 @@
 # EditMax
 
+<img src="docs/icon-256.png" width="128" align="right" alt="EditMax icon">
+
 Native macOS AI video editor (Swift / SwiftUI / AVFoundation). Working name chosen 2026-11-05.
 
 Inspired by Palmier Pro's architecture (an editor that exposes itself to coding agents over a local MCP server),
@@ -45,7 +47,12 @@ Working:
 - App icon: `EditMax/Resources/AppIcon.svg` is the source (a play triangle cut into three beveled metal strips on a
   dark plate whose shape, corner curve and shadow come from a real macOS app icon's alpha mask, `scripts/icon/plate_mask.raw`,
   so it sits level with Apple's icons; `scripts/icon/build_svg.py` rebuilds the SVG). `scripts/make-icon.sh`
-  renders it with headless Chrome and rebuilds `EditMax/Resources/AppIcon.icns` (`CFBundleIconFile` in `project.yml`).
+  renders it with headless Chrome and rebuilds `EditMax/Resources/AppIcon.icns` (`CFBundleIconFile` in `project.yml`),
+  `EditMax/Resources/ProjectDoc.icns` (the `.editmax` document icon from `scripts/icon/doc.html`, `CFBundleTypeIconFile` /
+  `UTTypeIconFile`) and the README copies in `docs/`. The preview's empty state and the About panel use the same icon.
+  Finder caches document icons per bundle version: after changing `ProjectDoc.icns`, bump `CFBundleVersion`, run
+  `lsregister -f` on the built app, delete `$(getconf DARWIN_USER_CACHE_DIR)com.apple.iconservices` and
+  `killall iconservicesagent`, or `.editmax` files keep the generic page icon.
 - Signing: debug builds are signed with the Apple Development certificate pinned by hash in `project.yml`, so macOS keeps
   the Screen Recording and keychain grants across rebuilds (ad-hoc signing made every build a new app). On another Mac,
   replace the hash with one from `security find-identity -v -p codesigning` or with `"-"` for ad-hoc.

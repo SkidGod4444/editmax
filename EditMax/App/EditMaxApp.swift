@@ -35,7 +35,7 @@ struct EditorRootView: View {
                         .overlay {
                             if document.project.allClips.isEmpty {
                                 VStack(spacing: 8) {
-                                    Image(systemName: "play.rectangle").font(.system(size: 30, weight: .light)).foregroundStyle(.tertiary)
+                                    Image(nsImage: NSApp.applicationIconImage).resizable().interpolation(.high).frame(width: 72, height: 72).opacity(0.55)
                                     Text("Drop a clip on the timeline to see it here").font(.system(size: 12)).foregroundStyle(.secondary)
                                 }
                                 .allowsHitTesting(false)

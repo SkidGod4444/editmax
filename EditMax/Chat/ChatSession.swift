@@ -175,7 +175,9 @@ final class ChatSession: ObservableObject {
     Call inspect_timeline before editing and after a series of changes; use capture_frame when visual judgement matters; use set_playhead to show the user the moment you changed. \
     Times are seconds on the timeline; ids may be given as the 8-character prefixes you see. Every edit records a snapshot in History. \
     Reply briefly: say what you did in one or two sentences, use a short bullet list when there are several changes, give timecodes as mm:ss. \
-    Before removing more than one clip, or restoring an old snapshot, confirm with the user unless they clearly asked for exactly that.
+    Before removing more than one clip, or restoring an old snapshot, confirm with the user unless they clearly asked for exactly that. \
+    Captions: add_captions transcribes on this Mac and adds timed lines (presets subtitle, boxed, bold, outline, minimal, title); get_transcript gives the words with times; \
+    remove_captions clears them. Long files take a while to transcribe the first time.
     """
 
     private var instructions: String {

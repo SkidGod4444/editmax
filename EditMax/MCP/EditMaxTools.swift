@@ -42,10 +42,19 @@ enum EditMaxTools {
              inputSchema: schema(["clip": str("Clip id prefix"), "speed": num("Playback speed multiplier"), "volume": num("0 to 2"), "opacity": num("0 to 1"), "name": str("Display name"), "project": projectArg], required: ["clip"])),
         Tool(name: "close_gaps", description: "Ripple a track so its clips play back to back with no gaps.",
              inputSchema: schema(["track": str("Track id or name"), "project": projectArg], required: ["track"])),
-        Tool(name: "add_text", description: "Add a text overlay (title, caption, lower third) for a time range.",
+        Tool(name: "add_text", description: "Add a text overlay (title, lower third, one caption) for a time range.",
              inputSchema: schema(["text": str("The text to show"), "start": num("Start in seconds"), "duration": num("Seconds on screen"),
-                                  "font_size": num("Points at project resolution (default 64)"), "color": str("Hex color like #FFFFFF"),
-                                  "x": num("Horizontal center 0-1 (default 0.5)"), "y": num("Vertical center 0-1, 0 = top (default 0.85)"), "project": projectArg], required: ["text", "start", "duration"])),
+                                  "preset": str("Look: title (default), subtitle, boxed, bold, outline, minimal"),
+                                  "font_size": num("Points at project resolution (default from the preset)"), "color": str("Hex color like #FFFFFF"),
+                                  "x": num("Horizontal center 0-1 (default 0.5)"), "y": num("Vertical center 0-1, 0 = top (default from the preset)"), "project": projectArg], required: ["text", "start", "duration"])),
+        Tool(name: "get_transcript", description: "Speech in an asset or clip as timed words (on-device recognition, cached per asset; the first call on a long file takes a while). Clip times are timeline seconds, asset times are source seconds.",
+             inputSchema: schema(["clip": str("Clip id prefix (timeline times)"), "asset": str("Asset id prefix or file name (source times)"),
+                                  "language": str("Language tag such as en, en-IN, hi (default: the Mac's language)"), "project": projectArg])),
+        Tool(name: "add_captions", description: "Transcribe the speech in a clip (or every clip with audio) and add timed caption lines as text overlays in one edit. Returns the caption group id.",
+             inputSchema: schema(["clip": str("Clip id prefix (default: all clips with audio)"), "preset": str("Look: subtitle (default), boxed, bold, outline, minimal, title"),
+                                  "max_words": int("Words per line (default from the preset)"), "language": str("Language tag (default: the Mac's language)"), "project": projectArg])),
+        Tool(name: "remove_captions", description: "Delete the captions of one group, or every caption when no group is given. Titles added with add_text stay.",
+             inputSchema: schema(["group": str("Caption group id prefix from add_captions or inspect_timeline (optional)"), "project": projectArg]), annotations: .init(destructiveHint: true)),
         Tool(name: "remove_texts", description: "Delete text overlays by id.",
              inputSchema: schema(["ids": strs("Text overlay id prefixes"), "project": projectArg], required: ["ids"]), annotations: .init(destructiveHint: true)),
         Tool(name: "list_history", description: "Named snapshots recorded before each edit (newest first), by user, agent or system.",
@@ -140,8 +149,14 @@ enum EditMaxTools {
         case "close_gaps":
             try x.rippleTrack(try req("track")); return message("Gaps closed")
         case "add_text":
-            let t = try x.addText(try req("text"), start: try reqNum("start"), duration: try reqNum("duration"), fontSize: d("font_size"), colorHex: s("color"), x: d("x"), y: d("y"))
+            let t = try x.addText(try req("text"), start: try reqNum("start"), duration: try reqNum("duration"), fontSize: d("font_size"), colorHex: s("color"), x: d("x"), y: d("y"), preset: s("preset"))
             return message("Added text \(t.id.short) from \(t.start)s to \(t.end)s")
+        case "get_transcript":
+            return try payload(try await x.getTranscript(asset: s("asset"), clip: s("clip"), language: s("language")))
+        case "add_captions":
+            return try payload(try await x.addCaptions(clip: s("clip"), preset: s("preset"), maxWords: i("max_words"), language: s("language")))
+        case "remove_captions":
+            return message("Removed \(try x.removeCaptions(group: s("group"))) caption(s)")
         case "remove_texts":
             return message("Removed \(try x.removeTexts(list("ids"))) text overlay(s)")
         case "list_history": return try payload(x.listHistory(limit: i("limit") ?? 50))

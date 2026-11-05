@@ -22,7 +22,10 @@ Working:
 - Timeline: video/audio tracks, clip move/split/trim/delete, speed, volume, opacity, close gaps, text overlays
 - Live preview with AVPlayer + Core Animation overlays; frame stepping
 - Export to H.264/AAC MP4 (`File > Export Video…`, ⌘E, or the `export_video` tool), verified with ffprobe
-- MCP server on `http://127.0.0.1:19790/mcp` (port and token in `~/Library/Application Support/EditMax/mcp.json`), 19 tools
+- MCP server on `http://127.0.0.1:19790/mcp` (port and token in `~/Library/Application Support/EditMax/mcp.json`), 22 tools
+- Captions: on-device transcription (Apple SpeechAnalyzer, macOS 26+) with word timings, six text presets, one click or one tool call
+- Timeline: frame thumbnails and a waveform band in video clips, full waveforms in audio clips (peaks cached per file in
+  `~/Library/Application Support/EditMax/waveforms/`), pinned track headers, lane grid, follows the playhead, add-track buttons, hide/mute per track
 - Agents tab with copy-ready commands for Claude Code, Codex and generic JSON config
 - Chat tab, two backends:
   - **Agent (default).** The bundled `codemax serve` runs the agent you pick (Claude Code, Codex, OpenCode, Cursor,
@@ -35,7 +38,7 @@ Working:
 - codemax auto-update: the latest GitHub release is installed on its own after a health check, rolled back when it breaks
 - Debug logs (`~/Library/Application Support/EditMax/logs/`) and “Export diagnostics…” in the Agents tab
 
-Not yet built: transitions, color grading, audio waveforms, silence detection, transcription, project templates,
+Not yet built: transitions, color grading, silence and filler-word removal, keyframes, project templates,
 asset copying into a project bundle (assets are referenced by path + security bookmark).
 
 ## Build
@@ -61,7 +64,18 @@ claude mcp add --transport http editmax http://127.0.0.1:19790/mcp --header "Aut
 
 Tools: `list_projects`, `inspect_timeline`, `list_assets`, `import_media`, `insert_clip`, `split_clip`, `move_clip`,
 `trim_clip`, `remove_clips`, `set_clip_properties`, `close_gaps`, `add_text`, `remove_texts`, `list_history`,
-`restore_snapshot`, `set_playhead`, `capture_frame`, `export_video`, `set_project_settings`.
+`restore_snapshot`, `set_playhead`, `capture_frame`, `export_video`, `set_project_settings`, `get_transcript`, `add_captions`,
+`remove_captions`.
+
+## Captions
+
+Inspector → Captions → pick a style → “Add captions”, or ask the agent. `Transcriber` runs Apple's on-device SpeechAnalyzer
+(macOS 26+; the first run per language downloads its model, nothing is uploaded) and caches the words with timings on the
+project per asset (`Project.transcripts`, saved with the file, left out of history snapshots). `Captioner` groups the words
+into lines (per-preset word and character limits, pauses, sentence ends), maps them through each clip's trim and speed to
+timeline seconds, and adds them as text overlays with a shared group id. Presets (`CaptionPresets`): title, subtitle
+(translucent band), boxed, bold (uppercase, yellow, stroked), outline, minimal; one renderer draws preview, export and
+`capture_frame`. Tools: `get_transcript`, `add_captions`, `remove_captions`; `add_text` takes a `preset` too.
 
 ## In-app chat
 

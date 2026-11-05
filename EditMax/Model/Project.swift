@@ -56,7 +56,25 @@ struct TextOverlay: Codable, Identifiable, Equatable {
     var colorHex: String = "#FFFFFF"
     var x: Double = 0.5     // normalized center
     var y: Double = 0.85
+    var preset: String? = nil   // CaptionPresets name; nil = "title"
+    var group: UUID? = nil      // set on captions made in one go, so they can be removed together
     var end: Double { start + duration }
+    var isCaption: Bool { group != nil }
+}
+
+/// One recognized word of an asset's audio, in asset seconds.
+struct TranscriptWord: Codable, Equatable {
+    var text: String
+    var start: Double
+    var end: Double
+}
+
+/// Speech recognized in an asset, cached on the project so captions and searches do not transcribe twice.
+struct Transcript: Codable, Equatable {
+    var locale: String
+    var words: [TranscriptWord]
+    var createdAt: Date = Date()
+    var text: String { words.map(\.text).joined(separator: " ") }
 }
 
 enum EditOrigin: String, Codable { case user, agent, system }
@@ -75,6 +93,7 @@ struct Project: Codable, Equatable {
     var assets: [Asset] = []
     var tracks: [Track] = [Track(name: "V1", kind: .video), Track(name: "A1", kind: .audio)]
     var texts: [TextOverlay] = []
+    var transcripts: [String: Transcript]? = nil   // keyed by asset id; a cache, left out of history snapshots
     var history: [HistoryEntry] = []
 
     var duration: Double {
@@ -91,8 +110,9 @@ struct Project: Codable, Equatable {
     }
     var allClips: [Clip] { tracks.flatMap(\.clips) }
 
-    /// Copy of this project with history stripped, for snapshots and resource reads.
-    var withoutHistory: Project { var p = self; p.history = []; return p }
+    /// Copy of this project with history (and the transcript cache) stripped, for snapshots and resource reads.
+    var withoutHistory: Project { var p = self; p.history = []; p.transcripts = nil; return p }
+    func transcript(for assetID: UUID) -> Transcript? { transcripts?[assetID.uuidString] }
 }
 
 enum EditError: LocalizedError {
@@ -238,6 +258,12 @@ extension Project {
     mutating func removeTexts(_ ids: [UUID]) -> Int {
         let before = texts.count
         texts.removeAll { ids.contains($0.id) }
+        return before - texts.count
+    }
+    /// Remove the captions of one group, or every caption when `group` is nil.
+    mutating func removeCaptions(group: UUID?) -> Int {
+        let before = texts.count
+        texts.removeAll { $0.group != nil && (group == nil || $0.group == group) }
         return before - texts.count
     }
 }

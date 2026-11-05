@@ -176,6 +176,10 @@ struct TextInspector: View {
     var body: some View {
         Form {
             TextField("Text", text: binding(\.text), axis: .vertical)
+            Picker("Style", selection: Binding(get: { text.preset ?? "title" }, set: { v in
+                document.apply("Text style", origin: .user) { p in if let i = p.texts.firstIndex(where: { $0.id == text.id }) { p.texts[i].preset = v } }
+            })) { ForEach(CaptionPresets.all, id: \.name) { Text($0.title).tag($0.name) } }.pointer()
+            if text.isCaption { Text("Caption (group \(text.group!.short))").font(.caption).foregroundStyle(.secondary) }
             Slider(value: binding(\.fontSize), in: 12...300) { Text("Size \(Int(text.fontSize))") }
             TextField("Color (hex)", text: binding(\.colorHex))
             Slider(value: binding(\.x), in: 0...1) { Text("X") }
@@ -191,12 +195,29 @@ struct TextInspector: View {
     }
 }
 
+extension ProjectInspector {
+    private func addCaptions() {
+        captionBusy = true; captionStatus = "Transcribing…"
+        Task { @MainActor in
+            defer { captionBusy = false }
+            do {
+                let r = try await ToolExecutor(document: document, origin: .user).addCaptions(clip: nil, preset: captionPreset, maxWords: nil, language: nil)
+                captionStatus = "Added \(r.count) captions to \(r.clips) clip\(r.clips == 1 ? "" : "s")."
+            } catch { captionStatus = error.localizedDescription }
+        }
+    }
+}
+
 struct ProjectInspector: View {
     @ObservedObject var document: EditMaxDocument
     @EnvironmentObject var state: EditorState
     @State private var newText = ""
+    @State private var captionPreset = "subtitle"
+    @State private var captionBusy = false
+    @State private var captionStatus: String?
     var body: some View {
         let p = document.project
+        let captionCount = p.texts.filter(\.isCaption).count
         Form {
             Section("Project") {
                 LabeledContent("Resolution", value: "\(p.settings.width)×\(p.settings.height)")
@@ -212,6 +233,17 @@ struct ProjectInspector: View {
                     _ = try? ToolExecutor(document: document, origin: .user).addText(newText, start: 0, duration: 3, fontSize: nil, colorHex: nil, x: nil, y: nil)
                     newText = ""
                 }.pointer()
+            }
+            Section("Captions") {
+                Picker("Style", selection: $captionPreset) { ForEach(CaptionPresets.all, id: \.name) { Text($0.title).tag($0.name) } }.pointer()
+                HStack {
+                    Button(captionBusy ? "Transcribing…" : "Add captions") { addCaptions() }.disabled(captionBusy || p.allClips.isEmpty).pointer()
+                    if captionCount > 0 {
+                        Button("Remove \(captionCount)") { captionStatus = nil; _ = try? ToolExecutor(document: document, origin: .user).removeCaptions(group: nil) }.pointer()
+                    }
+                }
+                Text(captionStatus ?? (Transcriber.isAvailable ? "Speech is recognized on this Mac; nothing is uploaded." : "Captions need macOS 26 or newer."))
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Section {
                 Text("Select a clip or text block to edit it. Use the Agents tab to connect Claude Code, Codex or Cursor.").font(.caption).foregroundStyle(.secondary)

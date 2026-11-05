@@ -163,18 +163,35 @@ enum OverlayLayerBuilder {
         layer.add(anim, forKey: "visibility")
     }
 
-    /// Draws a text overlay at full render resolution. Returns the CGImage and its size in render pixels.
+    /// Draws a text overlay at full render resolution in its preset's look (font, case, stroke, background box).
+    /// The one place text is rasterized: preview, export and capture_frame all come through here. Returns the CGImage and its size in render pixels.
     static func renderText(_ t: TextOverlay, canvas: CGSize, scale: CGFloat = 1) -> (CGImage, CGSize)? {
-        let font = NSFont(name: "HelveticaNeue-Bold", size: t.fontSize * scale) ?? NSFont.boldSystemFont(ofSize: t.fontSize * scale)
-        let shadow = NSShadow(); shadow.shadowColor = .black.withAlphaComponent(0.8); shadow.shadowBlurRadius = 4 * scale; shadow.shadowOffset = NSSize(width: 0, height: -2 * scale)
+        let style = CaptionPresets.style(t.preset)
+        let font = NSFont(name: style.fontName, size: t.fontSize * scale) ?? NSFont.boldSystemFont(ofSize: t.fontSize * scale)
         let para = NSMutableParagraphStyle(); para.alignment = .center
-        let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor(cgColor: cgColor(hex: t.colorHex)) ?? .white, .shadow: shadow, .paragraphStyle: para]
-        let width = (canvas.width * scale * 0.9).rounded()
-        let str = NSAttributedString(string: t.text, attributes: attrs)
-        let h = ceil(str.boundingRect(with: NSSize(width: width, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin]).height) + 12 * scale
+        var attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor(cgColor: cgColor(hex: t.colorHex)) ?? .white, .paragraphStyle: para]
+        if style.shadow {
+            let shadow = NSShadow(); shadow.shadowColor = .black.withAlphaComponent(0.8); shadow.shadowBlurRadius = 4 * scale; shadow.shadowOffset = NSSize(width: 0, height: -2 * scale)
+            attrs[.shadow] = shadow
+        }
+        if style.strokeWidth > 0 {   // negative width = fill and stroke
+            attrs[.strokeWidth] = -style.strokeWidth
+            attrs[.strokeColor] = NSColor(cgColor: cgColor(hex: style.strokeColor)) ?? .black
+        }
+        let maxWidth = (canvas.width * scale * 0.9).rounded()
+        let str = NSAttributedString(string: style.uppercase ? t.text.uppercased() : t.text, attributes: attrs)
+        let used = str.boundingRect(with: NSSize(width: maxWidth, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin])
+        let padX = (style.box?.padding ?? 0) * scale, padY = (style.box?.padding ?? 0) * scale * 0.5
+        // Boxed styles hug the text; the others keep a full-width canvas so the shadow and stroke are never clipped.
+        let width = style.box == nil ? maxWidth : min(maxWidth, ceil(used.width) + 2 * padX + 8 * scale)
+        let h = ceil(used.height) + (style.box == nil ? 12 * scale : 2 * padY + 4 * scale)
         let img = NSImage(size: NSSize(width: width, height: h))
         img.lockFocus()
-        str.draw(with: CGRect(x: 0, y: 6 * scale, width: width, height: h), options: [.usesLineFragmentOrigin])
+        if let box = style.box {
+            (NSColor(cgColor: cgColor(hex: box.color)) ?? .black).withAlphaComponent(box.alpha).setFill()
+            NSBezierPath(roundedRect: NSRect(x: 0, y: 0, width: width, height: h), xRadius: box.radius * scale, yRadius: box.radius * scale).fill()
+        }
+        str.draw(with: CGRect(x: (width - min(width, maxWidth)) / 2, y: (h - ceil(used.height)) / 2, width: min(width, maxWidth), height: ceil(used.height)), options: [.usesLineFragmentOrigin])
         img.unlockFocus()
         guard let cg = img.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
         return (cg, CGSize(width: width / scale, height: h / scale))

@@ -61,9 +61,10 @@ final class EditMaxDocument: ReferenceFileDocument, ObservableObject {
         guard let snap = project.history.first(where: { $0.id == snapshotID }) else { throw EditError.notFound("snapshot \(snapshotID)") }
         let restored = try Self.decoder.decode(Project.self, from: snap.project)
         try apply("Restore: \(snap.label)", origin: origin) { p in
-            let history = p.history
+            let history = p.history, transcripts = p.transcripts
             p = restored
             p.history = history
+            p.transcripts = transcripts   // a cache of the media, not part of the edit
         }
     }
 

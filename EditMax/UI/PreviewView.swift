@@ -141,13 +141,13 @@ struct FullScreenControls: View {
             Spacer()
             HStack(spacing: 14) {
                 Button { controller.togglePlay() } label: { Image(systemName: controller.isPlaying ? "pause.fill" : "play.fill").font(.system(size: 18)).frame(width: 28, height: 28) }
-                    .buttonStyle(.plain).keyboardShortcut(.space, modifiers: []).pointer().uiFrame("fullscreen.play").help(controller.isPlaying ? "Pause (space)" : "Play (space)")
+                    .buttonStyle(.plain).focusable(false).keyboardShortcut(.space, modifiers: []).pointer().uiFrame("fullscreen.play").help(controller.isPlaying ? "Pause (space)" : "Play (space)")
                 Text(tc(scrubbing ?? controller.currentTime)).font(.system(size: 13, design: .monospaced)).frame(width: 70, alignment: .trailing)
                 Slider(value: Binding(get: { scrubbing ?? min(controller.currentTime, duration) }, set: { scrubbing = $0; controller.seek(to: $0) }), in: 0...duration, onEditingChanged: { editing in if !editing { scrubbing = nil } })
                     .pointer().uiFrame("fullscreen.scrubber")
                 Text(tc(duration)).font(.system(size: 13, design: .monospaced)).frame(width: 70, alignment: .leading)
                 Button { leave() } label: { Label("Leave full screen", systemImage: "arrow.down.right.and.arrow.up.left").labelStyle(.iconOnly).font(.system(size: 16)).frame(width: 28, height: 28) }
-                    .buttonStyle(.plain).pointer().uiFrame("fullscreen.leave").help("Leave full screen (Esc)")
+                    .buttonStyle(.plain).focusable(false).pointer().uiFrame("fullscreen.leave").help("Leave full screen (Esc)")
             }
             .foregroundStyle(.white)
             .padding(.horizontal, 18).padding(.vertical, 12)
@@ -171,10 +171,10 @@ struct TransportBar: View {
     private func tc(_ t: Double) -> String { String(format: "%02d:%05.2f", Int(t) / 60, t - Double(Int(t) / 60 * 60)) }
     var body: some View {
         HStack(spacing: 10) {
-            Button { player.step(frames: -1, fps: fps) } label: { Image(systemName: "backward.frame.fill") }.help("Back one frame (←)").pointer().uiFrame("focus.stepBack")
-            Button { player.togglePlay() } label: { Image(systemName: player.isPlaying ? "pause.fill" : "play.fill").frame(width: 18) }.help("Play or pause (space)").pointer().uiFrame("focus.play")
+            Button { player.step(frames: -1, fps: fps) } label: { Image(systemName: "backward.frame.fill") }.help("Back one frame (←)").focusable(false).pointer().uiFrame("focus.stepBack")
+            Button { player.togglePlay() } label: { Image(systemName: player.isPlaying ? "pause.fill" : "play.fill").frame(width: 18) }.help("Play or pause (space)").focusable(false).pointer().uiFrame("focus.play")
                 .uiTap("focus.play") { player.togglePlay() }
-            Button { player.step(frames: 1, fps: fps) } label: { Image(systemName: "forward.frame.fill") }.help("Forward one frame (→)").pointer().uiFrame("focus.stepForward")
+            Button { player.step(frames: 1, fps: fps) } label: { Image(systemName: "forward.frame.fill") }.help("Forward one frame (→)").focusable(false).pointer().uiFrame("focus.stepForward")
             Text(tc(scrubbing ?? player.currentTime)).font(.system(size: 13, design: .monospaced)).frame(width: 78, alignment: .trailing)
             Slider(value: Binding(get: { scrubbing ?? min(player.currentTime, duration) }, set: { scrubbing = $0; player.seek(to: $0) }), in: 0...duration, onEditingChanged: { if !$0 { scrubbing = nil } })
                 .pointer().uiFrame("focus.scrubber")

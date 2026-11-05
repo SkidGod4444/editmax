@@ -150,26 +150,26 @@ struct EditorRootView: View {
                                 .padding(6).background(.black.opacity(player.scopesEnabled ? 0.6 : 0.35), in: RoundedRectangle(cornerRadius: 6))
                                 .foregroundStyle(player.scopesEnabled ? Color.accentColor : .white)
                         }
-                        .buttonStyle(.plain).help(player.scopesEnabled ? "Hide the scopes" : "Show the scopes (waveform and histogram)").pointer().uiFrame("preview.scopes")
+                        .buttonStyle(.plain).focusable(false).help(player.scopesEnabled ? "Hide the scopes" : "Show the scopes (waveform and histogram)").pointer().uiFrame("preview.scopes")
                         Button { player.cycleCompare() } label: {
                             Label("Before / after", systemImage: player.compareMode == .off ? "rectangle.lefthalf.inset.filled" : player.compareMode == .split ? "rectangle.split.2x1.fill" : "rectangle.fill")
                                 .labelStyle(.iconOnly).font(.system(size: 12))
                                 .padding(6).background(.black.opacity(player.compareMode != .off ? 0.6 : 0.35), in: RoundedRectangle(cornerRadius: 6))
                                 .foregroundStyle(player.compareMode != .off ? Color.accentColor : .white)
                         }
-                        .buttonStyle(.plain).disabled(!document.project.hasColorGrade)
+                        .buttonStyle(.plain).focusable(false).disabled(!document.project.hasColorGrade)
                         .help(!document.project.hasColorGrade ? "Before / after compares the color grade; no clip is graded yet" : player.compareMode == .off ? "Before / after the color grade: split the picture at a divider you can drag (⌥⌘B)" : player.compareMode == .split ? "Show the whole picture before the grade (⌥⌘B)" : "Back to the graded picture (⌥⌘B)")
                         .pointer().uiFrame("preview.compare").uiTap("preview.compare") { if document.project.hasColorGrade { player.cycleCompare() } }
                         Button { FullScreenPreview.shared.toggle(player, keys: EditorActions(document: document, state: state, player: player).handle) } label: {
                             Label("Full screen", systemImage: "arrow.up.left.and.arrow.down.right").labelStyle(.iconOnly).font(.system(size: 12))
                                 .padding(6).background(.black.opacity(0.35), in: RoundedRectangle(cornerRadius: 6)).foregroundStyle(.white)
                         }
-                        .buttonStyle(.plain).help("Show the preview full screen (⇧⌘F, or double-click the preview; Esc leaves)").pointer().uiFrame("preview.fullscreen")
+                        .buttonStyle(.plain).focusable(false).help("Show the preview full screen (⇧⌘F, or double-click the preview; Esc leaves)").pointer().uiFrame("preview.fullscreen")
                         Button { state.focusMode.toggle(); if state.focusMode, state.chat == nil { state.chat = ChatSession(document: document) } } label: {
                             Label("Focus", systemImage: state.focusMode ? "rectangle.3.group" : "rectangle.split.2x1").labelStyle(.iconOnly).font(.system(size: 12))
                                 .padding(6).background(.black.opacity(state.focusMode ? 0.6 : 0.35), in: RoundedRectangle(cornerRadius: 6)).foregroundStyle(state.focusMode ? Color.accentColor : .white)
                         }
-                        .buttonStyle(.plain).help(state.focusMode ? "Back to the full editor (⌥⌘F)" : "Focus: just the player and the chat (⌥⌘F)").pointer().uiFrame("preview.focus")
+                        .buttonStyle(.plain).focusable(false).help(state.focusMode ? "Back to the full editor (⌥⌘F)" : "Focus: just the player and the chat (⌥⌘F)").pointer().uiFrame("preview.focus")
                         .uiTap("preview.focus") { state.focusMode.toggle() }
                     }
                     .padding(8)

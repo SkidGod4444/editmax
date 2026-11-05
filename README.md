@@ -60,6 +60,11 @@ Working:
   (conversion LUT first, creative look last), sound, captions, delivery, and the honest list of what EditMax cannot do.
   Project files carry `formatVersion` (2). Files without it are format 1, whose renderer drew tint the wrong way
   round (+ was green); on open every tint value, tint keyframe and history snapshot is negated so the picture is unchanged.
+  Before/after: the ◧ button on the preview or ⌥⌘B cycles off → split (before on the left of a divider you drag, after on
+  the right) → whole picture before → off. "Before" bypasses the corrections and look but keeps the input (conversion)
+  LUT, so log footage compares against its converted baseline; cuts, transforms, transitions and titles stay. It is a color tool only: the button is disabled until some clip
+  carries a grade, and the view switches off when the last grade is removed. Preview and full screen only: exports and
+  the agent's frame tools see the grade.
   Focus layout: the ▯▯ button on the preview or ⌥⌘F hides the media list, inspector and timeline and shows just the player
   (with a transport bar: play/pause, frame steps, scrubber) beside the chat, for directing the agent while watching. Same
   button, "Back to editor" or ⌥⌘F returns.

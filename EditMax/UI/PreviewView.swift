@@ -185,3 +185,42 @@ struct TransportBar: View {
         .background(.bar)
     }
 }
+
+
+/// Labels and the draggable divider over the preview in the before/after view. The picture is letterboxed inside the
+/// view, so the divider is placed within the fitted picture rect, not the whole view.
+struct CompareOverlay: View {
+    @ObservedObject var player: PlayerController
+    let aspect: Double
+    var body: some View {
+        GeometryReader { geo in
+            let full = geo.size
+            let w = min(full.width, full.height * aspect), h = w / aspect
+            let rect = CGRect(x: (full.width - w) / 2, y: (full.height - h) / 2, width: w, height: h)
+            ZStack(alignment: .topLeading) {
+                if player.compareMode == .split {
+                    let x = rect.minX + rect.width * player.compareSplit
+                    tag("BEFORE").position(x: rect.minX + 34, y: rect.minY + 14)
+                    tag("AFTER").position(x: rect.maxX - 30, y: rect.minY + 14)
+                    ZStack {
+                        Rectangle().fill(.white.opacity(0.001)).frame(width: 24)
+                        Rectangle().fill(.white).frame(width: 2)
+                        Circle().fill(.white).frame(width: 14, height: 14).overlay(Image(systemName: "arrow.left.and.right").font(.system(size: 7, weight: .bold)).foregroundStyle(.black))
+                    }
+                    .frame(width: 24, height: rect.height)
+                    .pointer().uiFrame("preview.compareDivider")
+                    .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("compare")).onChanged { g in player.compareSplit = (g.location.x - rect.minX) / max(1, rect.width) })
+                    .position(x: x, y: rect.midY)
+                } else {
+                    tag("BEFORE").position(x: rect.minX + 34, y: rect.minY + 14)
+                }
+            }
+        }
+        .coordinateSpace(name: "compare")
+        .allowsHitTesting(player.compareMode == .split)
+    }
+    private func tag(_ s: String) -> some View {
+        Text(s).font(.system(size: 9, weight: .bold)).foregroundStyle(.white).padding(.horizontal, 6).padding(.vertical, 3)
+            .background(.black.opacity(0.55), in: Capsule())
+    }
+}

@@ -70,7 +70,7 @@ final class PlayerController: ObservableObject {
         rebuildTask?.cancel()
         rebuildTask = Task {
             do {
-                let out = try await CompositionBuilder.build(project, forPreview: true)
+                let out = try await CompositionBuilder.build(project, forPreview: true, compositor: EditMaxPreviewCompositor.self)
                 guard !Task.isCancelled else { return }
                 let item = AVPlayerItem(asset: out.composition)
                 item.videoComposition = out.videoComposition
@@ -123,6 +123,18 @@ final class PlayerController: ObservableObject {
         if !backward, let item = player.currentItem, item.currentTime() >= item.duration - CMTime(value: 1, timescale: 30) { seek(to: 0) }
         player.rate = dir * speed; rate = dir * speed; isPlaying = true
     }
+    /// Before/after view (see `CompareMode`); the divider position is a fraction of the frame width.
+    @Published var compareMode: CompareMode = .off { didSet { CompareState.shared.mode = compareMode; redraw() } }
+    @Published var compareSplit: Double = 0.5 { didSet { CompareState.shared.split = compareSplit; redraw() } }
+    func cycleCompare() { compareMode = compareMode == .off ? .split : compareMode == .split ? .before : .off }
+
+    /// Re-render the frame on screen while paused (a compositor setting changed, not the composition).
+    private func redraw() {
+        guard let item = player.currentItem, let vc = item.videoComposition else { return }
+        item.videoComposition = (vc.mutableCopy() as? AVMutableVideoComposition) ?? vc
+        if scopesEnabled { Task { try? await Task.sleep(for: .milliseconds(120)); sampleScopes() } }
+    }
+
     func seek(to seconds: Double) {
         let t = CMTime(seconds: max(0, seconds), preferredTimescale: CompositionBuilder.timescale)
         player.seek(to: t, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in self?.sampleScopes() }

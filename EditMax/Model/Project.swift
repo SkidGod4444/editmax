@@ -74,6 +74,8 @@ struct ClipColor: Codable, Equatable {
     var lutMix: Double = 1
     var isIdentity: Bool { self == ClipColor() }
     static let identity = ClipColor()
+    /// A grade on top of the conversion: anything but the input LUT. The before/after view compares exactly this.
+    var hasGrade: Bool { var c = self; c.inputLut = nil; return !c.isIdentity }
 
     init() {}
     init(from decoder: Decoder) throws {
@@ -501,6 +503,10 @@ struct Project: Codable, Equatable {
         return nil
     }
     var allClips: [Clip] { tracks.flatMap(\.clips) }
+    /// Any clip carries a color grade (beyond its conversion LUT), plain or keyframed: the before/after view has something to show.
+    var hasColorGrade: Bool {
+        allClips.contains { c in c.color.hasGrade || [ClipParam.exposure, .contrast, .saturation, .temperature, .tint].contains(where: c.isAnimated) }
+    }
 
     /// Copy of this project with history (and the transcript cache) stripped, for snapshots and resource reads.
     var withoutHistory: Project { var p = self; p.history = []; p.transcripts = nil; return p }

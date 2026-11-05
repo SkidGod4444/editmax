@@ -82,7 +82,7 @@ class EditMaxCompositor: NSObject, AVVideoCompositing {
                 request.finish(with: EditError.invalid("unknown composition instruction")); return
             }
             guard let out = request.renderContext.newPixelBuffer() else { request.finish(with: EditError.invalid("no pixel buffer")); return }
-            let image = FrameRenderer.frame(inst, at: request.compositionTime.seconds) { id in
+            let image = self.image(inst, at: request.compositionTime.seconds) { id in
                 let f = request.sourceFrame(byTrackID: id)
                 if let f, !Self.loggedFormats.contains(CVPixelBufferGetPixelFormatType(f)) {
                     Self.loggedFormats.insert(CVPixelBufferGetPixelFormatType(f))
@@ -94,6 +94,41 @@ class EditMaxCompositor: NSObject, AVVideoCompositing {
             Self.context.render(image, to: out, bounds: CGRect(origin: .zero, size: inst.renderSize), colorSpace: nil)
             request.finish(withComposedVideoFrame: out)
         }
+    }
+
+    /// The composed frame; the preview compositor overrides it for the before/after view.
+    func image(_ inst: EditMaxInstruction, at t: Double, source: (CMPersistentTrackID) -> CVPixelBuffer?) -> CIImage {
+        FrameRenderer.frame(inst, at: t, source: source)
+    }
+}
+
+/// Before/after view of the preview: off, a split wipe (before on the left of the divider, after on the right) or the
+/// whole picture before. "Before" means the clip's corrections and look bypassed; the input (conversion) LUT stays, as do
+/// cuts, transforms, transitions and titles, so log footage compares against its converted baseline, not raw log. Preview only: exports and the agent's frame tools always see the graded picture.
+enum CompareMode: String, CaseIterable { case off, split, before }
+
+final class CompareState: @unchecked Sendable {
+    static let shared = CompareState()
+    private let lock = NSLock()
+    private var _mode: CompareMode = .off
+    private var _split: Double = 0.5
+    var mode: CompareMode { get { lock.withLock { _mode } } set { lock.withLock { _mode = newValue } } }
+    var split: Double { get { lock.withLock { _split } } set { lock.withLock { _split = max(0, min(1, newValue)) } } }
+}
+
+/// The player's compositor: the same drawing, plus the before/after view.
+final class EditMaxPreviewCompositor: EditMaxCompositor {
+    override func image(_ inst: EditMaxInstruction, at t: Double, source: (CMPersistentTrackID) -> CVPixelBuffer?) -> CIImage {
+        let mode = CompareState.shared.mode
+        guard mode != .off else { return FrameRenderer.frame(inst, at: t, source: source) }
+        let before = FrameRenderer.frame(inst, at: t, bypassColor: true, source: source)
+        if mode == .before { return before }
+        let after = FrameRenderer.frame(inst, at: t, source: source)
+        let size = inst.renderSize, x = (size.width * CompareState.shared.split).rounded()
+        let left = before.cropped(to: CGRect(x: 0, y: 0, width: x, height: size.height))
+        let right = after.cropped(to: CGRect(x: x, y: 0, width: size.width - x, height: size.height))
+        let line = CIImage(color: .white).cropped(to: CGRect(x: x - 1, y: 0, width: 2, height: size.height))
+        return line.composited(over: left.composited(over: right))
     }
 }
 
@@ -107,12 +142,12 @@ final class EditMaxCompositor10: EditMaxCompositor {
 
 /// Pure frame maths on CIImages (origin bottom-left, as Core Image has it). Also used by the still-frame capture.
 enum FrameRenderer {
-    static func frame(_ inst: EditMaxInstruction, at t: Double, source: (CMPersistentTrackID) -> CVPixelBuffer?) -> CIImage {
+    static func frame(_ inst: EditMaxInstruction, at t: Double, bypassColor: Bool = false, source: (CMPersistentTrackID) -> CVPixelBuffer?) -> CIImage {
         let size = inst.renderSize
         let canvasRect = CGRect(origin: .zero, size: size)
         var canvas = CIImage(color: .black).cropped(to: canvasRect)
         for layer in inst.layers.reversed() {   // bottom row first; the top row is drawn last and covers
-            guard let img = picture(layer, at: t, size: size, source: source) else { continue }
+            guard let img = picture(layer, at: t, size: size, bypassColor: bypassColor, source: source) else { continue }
             canvas = img.composited(over: canvas)
         }
         for tl in inst.texts where tl.text.start <= t && t < tl.text.end {
@@ -122,18 +157,18 @@ enum FrameRenderer {
         return canvas.cropped(to: canvasRect)
     }
 
-    private static func picture(_ layer: TrackLayer, at t: Double, size: CGSize, source: (CMPersistentTrackID) -> CVPixelBuffer?) -> CIImage? {
-        let cur = render(layer.current, at: t, size: size, source: source)
+    private static func picture(_ layer: TrackLayer, at t: Double, size: CGSize, bypassColor: Bool = false, source: (CMPersistentTrackID) -> CVPixelBuffer?) -> CIImage? {
+        let cur = render(layer.current, at: t, size: size, bypassColor: bypassColor, source: source)
         if let tr = layer.current.clip.transitionIn, let tEnd = layer.current.transitionEnd, t < tEnd {
             let p = max(0, min(1, (t - layer.current.clip.start) / max(0.01, tEnd - layer.current.clip.start)))
-            let out = layer.outgoing.flatMap { render($0, at: t, size: size, source: source) }
+            let out = layer.outgoing.flatMap { render($0, at: t, size: size, bypassColor: bypassColor, source: source) }
             return blend(tr.kind, from: out, to: cur, progress: p, size: size)
         }
         return cur
     }
 
     /// The clip's picture at `t`: oriented, cropped, fitted, transformed, color-corrected, faded.
-    private static func render(_ src: LayerSource, at t: Double, size: CGSize, source: (CMPersistentTrackID) -> CVPixelBuffer?) -> CIImage? {
+    private static func render(_ src: LayerSource, at t: Double, size: CGSize, bypassColor: Bool = false, source: (CMPersistentTrackID) -> CVPixelBuffer?) -> CIImage? {
         var img: CIImage
         if let still = src.still { img = still }
         else {
@@ -156,7 +191,10 @@ enum FrameRenderer {
         T = T.concatenating(CGAffineTransform(translationX: size.width / 2 + tf.x * size.width, y: size.height / 2 - tf.y * size.height))
         img = img.transformed(by: T)
         let color = clip.color(at: local)
-        if !color.isIdentity { img = graded(img, color) }
+        if bypassColor {
+            // "Before" keeps the technical conversion (log → video) and drops only the grade on top of it.
+            if let lut = color.inputLut, !lut.isEmpty { img = Looks.apply(img, key: lut, mix: 1) }
+        } else if !color.isIdentity { img = graded(img, color) }
         let alpha = clip.opacity(at: local) * fade(clip, at: t)
         if alpha < 1 { img = withAlpha(img, alpha) }
         return img.cropped(to: CGRect(origin: .zero, size: size))

@@ -18,6 +18,7 @@ struct EditMaxApp: App {
             CommandGroup(after: .toolbar) {
                 Button("Full Screen Preview") { NotificationCenter.default.post(name: .editmaxFullScreenPreview, object: nil) }.keyboardShortcut("f", modifiers: [.command, .shift])
                 Button("Focus on Player and Chat") { NotificationCenter.default.post(name: .editmaxFocusMode, object: nil) }.keyboardShortcut("f", modifiers: [.command, .option])
+                Button("Before / After") { NotificationCenter.default.post(name: .editmaxCompare, object: nil) }.keyboardShortcut("b", modifiers: [.command, .option])
             }
             EditCommands()
         }
@@ -64,6 +65,10 @@ struct EditorRootView: View {
         .onChange(of: fileURL) { _, new in document.fileURL = new }
         .onDisappear { DocumentRegistry.shared.unregister(document); player.pause() }
         .background(WindowFocusObserver { DocumentRegistry.shared.activate(document) })
+        .onReceive(NotificationCenter.default.publisher(for: .editmaxCompare)) { _ in
+            if DocumentRegistry.shared.active?.id == document.id, document.project.hasColorGrade { player.cycleCompare() }
+        }
+        .onChange(of: document.project.hasColorGrade) { _, graded in if !graded, player.compareMode != .off { player.compareMode = .off } }
         .onReceive(NotificationCenter.default.publisher(for: .editmaxFocusMode)) { _ in
             if DocumentRegistry.shared.active?.id == document.id { state.focusMode.toggle() }
         }
@@ -146,6 +151,15 @@ struct EditorRootView: View {
                                 .foregroundStyle(player.scopesEnabled ? Color.accentColor : .white)
                         }
                         .buttonStyle(.plain).help(player.scopesEnabled ? "Hide the scopes" : "Show the scopes (waveform and histogram)").pointer().uiFrame("preview.scopes")
+                        Button { player.cycleCompare() } label: {
+                            Label("Before / after", systemImage: player.compareMode == .off ? "rectangle.lefthalf.inset.filled" : player.compareMode == .split ? "rectangle.split.2x1.fill" : "rectangle.fill")
+                                .labelStyle(.iconOnly).font(.system(size: 12))
+                                .padding(6).background(.black.opacity(player.compareMode != .off ? 0.6 : 0.35), in: RoundedRectangle(cornerRadius: 6))
+                                .foregroundStyle(player.compareMode != .off ? Color.accentColor : .white)
+                        }
+                        .buttonStyle(.plain).disabled(!document.project.hasColorGrade)
+                        .help(!document.project.hasColorGrade ? "Before / after compares the color grade; no clip is graded yet" : player.compareMode == .off ? "Before / after the color grade: split the picture at a divider you can drag (⌥⌘B)" : player.compareMode == .split ? "Show the whole picture before the grade (⌥⌘B)" : "Back to the graded picture (⌥⌘B)")
+                        .pointer().uiFrame("preview.compare").uiTap("preview.compare") { if document.project.hasColorGrade { player.cycleCompare() } }
                         Button { FullScreenPreview.shared.toggle(player, keys: EditorActions(document: document, state: state, player: player).handle) } label: {
                             Label("Full screen", systemImage: "arrow.up.left.and.arrow.down.right").labelStyle(.iconOnly).font(.system(size: 12))
                                 .padding(6).background(.black.opacity(0.35), in: RoundedRectangle(cornerRadius: 6)).foregroundStyle(.white)
@@ -160,6 +174,7 @@ struct EditorRootView: View {
                     }
                     .padding(8)
                 }
+            .overlay { if player.compareMode != .off { CompareOverlay(player: player, aspect: Double(document.project.settings.width) / Double(max(1, document.project.settings.height))) } }
             if player.scopesEnabled { ScopesView(data: player.scopes) }
             if let e = player.buildError { Text(e).font(.caption).foregroundStyle(.red).padding(4) }
         }
@@ -236,6 +251,7 @@ extension Notification.Name {
     static let editmaxExport = Notification.Name("io.openhorizon.editmax.export")
     static let editmaxFullScreenPreview = Notification.Name("io.openhorizon.editmax.fullScreenPreview")
     static let editmaxFocusMode = Notification.Name("io.openhorizon.editmax.focusMode")
+    static let editmaxCompare = Notification.Name("io.openhorizon.editmax.compare")
 }
 
 /// The format choice in the export save panel.

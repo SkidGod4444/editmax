@@ -116,7 +116,7 @@ enum FrameRenderer {
             guard let buf = source(src.trackID) else { return nil }
             img = oriented(CIImage(cvPixelBuffer: buf, options: [.colorSpace: NSNull()]), natural: src.naturalSize, preferred: src.preferredTransform)
         }
-        let clip = src.clip, tf = clip.transform
+        let clip = src.clip, local = t - clip.start, tf = clip.transform(at: local)
         let w = img.extent.width, h = img.extent.height
         guard w > 0, h > 0 else { return nil }
         img = img.transformed(by: CGAffineTransform(translationX: -img.extent.minX, y: -img.extent.minY))
@@ -131,8 +131,9 @@ enum FrameRenderer {
         if tf.rotation != 0 { T = T.concatenating(CGAffineTransform(rotationAngle: -tf.rotation * .pi / 180)) }
         T = T.concatenating(CGAffineTransform(translationX: size.width / 2 + tf.x * size.width, y: size.height / 2 - tf.y * size.height))
         img = img.transformed(by: T)
-        if !clip.color.isIdentity { img = graded(img, clip.color) }
-        let alpha = clip.opacity * fade(clip, at: t)
+        let color = clip.color(at: local)
+        if !color.isIdentity { img = graded(img, color) }
+        let alpha = clip.opacity(at: local) * fade(clip, at: t)
         if alpha < 1 { img = withAlpha(img, alpha) }
         return img.cropped(to: CGRect(origin: .zero, size: size))
     }
@@ -148,6 +149,15 @@ enum FrameRenderer {
             out = out.applyingFilter("CITemperatureAndTint", parameters: ["inputNeutral": CIVector(x: 6500, y: 0),
                                                                            "inputTargetNeutral": CIVector(x: 6500 - c.temperature * 25, y: c.tint)])
         }
+        if c.shadows != 0 || c.midtones != 0 || c.highlights != 0 {
+            // A five-point tone curve: the three inner points move by up to ±0.15.
+            let k = 0.15
+            let p = { (x: Double, d: Double) in CIVector(x: x, y: max(0, min(1, x + d * k))) }
+            out = out.applyingFilter("CIToneCurve", parameters: ["inputPoint0": CIVector(x: 0, y: 0), "inputPoint1": p(0.25, c.shadows), "inputPoint2": p(0.5, c.midtones),
+                                                                 "inputPoint3": p(0.75, c.highlights), "inputPoint4": CIVector(x: 1, y: 1)])
+        }
+        if c.vibrance != 0 { out = out.applyingFilter("CIVibrance", parameters: ["inputAmount": c.vibrance]) }
+        if let lut = c.lut, !lut.isEmpty { out = Looks.apply(out, key: lut, mix: c.lutMix) }
         return out
     }
 

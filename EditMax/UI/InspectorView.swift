@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 import AppKit
 
 struct InspectorView: View {
@@ -178,6 +179,22 @@ struct ClipInspector: View {
                     }
                 }
                 .padding(.vertical, 2)
+                if state.selectedClipIDs.count >= 1 {
+                    // Read the selection when the button fires: the driver keeps the handler it registered first.
+                    let nest = { Task { @MainActor in
+                        let nestIDs = [clip.id.uuidString] + state.selectedClipIDs.subtracting([clip.id]).map(\.uuidString)
+                        if let info = try? await ToolExecutor(document: document, origin: .user).nestClips(nestIDs, name: nil), let c = info.clip, let id = Project.resolve(c, in: document.project.allClips.map(\.id)) { state.selectedClipIDs = [id] } } }
+                    Button("Nest \(state.selectedClipIDs.count) selected into a sequence", systemImage: "square.stack.3d.down.right") { _ = nest() }
+                        .controlSize(.small).pointer().uiTap("inspector.sequence.nest") { _ = nest() }.uiFrame("inspector.sequence.nest")
+                }
+                if state.selectedClipIDs.count >= 2, clip.multicam == nil {
+                    let make = { Task { @MainActor in
+                        let ids = [clip.id.uuidString] + state.selectedClipIDs.subtracting([clip.id]).map(\.uuidString)
+                        if let info = try? await ToolExecutor(document: document, origin: .user).makeMulticam(ids, sync: "audio"), let id = Project.resolve(info.clip, in: document.project.allClips.map(\.id)) { state.selectedClipIDs = [id] } } }
+                    Button("Make multicam from \(state.selectedClipIDs.count) selected", systemImage: "camera.on.rectangle") { _ = make() }.controlSize(.small).pointer()
+                    .uiTap("inspector.multicam.make") { _ = make() }
+                    .uiFrame("inspector.multicam.make")
+                }
                 HStack(spacing: 8) {
                     Button("Split at playhead", systemImage: "scissors") { try? x.splitClip(clip.id.uuidString, at: player.currentTime) }
                         .disabled(player.currentTime <= clip.start + 0.01 || player.currentTime >= clip.end - 0.01).pointer()
@@ -193,40 +210,128 @@ struct ClipInspector: View {
                 LabeledContent("Duration", value: Timecode.string(clip.duration))
                 LabeledContent("Source in", value: Timecode.string(clip.sourceIn))
             }
+            if let seq = document.project.sequence(of: clip) {
+                Section("Nested sequence") {
+                    let n = seq.project.allClips.count
+                    LabeledContent("Sequence", value: seq.name)
+                    LabeledContent("Contents", value: "\(n) clip\(n == 1 ? "" : "s") on \(seq.project.tracks.map(\.name).joined(separator: ", ")), \(Timecode.string(seq.project.duration))")
+                    let unnest = { _ = try? ToolExecutor(document: document, origin: .user).unnestClip(clip.id.uuidString); state.selectedClipIDs = [] }
+                    Button("Unnest onto the timeline", systemImage: "square.stack.3d.up") { unnest() }.controlSize(.small).pointer()
+                        .uiTap("inspector.sequence.unnest") { unnest() }.uiFrame("inspector.sequence.unnest")
+                    Text("Speed, color, fades, transitions and keyframes on this clip apply to the whole group.").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            if let mc = clip.multicam {
+                Section("Multicam") {
+                    let plain = ToolExecutor(document: document, origin: .user)
+                    let active = mc.angle(at: localTime)
+                    HStack(spacing: 6) {
+                        ForEach(Array(mc.angles.enumerated()), id: \.offset) { i, aid in
+                            Button("\(i + 1)") { _ = try? plain.cutAngle(clip.id.uuidString, at: player.currentTime, angle: i + 1) }
+                                .buttonStyle(.bordered).tint(active == i ? Color.accentColor : nil)
+                                .help(document.project.asset(aid)?.name ?? "missing").pointer()
+                                .uiTap("inspector.angle.\(i + 1)") { _ = try? plain.cutAngle(clip.id.uuidString, at: player.currentTime, angle: i + 1) }
+                                .uiFrame("inspector.angle.\(i + 1)")
+                        }
+                        Spacer()
+                        Text("angle \(active + 1) at playhead").font(.caption).foregroundStyle(.secondary)
+                    }
+                    Text("Click an angle to cut to it at the playhead. The cut line shows on the clip.").font(.caption).foregroundStyle(.secondary)
+                    Picker("Sound from", selection: Binding(get: { mc.audioAngle }, set: { v in _ = try? plain.setMulticam(clip.id.uuidString, audioAngle: v + 1, offsets: nil, flatten: false) })) {
+                        ForEach(0..<mc.angles.count, id: \.self) { i in Text("Angle \(i + 1) · \(document.project.asset(mc.angles[i])?.name ?? "")").tag(i) }
+                    }.pointer().uiFrame("inspector.multicam.audio")
+                    ForEach(mc.cuts.map { ("cut-\($0.time)", $0) }, id: \.0) { _, cut in
+                        HStack {
+                            Text("\(Timecode.string(clip.start + cut.time))  →  angle \(cut.angle + 1)").font(.caption).monospacedDigit()
+                            Spacer()
+                            Button { player.pause(); player.seek(to: clip.start + cut.time) } label: { Image(systemName: "arrow.right.to.line") }.buttonStyle(.borderless).help("Go to cut").pointer()
+                            Button { _ = try? plain.cutAngle(clip.id.uuidString, at: clip.start + cut.time, angle: 0, remove: true) } label: { Image(systemName: "trash") }.buttonStyle(.borderless).help("Remove cut").pointer()
+                        }
+                    }
+                    if mc.angles.count > 1 {
+                        Text("Offsets: " + mc.angles.indices.dropFirst().map { "angle \($0 + 1) \(String(format: "%+.2f", mc.offset($0))) s" }.joined(separator: ", ")).font(.caption).foregroundStyle(.secondary)
+                    }
+                    HStack {
+                        Button("Sync by audio", systemImage: "waveform.badge.magnifyingglass") { Task { @MainActor in _ = try? await plain.syncAngles(clip.id.uuidString) } }.pointer()
+                            .uiTap("inspector.multicam.sync") { Task { @MainActor in _ = try? await plain.syncAngles(clip.id.uuidString) } }.uiFrame("inspector.multicam.sync")
+                        Button("Flatten to clips", systemImage: "rectangle.split.3x1") { _ = try? plain.setMulticam(clip.id.uuidString, audioAngle: nil, offsets: nil, flatten: true) }.pointer()
+                            .uiTap("inspector.multicam.flatten") { _ = try? plain.setMulticam(clip.id.uuidString, audioAngle: nil, offsets: nil, flatten: true) }.uiFrame("inspector.multicam.flatten")
+                    }.controlSize(.small)
+                }
+            }
             Section("Speed") {
-                slider("Speed", value: clip.speed, range: 0.25...4, format: String(format: "%.2f×", clip.speed), reset: 1) { try? x.setClipProperties(clip.id.uuidString, speed: $0) }
+                slider("Speed", param: .speed, value: clip.speed, range: 0...4, format: { String(format: "%.2f×", $0) }, reset: 1) { try? x.setClipProperties(clip.id.uuidString, speed: $0) }
+                if clip.isAnimated(.speed) {
+                    Text("Speed ramp: \(clip.keyframes(.speed).count) keyframes, uses \(Timecode.string(clip.sourceOut - clip.sourceIn)) of media. 0× holds a frame.").font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Text("Click the diamond to start a speed ramp from the playhead.").font(.caption).foregroundStyle(.secondary)
+                }
             }
             if track.kind == .video {
                 Section {
                     let tf = clip.transform
-                    slider("Scale", value: tf.scale, range: 0.1...4, format: "\(Int(tf.scale * 100))%", reset: 1) { try? x.setClipTransform(clip.id.uuidString, scale: $0, x: nil, y: nil, rotation: nil, cropLeft: nil, cropRight: nil, cropTop: nil, cropBottom: nil, reset: false) }
-                    slider("Position X", value: tf.x, range: -1...1, format: "\(Int(tf.x * 100))%", reset: 0) { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: $0, y: nil, rotation: nil, cropLeft: nil, cropRight: nil, cropTop: nil, cropBottom: nil, reset: false) }
-                    slider("Position Y", value: tf.y, range: -1...1, format: "\(Int(tf.y * 100))%", reset: 0) { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: nil, y: $0, rotation: nil, cropLeft: nil, cropRight: nil, cropTop: nil, cropBottom: nil, reset: false) }
-                    slider("Rotation", value: tf.rotation, range: -180...180, format: "\(Int(tf.rotation))°", reset: 0) { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: nil, y: nil, rotation: $0, cropLeft: nil, cropRight: nil, cropTop: nil, cropBottom: nil, reset: false) }
-                    slider("Crop left", value: tf.cropLeft, range: 0...0.9, format: "\(Int(tf.cropLeft * 100))%", reset: 0) { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: nil, y: nil, rotation: nil, cropLeft: $0, cropRight: nil, cropTop: nil, cropBottom: nil, reset: false) }
-                    slider("Crop right", value: tf.cropRight, range: 0...0.9, format: "\(Int(tf.cropRight * 100))%", reset: 0) { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: nil, y: nil, rotation: nil, cropLeft: nil, cropRight: $0, cropTop: nil, cropBottom: nil, reset: false) }
-                    slider("Crop top", value: tf.cropTop, range: 0...0.9, format: "\(Int(tf.cropTop * 100))%", reset: 0) { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: nil, y: nil, rotation: nil, cropLeft: nil, cropRight: nil, cropTop: $0, cropBottom: nil, reset: false) }
-                    slider("Crop bottom", value: tf.cropBottom, range: 0...0.9, format: "\(Int(tf.cropBottom * 100))%", reset: 0) { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: nil, y: nil, rotation: nil, cropLeft: nil, cropRight: nil, cropTop: nil, cropBottom: $0, reset: false) }
-                    slider("Opacity", value: clip.opacity, range: 0...1, format: "\(Int(clip.opacity * 100))%", reset: 1) { try? x.setClipProperties(clip.id.uuidString, opacity: $0) }
+                    slider("Scale", param: .scale, value: tf.scale, range: 0.1...4, format: { "\(Int($0 * 100))%" }, reset: 1) { try? x.setClipTransform(clip.id.uuidString, scale: $0, x: nil, y: nil, rotation: nil, cropLeft: nil, cropRight: nil, cropTop: nil, cropBottom: nil, reset: false) }
+                    slider("Position X", param: .x, value: tf.x, range: -1...1, format: { "\(Int($0 * 100))%" }, reset: 0) { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: $0, y: nil, rotation: nil, cropLeft: nil, cropRight: nil, cropTop: nil, cropBottom: nil, reset: false) }
+                    slider("Position Y", param: .y, value: tf.y, range: -1...1, format: { "\(Int($0 * 100))%" }, reset: 0) { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: nil, y: $0, rotation: nil, cropLeft: nil, cropRight: nil, cropTop: nil, cropBottom: nil, reset: false) }
+                    slider("Rotation", param: .rotation, value: tf.rotation, range: -180...180, format: { "\(Int($0))°" }, reset: 0) { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: nil, y: nil, rotation: $0, cropLeft: nil, cropRight: nil, cropTop: nil, cropBottom: nil, reset: false) }
+                    slider("Crop left", value: tf.cropLeft, range: 0...0.9, format: { "\(Int($0 * 100))%" }, reset: 0) { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: nil, y: nil, rotation: nil, cropLeft: $0, cropRight: nil, cropTop: nil, cropBottom: nil, reset: false) }
+                    slider("Crop right", value: tf.cropRight, range: 0...0.9, format: { "\(Int($0 * 100))%" }, reset: 0) { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: nil, y: nil, rotation: nil, cropLeft: nil, cropRight: $0, cropTop: nil, cropBottom: nil, reset: false) }
+                    slider("Crop top", value: tf.cropTop, range: 0...0.9, format: { "\(Int($0 * 100))%" }, reset: 0) { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: nil, y: nil, rotation: nil, cropLeft: nil, cropRight: nil, cropTop: $0, cropBottom: nil, reset: false) }
+                    slider("Crop bottom", value: tf.cropBottom, range: 0...0.9, format: { "\(Int($0 * 100))%" }, reset: 0) { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: nil, y: nil, rotation: nil, cropLeft: nil, cropRight: nil, cropTop: nil, cropBottom: $0, reset: false) }
+                    slider("Opacity", param: .opacity, value: clip.opacity, range: 0...1, format: { "\(Int($0 * 100))%" }, reset: 1) { try? x.setClipProperties(clip.id.uuidString, opacity: $0) }
                 } header: {
                     HStack { Text("Transform"); Spacer(); if !clip.transform.isIdentity { Button("Reset") { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: nil, y: nil, rotation: nil, cropLeft: nil, cropRight: nil, cropTop: nil, cropBottom: nil, reset: true) }.controlSize(.mini).pointer() } }
                 }
                 Section {
                     let c = clip.color
-                    slider("Exposure", value: c.exposure, range: -2...2, format: String(format: "%+.1f", c.exposure), reset: 0) { try? x.setClipColor(clip.id.uuidString, exposure: $0, contrast: nil, saturation: nil, temperature: nil, tint: nil, reset: false) }
-                    slider("Contrast", value: c.contrast, range: 0.5...2, format: "\(Int(c.contrast * 100))%", reset: 1) { try? x.setClipColor(clip.id.uuidString, exposure: nil, contrast: $0, saturation: nil, temperature: nil, tint: nil, reset: false) }
-                    slider("Saturation", value: c.saturation, range: 0...2, format: "\(Int(c.saturation * 100))%", reset: 1) { try? x.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: $0, temperature: nil, tint: nil, reset: false) }
-                    slider("Temperature", value: c.temperature, range: -100...100, format: "\(Int(c.temperature))", reset: 0) { try? x.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: nil, temperature: $0, tint: nil, reset: false) }
-                    slider("Tint", value: c.tint, range: -100...100, format: "\(Int(c.tint))", reset: 0) { try? x.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: nil, temperature: nil, tint: $0, reset: false) }
+                    slider("Exposure", param: .exposure, value: c.exposure, range: -2...2, format: { String(format: "%+.1f", $0) }, reset: 0) { try? x.setClipColor(clip.id.uuidString, exposure: $0, contrast: nil, saturation: nil, temperature: nil, tint: nil, reset: false) }
+                    slider("Contrast", param: .contrast, value: c.contrast, range: 0.5...2, format: { "\(Int($0 * 100))%" }, reset: 1) { try? x.setClipColor(clip.id.uuidString, exposure: nil, contrast: $0, saturation: nil, temperature: nil, tint: nil, reset: false) }
+                    slider("Saturation", param: .saturation, value: c.saturation, range: 0...2, format: { "\(Int($0 * 100))%" }, reset: 1) { try? x.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: $0, temperature: nil, tint: nil, reset: false) }
+                    slider("Temperature", param: .temperature, value: c.temperature, range: -100...100, format: { "\(Int($0))" }, reset: 0) { try? x.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: nil, temperature: $0, tint: nil, reset: false) }
+                    slider("Tint", param: .tint, value: c.tint, range: -100...100, format: { "\(Int($0))" }, reset: 0) { try? x.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: nil, temperature: nil, tint: $0, reset: false) }
+                    slider("Shadows", param: .shadows, value: c.shadows, range: -1...1, format: { "\(Int($0 * 100))" }, reset: 0) { try? x.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: nil, temperature: nil, tint: nil, reset: false, shadows: $0) }
+                    slider("Midtones", param: .midtones, value: c.midtones, range: -1...1, format: { "\(Int($0 * 100))" }, reset: 0) { try? x.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: nil, temperature: nil, tint: nil, reset: false, midtones: $0) }
+                    slider("Highlights", param: .highlights, value: c.highlights, range: -1...1, format: { "\(Int($0 * 100))" }, reset: 0) { try? x.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: nil, temperature: nil, tint: nil, reset: false, highlights: $0) }
+                    slider("Vibrance", param: .vibrance, value: c.vibrance, range: -1...1, format: { "\(Int($0 * 100))" }, reset: 0) { try? x.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: nil, temperature: nil, tint: nil, reset: false, vibrance: $0) }
                 } header: {
                     HStack { Text("Color"); Spacer(); if !clip.color.isIdentity { Button("Reset") { try? x.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: nil, temperature: nil, tint: nil, reset: true) }.controlSize(.mini).pointer() } }
                 }
             }
+            if track.kind == .video {
+                Section("Look") {
+                    let c = clip.color
+                    let plain = ToolExecutor(document: document, origin: .user)
+                    Picker("Look", selection: Binding(get: { c.lut ?? "none" }, set: { v in
+                        if v == "file" { pickCube(plain) } else { try? plain.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: nil, temperature: nil, tint: nil, reset: false, lut: v) }
+                    })) {
+                        Text("None").tag("none")
+                        ForEach(Looks.builtin, id: \.self) { Text($0).tag($0) }
+                        if let path = c.lut, !Looks.isBuiltin(path) { Text(URL(fileURLWithPath: path).lastPathComponent).tag(path) }
+                        Divider()
+                        Text("Load .cube file…").tag("file")
+                    }.pointer().uiFrame("inspector.look")
+                    if c.lut != nil {
+                        slider("Mix", param: .lutMix, value: c.lutMix, range: 0...1, format: { "\(Int($0 * 100))%" }, reset: 1) { try? x.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: nil, temperature: nil, tint: nil, reset: false, lutMix: $0) }
+                    }
+                    Text("A look is a 3D LUT applied after the color controls. Built-in looks are generated; .cube files from any grading app load as they are.").font(.caption).foregroundStyle(.secondary)
+                }
+            }
             Section("Audio") {
-                slider("Volume", value: clip.volume, range: 0...2, format: "\(Int(clip.volume * 100))%", reset: 1) { try? x.setClipProperties(clip.id.uuidString, volume: $0) }
-                slider("Fade in", value: clip.fadeIn, range: 0...min(5, clip.duration), format: String(format: "%.1f s", clip.fadeIn), reset: 0) { try? x.setClipFades(clip.id.uuidString, fadeIn: $0, fadeOut: nil) }
-                slider("Fade out", value: clip.fadeOut, range: 0...min(5, clip.duration), format: String(format: "%.1f s", clip.fadeOut), reset: 0) { try? x.setClipFades(clip.id.uuidString, fadeIn: nil, fadeOut: $0) }
+                slider("Volume", param: .volume, value: clip.volume, range: 0...2, format: { "\(Int($0 * 100))%" }, reset: 1) { try? x.setClipProperties(clip.id.uuidString, volume: $0) }
+                slider("Fade in", value: clip.fadeIn, range: 0...min(5, clip.duration), format: { String(format: "%.1f s", $0) }, reset: 0) { try? x.setClipFades(clip.id.uuidString, fadeIn: $0, fadeOut: nil) }
+                slider("Fade out", value: clip.fadeOut, range: 0...min(5, clip.duration), format: { String(format: "%.1f s", $0) }, reset: 0) { try? x.setClipFades(clip.id.uuidString, fadeIn: nil, fadeOut: $0) }
                 if track.kind == .video { Text("Fades take the picture to black and the sound to silence.").font(.caption).foregroundStyle(.secondary) }
+            }
+            Section {
+                let au = clip.audio
+                slider("Low", value: au.lowGain, range: -18...18, format: { String(format: "%+.0f dB", $0) }, reset: 0) { try? x.setClipAudio(clip.id.uuidString, low: $0, mid: nil, high: nil, highPass: nil, gate: nil, reset: false) }
+                slider("Mid", value: au.midGain, range: -18...18, format: { String(format: "%+.0f dB", $0) }, reset: 0) { try? x.setClipAudio(clip.id.uuidString, low: nil, mid: $0, high: nil, highPass: nil, gate: nil, reset: false) }
+                slider("High", value: au.highGain, range: -18...18, format: { String(format: "%+.0f dB", $0) }, reset: 0) { try? x.setClipAudio(clip.id.uuidString, low: nil, mid: nil, high: $0, highPass: nil, gate: nil, reset: false) }
+                slider("High-pass", value: au.highPass, range: 0...400, format: { $0 <= 0 ? "off" : "\(Int($0)) Hz" }, reset: 0) { try? x.setClipAudio(clip.id.uuidString, low: nil, mid: nil, high: nil, highPass: $0 < 20 ? 0 : $0, gate: nil, reset: false) }
+                slider("Noise gate", value: au.gate, range: -80...0, format: { $0 >= 0 ? "off" : "\(Int($0)) dB" }, reset: 0) { try? x.setClipAudio(clip.id.uuidString, low: nil, mid: nil, high: nil, highPass: nil, gate: $0 > -1 ? 0 : $0, reset: false) }
+                Text("EQ shelves at 200 Hz and 6 kHz, a 1 kHz peak. A high-pass around 80–120 Hz removes rumble; the gate drops 26 dB below its threshold.").font(.caption).foregroundStyle(.secondary)
+            } header: {
+                HStack { Text("EQ & cleanup"); Spacer(); if !clip.audio.isIdentity { Button("Reset") { try? x.setClipAudio(clip.id.uuidString, low: nil, mid: nil, high: nil, highPass: nil, gate: nil, reset: true) }.controlSize(.mini).pointer() } }
             }
             Section("Transition in") {
                 Picker("Kind", selection: Binding(get: { clip.transitionIn?.kind.rawValue ?? "none" }, set: { v in _ = try? ToolExecutor(document: document, origin: .user).setTransition(clip.id.uuidString, kind: v, duration: nil); transitionNote = nil })) {
@@ -234,7 +339,7 @@ struct ClipInspector: View {
                     ForEach(Transition.Kind.allCases, id: \.rawValue) { Text($0.title).tag($0.rawValue) }
                 }.pointer()
                 if let tr = clip.transitionIn {
-                    slider("Duration", value: tr.duration, range: 0.1...min(3, clip.duration), format: String(format: "%.2f s", tr.duration), reset: 0.5) { d in
+                    slider("Duration", value: tr.duration, range: 0.1...min(3, clip.duration), format: { String(format: "%.2f s", $0) }, reset: 0.5) { d in
                         transitionNote = (try? x.setTransition(clip.id.uuidString, kind: nil, duration: d))?.note
                     }
                 }
@@ -250,20 +355,73 @@ struct ClipInspector: View {
         .onChange(of: clip.id) { _, _ in nameDraft = clip.name }
     }
 
+    private func pickCube(_ x: ToolExecutor) {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: "cube") ?? .data]
+        panel.allowsMultipleSelection = false
+        panel.message = "Choose a .cube 3D LUT"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do { try x.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: nil, temperature: nil, tint: nil, reset: false, lut: url.path) }
+        catch { NSAlert(error: error).runModal() }
+    }
+
     private func commitName(_ x: ToolExecutor) {
         let n = nameDraft.trimmingCharacters(in: .whitespaces)
         if !n.isEmpty, n != clip.name { try? x.setClipProperties(clip.id.uuidString, name: n) }
     }
 
-    /// A labeled slider with its value on the right; double-click the value to reset.
-    private func slider(_ title: String, value: Double, range: ClosedRange<Double>, format: String, reset: Double, set: @escaping (Double) -> Void) -> some View {
-        LabeledContent(title) {
+    /// The playhead inside this clip, in clip-local seconds.
+    private var localTime: Double { max(0, min(clip.duration, player.currentTime - clip.start)) }
+    private func hasKeyframe(_ p: ClipParam) -> Bool { clip.keyframes(p).contains { abs($0.time - localTime) < 1.0 / 120 } }
+
+    /// A labeled slider with its value on the right; double-click the value to reset. With `param`, a keyframe diamond:
+    /// once a parameter is animated, dragging the slider writes a keyframe at the playhead instead of the plain value.
+    private func slider(_ title: String, param: ClipParam? = nil, value: Double, range: ClosedRange<Double>, format: @escaping (Double) -> String, reset: Double, set: @escaping (Double) -> Void) -> some View {
+        let x = ToolExecutor(document: document, origin: .user, coalesce: true)
+        let animated = param.map(clip.isAnimated) ?? false
+        let shown = (param != nil && animated) ? clip.value(param!, at: localTime) : value
+        let apply: (Double) -> Void = { v in
+            if let param, animated { _ = try? x.setKeyframe(clip.id.uuidString, param: param.rawValue, time: player.currentTime, value: v, ease: nil) } else { set(v) }
+        }
+        return LabeledContent(title) {
             HStack(spacing: 8) {
-                Slider(value: .init(get: { value }, set: set), in: range).controlSize(.small)
-                Text(format).font(.caption).monospacedDigit().foregroundStyle(.secondary).frame(width: 44, alignment: .trailing)
-                    .onTapGesture(count: 2) { set(reset) }.help("Double-click to reset")
+                if let param {
+                    let onKey = hasKeyframe(param)
+                    Button {
+                        let plain = ToolExecutor(document: document, origin: .user)
+                        if onKey { _ = try? plain.removeKeyframe(clip.id.uuidString, param: param.rawValue, time: player.currentTime, all: false) }
+                        else { _ = try? plain.setKeyframe(clip.id.uuidString, param: param.rawValue, time: player.currentTime, value: shown, ease: nil) }
+                    } label: {
+                        Image(systemName: onKey ? "diamond.fill" : "diamond").font(.system(size: 10)).foregroundStyle(animated ? Color.accentColor : Color.secondary)
+                    }
+                    .buttonStyle(.borderless).pointer().uiFrame("inspector.key.\(param.rawValue)")
+                    .help(onKey ? "Remove the keyframe at the playhead" : (animated ? "Add a keyframe at the playhead" : "Animate: add the first keyframe at the playhead"))
+                    .contextMenu {
+                        if animated {
+                            let plain = ToolExecutor(document: document, origin: .user)
+                            if onKey, let k = clip.keyframes(param).first(where: { abs($0.time - localTime) < 1.0 / 120 }) {
+                                Picker("Ease to next", selection: Binding(get: { k.ease.rawValue }, set: { e in _ = try? plain.setKeyframe(clip.id.uuidString, param: param.rawValue, time: player.currentTime, value: k.value, ease: e) })) {
+                                    Text("Linear").tag("linear"); Text("Smooth").tag("smooth"); Text("Hold").tag("hold")
+                                }
+                            }
+                            Button("Previous keyframe") { jumpKeyframe(param, forward: false) }
+                            Button("Next keyframe") { jumpKeyframe(param, forward: true) }
+                            Divider()
+                            Button("Remove all \(clip.keyframes(param).count) keyframes") { _ = try? plain.removeKeyframe(clip.id.uuidString, param: param.rawValue, time: nil, all: true) }
+                        }
+                    }
+                }
+                Slider(value: .init(get: { shown }, set: apply), in: range).controlSize(.small)
+                Text(format(shown)).font(.caption).monospacedDigit().foregroundStyle(.secondary).frame(width: 44, alignment: .trailing)
+                    .onTapGesture(count: 2) { apply(reset) }.help("Double-click to reset")
             }
         }
+    }
+
+    private func jumpKeyframe(_ p: ClipParam, forward: Bool) {
+        let ts = clip.keyframes(p).map { clip.start + $0.time }
+        let t = forward ? ts.first { $0 > player.currentTime + 0.001 } : ts.last { $0 < player.currentTime - 0.001 }
+        if let t { player.pause(); player.seek(to: t) }
     }
 }
 
@@ -391,9 +549,14 @@ struct ProjectInspector: View {
     @State private var captionStatus: String?
     @State private var cleanupBusy = false
     @State private var cleanupStatus: String?
+    @State private var templateName = ""
+    @State private var templateChoice = ""
+    @State private var templateStatus: String?
+    @ObservedObject private var proxies = ProxyStore.shared
     var body: some View {
         let p = document.project
         let captionCount = p.texts.filter(\.isCaption).count
+        let x = ToolExecutor(document: document, origin: .user)
         Form {
             Section("Project") {
                 LabeledContent("Resolution", value: "\(p.settings.width)×\(p.settings.height)")
@@ -401,6 +564,37 @@ struct ProjectInspector: View {
                 LabeledContent("Duration", value: Timecode.string(p.duration))
                 LabeledContent("Clips", value: "\(p.allClips.count)")
                 LabeledContent("Project ID", value: document.id.short)
+            }
+            Section("Proxies") {
+                let videos = p.assets.filter { $0.kind == .video }
+                let ready = videos.filter { proxies.ready(for: $0) != nil }.count
+                let building = videos.filter { if case .building = proxies.status[$0.id] { return true }; return false }
+                Toggle("Preview from proxies", isOn: Binding(get: { p.settings.useProxies }, set: { v in try? x.setProjectSettings(width: nil, height: nil, fps: nil, name: nil, useProxies: v) })).pointer().uiFrame("inspector.proxies")
+                HStack {
+                    Button("Make proxies", systemImage: "arrow.down.right.and.arrow.up.left") { _ = x.makeProxies(enable: true) }.disabled(videos.isEmpty || ready == videos.count).pointer()
+                    Spacer()
+                    Text(videos.isEmpty ? "No video files yet." : building.isEmpty ? "\(ready) of \(videos.count) ready" : "Building \(building.count)…").font(.caption).foregroundStyle(.secondary)
+                }
+                Text("960×540 copies for smooth playback. The export always uses the original files.").font(.caption).foregroundStyle(.secondary)
+            }
+            Section("Templates") {
+                let all = Templates.list()
+                HStack {
+                    Picker("Template", selection: $templateChoice) {
+                        Text("Choose…").tag("")
+                        ForEach(all) { t in Text(t.builtin ? "\(t.name)  (\(t.width)×\(t.height))" : t.name).tag(t.name) }
+                    }.labelsHidden().pointer().uiFrame("inspector.template")
+                    Button("Apply") {
+                        do { let t = try x.applyTemplate(templateChoice); templateStatus = "Applied \(t.name). Undo with ⌘Z." } catch { templateStatus = error.localizedDescription }
+                    }.disabled(templateChoice.isEmpty).pointer().uiFrame("inspector.template.apply")
+                }
+                HStack {
+                    TextField("Save this project as a template", text: $templateName).textFieldStyle(.roundedBorder).controlSize(.small)
+                    Button("Save") {
+                        do { _ = try x.saveTemplate(templateName); templateStatus = "Saved template '\(templateName)'."; templateName = "" } catch { templateStatus = error.localizedDescription }
+                    }.disabled(templateName.trimmingCharacters(in: .whitespaces).isEmpty).pointer()
+                }
+                Text(templateStatus ?? "Built-in templates set the format on an empty timeline; a saved template restores its tracks, clips and titles.").font(.caption).foregroundStyle(.secondary)
             }
             Section("Add text") {
                 TextField("Title text", text: $newText, prompt: Text("Type a title and press Return")).onSubmit { addTitle() }
@@ -429,6 +623,25 @@ struct ProjectInspector: View {
                             Button { document.apply("Remove marker", origin: .user) { p in p.markers.removeAll { $0.id == m.id } } } label: { Image(systemName: "trash") }.buttonStyle(.borderless).help("Remove marker").pointer()
                         }
                     }
+                }
+            }
+            if p.tracks.count > 1 {
+                Section("Ducking") {
+                    let plain = ToolExecutor(document: document, origin: .user)
+                    ForEach(p.tracks) { t in
+                        HStack {
+                            Text(t.name).frame(width: 36, alignment: .leading)
+                            Picker("under", selection: Binding(get: { t.duck?.sourceTrackID.uuidString ?? "none" }, set: { v in _ = try? plain.setDucking(t.id.uuidString, under: v == "none" ? "none" : v, level: nil, attack: nil, release: nil) })) {
+                                Text("Not ducked").tag("none")
+                                ForEach(p.tracks.filter { $0.id != t.id }) { o in Text("Under \(o.name)").tag(o.id.uuidString) }
+                            }.labelsHidden().pointer().uiFrame("inspector.duck.\(t.name)")
+                            if let d = t.duck {
+                                Slider(value: Binding(get: { d.level }, set: { v in _ = try? ToolExecutor(document: document, origin: .user, coalesce: true).setDucking(t.id.uuidString, under: nil, level: v, attack: nil, release: nil) }), in: 0...1).controlSize(.small).frame(width: 70)
+                                Text("\(Int(d.level * 100))%").font(.caption).monospacedDigit().foregroundStyle(.secondary).frame(width: 34, alignment: .trailing)
+                            }
+                        }
+                    }
+                    Text("A ducked track drops to the level while clips play on the other track.").font(.caption).foregroundStyle(.secondary)
                 }
             }
             Section("Cleanup") {

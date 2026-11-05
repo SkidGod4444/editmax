@@ -20,10 +20,15 @@ struct ToolExecutor {
             var id: String, name: String, asset: String, track: String
             var start: Double, end: Double, duration: Double, sourceIn: Double, speed: Double, volume: Double, opacity: Double
             var transform: ClipTransform?, color: ClipColor?, fadeIn: Double?, fadeOut: Double?, transition: Transition?   // only when set
+            var keyframes: [String: [KeyframeInfo]]?   // per parameter, times on the timeline
+            var audio: ClipAudio?                      // EQ / high-pass / gate, only when set
+            var multicam: MulticamInfo?                // angles, cuts and the audio angle, only for multicam clips
+            var sequence: String?                      // name of the nested sequence this clip plays, if any
         }
+        struct KeyframeInfo: Codable { var time: Double, value: Double, ease: String }
         struct MarkerInfo: Codable { var id: String, time: Double, name: String, color: String }
         struct TextInfo: Codable { var id: String, text: String, start: Double, end: Double, preset: String?, caption: String? }
-        struct TrackInfo: Codable { var id: String, name: String, kind: String, clipCount: Int, muted: Bool, hidden: Bool }
+        struct TrackInfo: Codable { var id: String, name: String, kind: String, clipCount: Int, muted: Bool, hidden: Bool; var duckUnder: String?; var duckLevel: Double? }
         var project: String, projectID: String, width: Int, height: Int, fps: Double, duration: Double
         var tracks: [TrackInfo], clips: [ClipInfo], texts: [TextInfo], markers: [MarkerInfo], historyCount: Int
         var playhead: Double?
@@ -38,13 +43,18 @@ struct ToolExecutor {
                                    start: r(c.start), end: r(c.end), duration: r(c.duration), sourceIn: r(c.sourceIn),
                                    speed: c.speed, volume: c.volume, opacity: c.opacity,
                                    transform: c.transform.isIdentity ? nil : c.transform, color: c.color.isIdentity ? nil : c.color,
-                                   fadeIn: c.fadeIn > 0 ? c.fadeIn : nil, fadeOut: c.fadeOut > 0 ? c.fadeOut : nil, transition: c.transitionIn))
+                                   fadeIn: c.fadeIn > 0 ? c.fadeIn : nil, fadeOut: c.fadeOut > 0 ? c.fadeOut : nil, transition: c.transitionIn,
+                                   keyframes: c.isAnimated ? c.animations.mapValues { $0.map { .init(time: r(c.start + $0.time), value: r($0.value), ease: $0.ease.rawValue) } } : nil,
+                                   audio: c.audio.isIdentity ? nil : c.audio,
+                                   multicam: c.multicam.map { multicamInfo(c, $0) },
+                                   sequence: p.sequence(of: c)?.name))
             }
         }
         return TimelineSummary(
             project: document.displayName, projectID: document.id.short,
             width: p.settings.width, height: p.settings.height, fps: p.settings.fps, duration: r(p.duration),
-            tracks: p.tracks.map { .init(id: $0.id.short, name: $0.name, kind: $0.kind.rawValue, clipCount: $0.clips.count, muted: $0.isMuted, hidden: $0.isHidden) },
+            tracks: p.tracks.map { t in .init(id: t.id.short, name: t.name, kind: t.kind.rawValue, clipCount: t.clips.count, muted: t.isMuted, hidden: t.isHidden,
+                                              duckUnder: t.duck.flatMap { p.track($0.sourceTrackID)?.name }, duckLevel: t.duck?.level) },
             clips: clips.sorted { ($0.track, $0.start) < ($1.track, $1.start) },
             texts: p.texts.map { .init(id: $0.id.short, text: $0.text, start: r($0.start), end: r($0.end), preset: $0.preset, caption: $0.group?.short) },
             markers: p.markers.map { .init(id: $0.id.short, time: r($0.time), name: $0.name, color: $0.colorHex) },
@@ -84,8 +94,11 @@ struct ToolExecutor {
         throw EditError.notFound("asset '\(text)'")
     }
     func resolveClip(_ text: String) throws -> UUID {
-        guard let id = Project.resolve(text, in: project.allClips.map(\.id)) else { throw EditError.notFound("clip '\(text)'") }
-        return id
+        if let id = Project.resolve(text, in: project.allClips.map(\.id)) { return id }
+        let byName = project.allClips.filter { $0.name.caseInsensitiveCompare(text) == .orderedSame }
+        if byName.count == 1 { return byName[0].id }
+        if byName.count > 1 { throw EditError.invalid("\(byName.count) clips are named '\(text)'; use an id: \(byName.map(\.id.short).joined(separator: ", "))") }
+        throw EditError.notFound("clip '\(text)'")
     }
     func resolveTrack(_ text: String?) throws -> UUID? {
         guard let text, !text.isEmpty else { return nil }
@@ -388,20 +401,30 @@ struct ToolExecutor {
     }
 
     /// Render one frame of the timeline (video tracks only; text/image overlays are composited on top) as PNG data.
-    func captureFrame(at seconds: Double, maxWidth: Int = 960) async throws -> Data {
+    /// The composed frame at a time as an sRGB-tagged CGImage, and the render size.
+    func renderFrame(at seconds: Double) async throws -> (CGImage, CGSize) {
         let out = try await CompositionBuilder.build(project)
+        guard let vts = try? await out.composition.loadTracks(withMediaType: .video), !vts.isEmpty else { throw EditError.invalid("nothing to render at \(seconds) s: the composition has no video track") }
         let gen = AVAssetImageGenerator(asset: out.composition)
         gen.videoComposition = out.videoComposition
         gen.appliesPreferredTrackTransform = true
         gen.requestedTimeToleranceBefore = .zero; gen.requestedTimeToleranceAfter = CMTime(value: 1, timescale: 30)
         let t = CMTime(seconds: min(max(0, seconds), max(0, out.duration.seconds - 0.05)), preferredTimescale: CompositionBuilder.timescale)
         let raw = try await gen.image(at: t).image   // the compositor draws titles and stills too
-        let frame = raw.copy(colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!) ?? raw   // the pixels are sRGB already; retag, don't convert
+        return (raw.copy(colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!) ?? raw, out.renderSize)   // the pixels are sRGB already; retag, don't convert
+    }
+
+    func captureFrame(at seconds: Double, maxWidth: Int = 960) async throws -> Data {
+        let (frame, renderSize) = try await renderFrame(at: seconds)
+        let out = (renderSize: renderSize, ())
         let scale = min(1, CGFloat(maxWidth) / out.renderSize.width)
-        let outSize = NSSize(width: (out.renderSize.width * scale).rounded(), height: (out.renderSize.height * scale).rounded())
-        let image = NSImage(size: outSize)
-        image.lockFocus(); NSGraphicsContext.current?.cgContext.draw(frame, in: CGRect(origin: .zero, size: outSize)); image.unlockFocus()
-        guard let tiff = image.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff), let png = rep.representation(using: .png, properties: [:]) else { throw EditError.invalid("could not encode frame") }
+        let w = Int((out.renderSize.width * scale).rounded()), h = Int((out.renderSize.height * scale).rounded())
+        // Draw into a bitmap of exactly w×h pixels (an NSImage lockFocus would use the screen's 2× backing scale).
+        guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: w, pixelsHigh: h, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
+              let ctx = NSGraphicsContext(bitmapImageRep: rep) else { throw EditError.invalid("could not make a bitmap") }
+        ctx.cgContext.interpolationQuality = .high
+        ctx.cgContext.draw(frame, in: CGRect(x: 0, y: 0, width: w, height: h))
+        guard let png = rep.representation(using: .png, properties: [:]) else { throw EditError.invalid("could not encode frame") }
         return png
     }
 
@@ -424,8 +447,13 @@ struct ToolExecutor {
         }
     }
 
-    func setClipColor(_ clip: String, exposure: Double?, contrast: Double?, saturation: Double?, temperature: Double?, tint: Double?, reset: Bool) throws {
+    func setClipColor(_ clip: String, exposure: Double?, contrast: Double?, saturation: Double?, temperature: Double?, tint: Double?, reset: Bool,
+                      shadows: Double? = nil, midtones: Double? = nil, highlights: Double? = nil, vibrance: Double? = nil, lut: String? = nil, lutMix: Double? = nil) throws {
         let id = try resolveClip(clip)
+        if let lut, !lut.isEmpty, lut.lowercased() != "none" {
+            guard Looks.isBuiltin(lut) || FileManager.default.fileExists(atPath: lut) else { throw EditError.notFound("look '\(lut)': use one of \(Looks.builtin.joined(separator: ", ")) or the path of a .cube file") }
+            guard Looks.cube(for: lut) != nil else { throw EditError.invalid("could not read the LUT at \(lut) (needs LUT_3D_SIZE and N³ rgb lines)") }
+        }
         try document.apply("Color clip", origin: origin, coalesce: coalesce) { p in
             try p.updateClip(id) { c in
                 if reset { c.color = .identity }
@@ -434,8 +462,93 @@ struct ToolExecutor {
                 if let saturation { c.color.saturation = max(0, min(3, saturation)) }
                 if let temperature { c.color.temperature = max(-100, min(100, temperature)) }
                 if let tint { c.color.tint = max(-100, min(100, tint)) }
+                if let shadows { c.color.shadows = max(-1, min(1, shadows)) }
+                if let midtones { c.color.midtones = max(-1, min(1, midtones)) }
+                if let highlights { c.color.highlights = max(-1, min(1, highlights)) }
+                if let vibrance { c.color.vibrance = max(-1, min(1, vibrance)) }
+                if let lut { c.color.lut = (lut.isEmpty || lut.lowercased() == "none") ? nil : (Looks.builtin.first { $0.caseInsensitiveCompare(lut) == .orderedSame } ?? lut) }
+                if let lutMix { c.color.lutMix = max(0, min(1, lutMix)) }
             }
         }
+    }
+
+    // MARK: Audio
+
+    func setClipAudio(_ clip: String, low: Double?, mid: Double?, high: Double?, highPass: Double?, gate: Double?, reset: Bool) throws {
+        let id = try resolveClip(clip)
+        try document.apply("Clip audio", origin: origin, coalesce: coalesce) { p in
+            try p.updateClip(id) { c in
+                if reset { c.audio = .identity }
+                if let low { c.audio.lowGain = max(-18, min(18, low)) }
+                if let mid { c.audio.midGain = max(-18, min(18, mid)) }
+                if let high { c.audio.highGain = max(-18, min(18, high)) }
+                if let highPass { c.audio.highPass = highPass <= 0 ? 0 : max(20, min(2000, highPass)) }
+                if let gate { c.audio.gate = gate >= 0 ? 0 : max(-90, gate) }
+            }
+        }
+    }
+
+    struct DuckResult: Codable { var track: String, under: String?, level: Double?, attack: Double?, release: Double? }
+    /// Ducks `track` under `under` (a track name or id); `under` "none" removes the ducking.
+    func setDucking(_ track: String, under: String?, level: Double?, attack: Double?, release: Double?) throws -> DuckResult {
+        guard let tid = try resolveTrack(track), let t = project.track(tid) else { throw EditError.notFound("track '\(track)'") }
+        if under?.lowercased() == "none" {
+            document.apply("Stop ducking \(t.name)", origin: origin) { p in if let i = p.tracks.firstIndex(where: { $0.id == tid }) { p.tracks[i].duck = nil } }
+            return DuckResult(track: t.name, under: nil, level: nil, attack: nil, release: nil)
+        }
+        var d = t.duck
+        if let under {
+            guard let sid = try resolveTrack(under), sid != tid, let s = project.track(sid) else { throw EditError.invalid("under must name another track") }
+            d = Ducking(sourceTrackID: s.id, level: d?.level ?? 0.25, attack: d?.attack ?? 0.15, release: d?.release ?? 0.4)
+        }
+        guard var duck = d else { throw EditError.invalid("say which track to duck under") }
+        if let level { duck.level = max(0, min(1, level)) }
+        if let attack { duck.attack = max(0.01, min(3, attack)) }
+        if let release { duck.release = max(0.01, min(5, release)) }
+        let final = duck
+        document.apply("Duck \(t.name)", origin: origin, coalesce: coalesce) { p in if let i = p.tracks.firstIndex(where: { $0.id == tid }) { p.tracks[i].duck = final } }
+        return DuckResult(track: t.name, under: project.track(final.sourceTrackID)?.name, level: final.level, attack: final.attack, release: final.release)
+    }
+
+    // MARK: Frame analysis
+
+    struct FrameStats: Codable {
+        var time: Double, width: Int, height: Int
+        var meanRGB: [Double], lumaMean: Double, lumaMedian: Double
+        var blackClipped: Double, whiteClipped: Double   // fraction of pixels at or below 2/255, at or above 253/255
+        var lumaHistogram: [Int]                           // 16 bins, dark to bright
+        var note: String
+    }
+
+    /// Numbers about the composed frame at a time (what the scopes show), so an agent can grade without looking at pixels.
+    func frameStats(at seconds: Double) async throws -> FrameStats {
+        let (frame, _) = try await renderFrame(at: seconds)
+        let w = 320, h = max(1, Int(Double(w) * Double(frame.height) / Double(max(1, frame.width))))
+        var px = [UInt8](repeating: 0, count: w * h * 4)
+        guard let ctx = CGContext(data: &px, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { throw EditError.invalid("could not sample the frame") }
+        ctx.interpolationQuality = .medium
+        ctx.draw(frame, in: CGRect(x: 0, y: 0, width: w, height: h))
+        var sum = [0.0, 0.0, 0.0], hist = [Int](repeating: 0, count: 16), lumas: [Double] = []
+        var black = 0, white = 0
+        lumas.reserveCapacity(w * h)
+        for i in stride(from: 0, to: px.count, by: 4) {
+            let r = Double(px[i]), g = Double(px[i + 1]), b = Double(px[i + 2])
+            sum[0] += r; sum[1] += g; sum[2] += b
+            let l = 0.2126 * r + 0.7152 * g + 0.0722 * b
+            lumas.append(l)
+            hist[min(15, Int(l / 16))] += 1
+            if l <= 2 { black += 1 }
+            if l >= 253 { white += 1 }
+        }
+        let n = Double(w * h)
+        lumas.sort()
+        let mean = lumas.reduce(0, +) / n
+        var note = "Means are 0–255 after the clip's color and looks."
+        if Double(black) / n > 0.3 { note += " Over 30% of the frame is crushed black." }
+        if Double(white) / n > 0.1 { note += " Over 10% of the frame is clipped white." }
+        return FrameStats(time: r(seconds), width: frame.width, height: frame.height, meanRGB: sum.map { r($0 / n) }, lumaMean: r(mean), lumaMedian: r(lumas[lumas.count / 2]),
+                          blackClipped: r(Double(black) / n), whiteClipped: r(Double(white) / n), lumaHistogram: hist, note: note)
     }
 
     func setClipFades(_ clip: String, fadeIn: Double?, fadeOut: Double?) throws {
@@ -478,6 +591,55 @@ struct ToolExecutor {
         return TransitionResult(clip: id.short, kind: k.rawValue, duration: d, note: note)
     }
 
+    // MARK: Keyframes
+
+    struct KeyframeResult: Codable { var clip: String, param: String, time: Double, local: Double, value: Double, ease: String, count: Int }
+    static func param(_ text: String) throws -> ClipParam {
+        let key = text.lowercased().replacingOccurrences(of: " ", with: "").replacingOccurrences(of: "_", with: "").replacingOccurrences(of: "position", with: "")
+        guard let p = ClipParam.allCases.first(where: { $0.rawValue == key }) else { throw EditError.invalid("param must be one of \(ClipParam.allCases.map(\.rawValue).joined(separator: ", "))") }
+        return p
+    }
+    static func ease(_ text: String?) throws -> Keyframe.Ease? {
+        guard let text else { return nil }
+        guard let e = Keyframe.Ease(rawValue: text.lowercased()) else { throw EditError.invalid("ease must be linear, smooth or hold") }
+        return e
+    }
+    static let paramRanges: [ClipParam: ClosedRange<Double>] = [.scale: 0.05...10, .x: -2...2, .y: -2...2, .rotation: -3600...3600, .opacity: 0...1, .exposure: -4...4, .contrast: 0.25...3,
+                                                               .saturation: 0...3, .temperature: -100...100, .tint: -100...100, .volume: 0...2, .speed: 0...8]
+
+    /// Sets a keyframe at a timeline time (nil = the playhead). The first keyframe on a parameter starts its animation from the plain value.
+    func setKeyframe(_ clip: String, param: String, time: Double?, value: Double, ease: String?) throws -> KeyframeResult {
+        let id = try resolveClip(clip)
+        let p = try Self.param(param), e = try Self.ease(ease)
+        guard let found = project.clip(id) else { throw EditError.notFound("clip \(clip)") }
+        let tl = time ?? UIRegistry.shared.playheads[document.id]?() ?? found.clip.start
+        let local = max(0, min(found.clip.duration, tl - found.clip.start))
+        let range = Self.paramRanges[p] ?? -1e9...1e9
+        let v = max(range.lowerBound, min(range.upperBound, value))
+        try document.apply("Keyframe \(p.title)", origin: origin, coalesce: coalesce) { pr in try pr.updateClip(id) { $0.setKeyframe(p, at: local, value: v, ease: e) } }
+        let c = project.clip(id)!.clip
+        return KeyframeResult(clip: id.short, param: p.rawValue, time: r(c.start + local), local: r(local), value: r(v), ease: (e ?? .linear).rawValue, count: c.keyframes(p).count)
+    }
+
+    /// Removes the keyframe at a timeline time, or every keyframe of the parameter (`all`), which freezes it at the playhead's value.
+    func removeKeyframe(_ clip: String, param: String, time: Double?, all: Bool) throws -> Int {
+        let id = try resolveClip(clip)
+        let p = try Self.param(param)
+        guard let found = project.clip(id) else { throw EditError.notFound("clip \(clip)") }
+        if all {
+            let n = found.clip.keyframes(p).count
+            let ph = UIRegistry.shared.playheads[document.id]?() ?? found.clip.start
+            try document.apply("Clear \(p.title) keyframes", origin: origin) { pr in try pr.updateClip(id) { $0.clearAnimation(p, freezeAt: max(0, min($0.duration, ph - $0.start))) } }
+            return n
+        }
+        let tl = time ?? UIRegistry.shared.playheads[document.id]?() ?? found.clip.start
+        let local = tl - found.clip.start
+        var removed = false
+        try document.apply("Remove \(p.title) keyframe", origin: origin) { pr in try pr.updateClip(id) { removed = $0.removeKeyframe(p, at: local) } }
+        guard removed else { throw EditError.notFound("no \(p.rawValue) keyframe at \(r(tl)) s") }
+        return 1
+    }
+
     // MARK: Markers
 
     struct MarkerInfo: Codable { var id: String, time: Double, name: String, color: String }
@@ -510,14 +672,261 @@ struct ToolExecutor {
         return TrackResult(id: id.short, name: t.name, kind: t.kind.rawValue, row: project.tracks.firstIndex(where: { $0.id == id }) ?? 0)
     }
 
-    func setProjectSettings(width: Int?, height: Int?, fps: Double?, name: String?) throws {
+    func setProjectSettings(width: Int?, height: Int?, fps: Double?, name: String?, useProxies: Bool? = nil) throws {
         document.apply("Project settings", origin: origin) { p in
             if let width { p.settings.width = max(16, width) }
             if let height { p.settings.height = max(16, height) }
             if let fps { p.settings.fps = max(1, fps) }
             if let name { p.name = name }
+            if let useProxies { p.settings.useProxies = useProxies }
+        }
+        if useProxies == true { Task { @MainActor in ProxyStore.shared.build(project.assets) } }
+    }
+
+    // MARK: Multicam
+
+    struct MulticamInfo: Codable {
+        struct Angle: Codable { var index: Int, asset: String, name: String, offset: Double }
+        struct Cut: Codable { var time: Double, angle: Int }
+        var clip: String, angles: [Angle], cuts: [Cut], audioAngle: Int
+        var note: String?
+    }
+    func multicamInfo(_ c: Clip, _ mc: Multicam) -> MulticamInfo {
+        MulticamInfo(clip: c.id.short,
+                     angles: mc.angles.enumerated().map { .init(index: $0.offset + 1, asset: $0.element.short, name: project.asset($0.element)?.name ?? "missing", offset: r(mc.offset($0.offset))) },
+                     cuts: mc.cuts.map { .init(time: r(c.start + $0.time), angle: $0.angle + 1) }, audioAngle: mc.audioAngle + 1)
+    }
+    private func multicamClip(_ text: String) throws -> (Clip, Multicam) {
+        let id = try resolveClip(text)
+        guard let c = project.clip(id)?.clip else { throw EditError.notFound("clip '\(text)'") }
+        guard let mc = c.multicam else { throw EditError.invalid("clip \(c.id.short) is not a multicam clip; make one with make_multicam") }
+        return (c, mc)
+    }
+
+    /// Folds several clips into one multicam clip: the earliest one stays and becomes angle 1, the others are removed and
+    /// become its angles. `sync` is "audio" (line the angles up by their sound), "start" (they were placed in sync on
+    /// the timeline) or "none" (offsets 0; set them with set_multicam).
+    func makeMulticam(_ clips: [String], sync: String) async throws -> MulticamInfo {
+        let ids = try clips.map(resolveClip)
+        var found = ids.compactMap { project.clip($0)?.clip }
+        guard found.count >= 2 else { throw EditError.invalid("a multicam clip needs at least two clips") }
+        guard Set(found.map(\.id)).count == found.count else { throw EditError.invalid("the same clip is listed twice") }
+        for c in found {
+            guard let a = project.asset(c.assetID), a.kind != .image else { throw EditError.invalid("clip \(c.id.short) is a still; angles must be video or audio") }
+            guard c.multicam == nil else { throw EditError.invalid("clip \(c.id.short) is already a multicam clip") }
+        }
+        // Earliest clip is the base; on a tie the order given wins (the inspector lists the shown clip first).
+        found = found.enumerated().sorted { ($0.element.start, $0.offset) < ($1.element.start, $1.offset) }.map(\.element)
+        let base = found[0], others = Array(found.dropFirst())
+        let baseAsset = project.asset(base.assetID)!
+        var offsets: [Double] = [0]
+        var notes: [String] = []
+        switch sync.lowercased() {
+        case "audio":
+            for o in others {
+                let a = project.asset(o.assetID)!
+                let r = try await AngleSync.offset(of: a.url, relativeTo: baseAsset.url)
+                if r.confidence < 0.3 {
+                    // Nothing to lock onto (silence, a steady tone): trust the timeline placement instead.
+                    offsets.append((o.sourceIn - o.start) - (base.sourceIn - base.start))
+                    notes.append("\(a.name): audio match too weak (confidence \(String(format: "%.2f", r.confidence))), kept the timeline placement (\(String(format: "%+.2f", offsets.last!)) s)")
+                } else {
+                    offsets.append(r.offset)
+                    notes.append("\(a.name): \(String(format: "%+.2f", r.offset)) s (confidence \(String(format: "%.2f", r.confidence)))")
+                }
+            }
+        case "start":
+            for o in others { offsets.append((o.sourceIn - o.start) - (base.sourceIn - base.start)) }
+        case "none", "": for _ in others { offsets.append(0) }
+        default: throw EditError.invalid("sync must be audio, start or none")
+        }
+        let mc = Multicam(angles: [base.assetID] + others.map(\.assetID), offsets: offsets)
+        try document.apply("Make multicam (\(found.count) angles)", origin: origin) { p in
+            _ = p.removeClips(others.map(\.id))
+            try p.updateClip(base.id) { $0.multicam = mc }
+        }
+        var info = multicamInfo(project.clip(base.id)!.clip, mc)
+        info.note = notes.isEmpty ? nil : notes.joined(separator: "; ")
+        return info
+    }
+
+    /// Switches the picture to `angle` (1-based) from a timeline time on, or removes the cut there.
+    func cutAngle(_ clip: String, at time: Double, angle: Int, remove: Bool = false) throws -> MulticamInfo {
+        let (c, mc) = try multicamClip(clip)
+        let local = time - c.start
+        guard local >= -0.001, local < c.duration else { throw EditError.invalid("time \(r(time)) is outside the clip (\(r(c.start))...\(r(c.end)))") }
+        var next = mc
+        if remove {
+            guard next.removeCut(at: max(0, local)) else { throw EditError.notFound("cut at \(r(time))") }
+        } else {
+            guard angle >= 1, angle <= mc.angles.count else { throw EditError.invalid("angle must be 1...\(mc.angles.count)") }
+            let ai = angle - 1
+            let source = c.sourceIn + mc.offset(ai) + c.sourceOffset(at: max(0, local))
+            if let a = project.asset(mc.angles[ai]), source < -0.001 || source > a.duration - 0.01 {
+                throw EditError.invalid("angle \(angle) (\(a.name)) has no media at that time: source \(r(source)) s of \(r(a.duration)) s; adjust its offset with set_multicam")
+            }
+            next.setCut(at: max(0, local), angle: ai)
+        }
+        try document.apply(remove ? "Remove angle cut" : "Cut to angle \(angle)", origin: origin) { p in try p.updateClip(c.id) { $0.multicam = next } }
+        return multicamInfo(project.clip(c.id)!.clip, next)
+    }
+
+    /// Audio angle (1-based), explicit offsets (seconds per angle, angle 1 is 0), or flatten the clip into plain clips.
+    func setMulticam(_ clip: String, audioAngle: Int?, offsets: [Double]?, flatten: Bool) throws -> MulticamInfo {
+        let (c, mc) = try multicamClip(clip)
+        if flatten {
+            let pieces = c.multicamPieces(in: project)
+            try document.apply("Flatten multicam", origin: origin) { p in
+                let (ti, ci) = try p.clipIndex(c.id)
+                p.tracks[ti].clips.replaceSubrange(ci...ci, with: pieces)
+                p.tracks[ti].clips.sort { $0.start < $1.start }
+            }
+            var info = multicamInfo(c, mc); info.note = "flattened into \(pieces.count) clip\(pieces.count == 1 ? "" : "s"): \(pieces.map(\.id.short).joined(separator: ", "))"
+            return info
+        }
+        var next = mc
+        if let audioAngle { guard audioAngle >= 1, audioAngle <= mc.angles.count else { throw EditError.invalid("audio_angle must be 1...\(mc.angles.count)") }; next.audioAngle = audioAngle - 1 }
+        if let offsets {
+            guard offsets.count == mc.angles.count else { throw EditError.invalid("offsets needs one value per angle (\(mc.angles.count))") }
+            next.offsets = offsets
+        }
+        try document.apply("Multicam settings", origin: origin) { p in try p.updateClip(c.id) { $0.multicam = next } }
+        return multicamInfo(project.clip(c.id)!.clip, next)
+    }
+
+    /// Recomputes every angle's offset from the audio.
+    func syncAngles(_ clip: String) async throws -> MulticamInfo {
+        let (c, mc) = try multicamClip(clip)
+        guard let base = project.asset(mc.angles[0]) else { throw EditError.notFound("angle 1 asset") }
+        var offsets: [Double] = [0], notes: [String] = []
+        for aid in mc.angles.dropFirst() {
+            guard let a = project.asset(aid) else { offsets.append(0); continue }
+            let r = try await AngleSync.offset(of: a.url, relativeTo: base.url)
+            offsets.append(r.offset); notes.append("\(a.name): \(String(format: "%+.2f", r.offset)) s (confidence \(String(format: "%.2f", r.confidence)))")
+        }
+        var info = try setMulticam(clip, audioAngle: nil, offsets: offsets, flatten: false)
+        info.note = notes.joined(separator: "; ")
+        _ = c
+        return info
+    }
+
+    // MARK: Nested sequences
+
+    struct SequenceInfo: Codable {
+        struct ClipRow: Codable { var id: String, name: String, track: String, start: Double, end: Double }
+        var id: String, name: String, duration: Double, tracks: [String], clips: [ClipRow], rendered: Bool
+        var clip: String?
+        var note: String?
+    }
+    func sequenceInfo(_ seq: Sequence) -> SequenceInfo {
+        SequenceInfo(id: seq.id.short, name: seq.name, duration: r(seq.project.duration), tracks: seq.project.tracks.map(\.name),
+                     clips: seq.project.tracks.flatMap { t in t.clips.map { .init(id: $0.id.short, name: $0.name, track: t.name, start: r($0.start), end: r($0.end)) } },
+                     rendered: FileManager.default.fileExists(atPath: SequenceRenderer.url(for: seq).path))
+    }
+    func resolveSequence(_ text: String) throws -> Sequence {
+        if let id = Project.resolve(text, in: project.sequences.map(\.id)), let s = project.sequence(id) { return s }
+        if let s = project.sequences.first(where: { $0.name.lowercased() == text.lowercased() }) { return s }
+        if let cid = Project.resolve(text, in: project.allClips.map(\.id)), let c = project.clip(cid)?.clip, let s = project.sequence(of: c) { return s }
+        throw EditError.notFound("sequence '\(text)'; sequences: \(project.sequences.map(\.name).joined(separator: ", "))")
+    }
+
+    /// Folds clips into one nested sequence: they leave the timeline (their tracks keep their names inside the
+    /// sequence, times start at 0) and one clip playing the sequence takes their place from the earliest start.
+    /// The render happens before this returns, so the preview plays at once.
+    func nestClips(_ clips: [String], name: String?) async throws -> SequenceInfo {
+        let ids = try clips.map(resolveClip)
+        let picked = ids.compactMap { project.clip($0) }
+        guard !picked.isEmpty else { throw EditError.invalid("no clips to nest") }
+        let minStart = picked.map(\.clip.start).min()!, maxEnd = picked.map(\.clip.end).max()!
+        var sub = Project()
+        sub.settings = project.settings
+        sub.name = name ?? "Sequence \(project.sequences.count + 1)"
+        sub.tracks = []
+        for t in project.tracks {
+            let mine = t.clips.filter { c in ids.contains(c.id) }
+            guard !mine.isEmpty else { continue }
+            var nt = Track(name: t.name, kind: t.kind)
+            nt.clips = mine.map { var c = $0; c.start -= minStart; return c }
+            sub.tracks.append(nt)
+        }
+        let usedAssets = Set(picked.map(\.clip.assetID)).union(picked.flatMap { $0.clip.multicam?.angles ?? [] })
+        sub.assets = project.assets.filter { usedAssets.contains($0.id) }
+        sub.sequences = project.sequences.filter { s in sub.assets.contains { $0.sequenceID == s.id } }
+        let seq = Sequence(name: sub.name, project: sub)
+        let url = try await SequenceRenderer.shared.ensure(seq, depth: 1)
+        // A sequence with no picture is an audio asset, so its clip lands on an audio track.
+        let hasPicture = sub.tracks.contains { $0.kind == .video && !$0.clips.isEmpty }
+        let asset = Asset(name: seq.name, path: url.path, kind: hasPicture ? .sequence : .audio, duration: sub.duration, width: hasPicture ? sub.settings.width : nil, height: hasPicture ? sub.settings.height : nil, sequenceID: seq.id)
+        let hostTrack = picked.sorted { $0.clip.start < $1.clip.start }.first { $0.track.kind == .video }?.track.id
+        var newClip: Clip!
+        try document.apply("Nest \(picked.count) clip\(picked.count == 1 ? "" : "s") into \(seq.name)", origin: origin) { p in
+            _ = p.removeClips(ids)
+            p.sequences.append(seq)
+            p.assets.append(asset)
+            newClip = try p.insertClip(assetID: asset.id, trackID: hostTrack, at: minStart, sourceIn: 0, duration: maxEnd - minStart)
+        }
+        var info = sequenceInfo(seq); info.clip = newClip.id.short
+        return info
+    }
+
+    /// Puts a nested sequence's clips back on the timeline in place of the clip that plays it (the whole sequence,
+    /// from the clip's start; tracks are matched by name and created when missing). The sequence is dropped when
+    /// nothing else plays it.
+    func unnestClip(_ clip: String) throws -> Int {
+        let id = try resolveClip(clip)
+        guard let (track, c) = project.clip(id), let asset = project.asset(c.assetID), let seq = project.sequence(of: c) else { throw EditError.invalid("clip '\(clip)' does not play a nested sequence") }
+        var count = 0
+        try document.apply("Unnest \(seq.name)", origin: origin) { p in
+            _ = p.removeClips([id])
+            for st in seq.project.tracks {
+                let tid: UUID
+                if let existing = p.tracks.first(where: { $0.name == st.name && $0.kind == st.kind }) { tid = existing.id }
+                else { tid = p.addTrack(name: st.name, kind: st.kind).id }
+                let ti = try p.trackIndex(tid)
+                for sc in st.clips { var nc = sc; nc.id = UUID(); nc.start += c.start; p.tracks[ti].clips.append(nc); count += 1 }
+                p.tracks[ti].clips.sort { $0.start < $1.start }
+            }
+            for a in seq.project.assets where p.asset(a.id) == nil { p.assets.append(a) }
+            for s in seq.project.sequences where p.sequence(s.id) == nil { p.sequences.append(s) }
+            if !p.allClips.contains(where: { $0.assetID == asset.id }) { p.assets.removeAll { $0.id == asset.id }; p.sequences.removeAll { $0.id == seq.id } }
+        }
+        _ = track
+        return count
+    }
+
+    func listSequences() -> [SequenceInfo] { project.sequences.map(sequenceInfo) }
+
+    // MARK: Proxies and templates
+
+    struct ProxyInfo: Codable { var asset: String, name: String, status: String, progress: Double? }
+    /// Starts building proxies for every video asset without one; `status` lists where each one stands.
+    @MainActor func makeProxies(enable: Bool) -> [ProxyInfo] {
+        if enable, !project.settings.useProxies { try? setProjectSettings(width: nil, height: nil, fps: nil, name: nil, useProxies: true) }
+        ProxyStore.shared.build(project.assets)
+        return proxyStatus()
+    }
+    @MainActor func proxyStatus() -> [ProxyInfo] {
+        project.assets.filter { $0.kind == .video }.map { a in
+            _ = ProxyStore.shared.ready(for: a)
+            switch ProxyStore.shared.status[a.id] ?? .none {
+            case .none: return ProxyInfo(asset: a.id.short, name: a.name, status: "none", progress: nil)
+            case .building(let p): return ProxyInfo(asset: a.id.short, name: a.name, status: "building", progress: r(p))
+            case .ready: return ProxyInfo(asset: a.id.short, name: a.name, status: "ready", progress: 1)
+            case .failed(let e): return ProxyInfo(asset: a.id.short, name: a.name, status: "failed: \(e)", progress: nil)
+            }
         }
     }
+
+    func listTemplates() -> [Templates.Info] { Templates.list() }
+    /// Replaces the whole project with a template (undoable). Built-ins change the format and empty the timeline.
+    func applyTemplate(_ name: String) throws -> Templates.Info {
+        let p = try Templates.project(named: name)
+        document.apply("Apply template \(name)", origin: origin) { cur in
+            var next = p; next.history = cur.history; cur = next
+        }
+        return Templates.list().first { $0.name.caseInsensitiveCompare(name) == .orderedSame } ?? Templates.Info(name: name, builtin: false, width: p.settings.width, height: p.settings.height, fps: p.settings.fps, summary: "")
+    }
+    func saveTemplate(_ name: String) throws -> String { try Templates.save(project, as: name).path }
 
     private func r(_ x: Double) -> Double { (x * 1000).rounded() / 1000 }
 }

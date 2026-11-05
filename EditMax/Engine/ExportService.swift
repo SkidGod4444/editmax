@@ -7,9 +7,9 @@ enum ExportService {
 
     struct Result: Codable { var path: String; var duration: Double; var bytes: Int }
 
-    static func export(_ project: Project, to url: URL, preset: Preset = .high, progress: ((Double) -> Void)? = nil) async throws -> Result {
+    static func export(_ project: Project, to url: URL, preset: Preset = .high, progress: ((Double) -> Void)? = nil, depth: Int = 0) async throws -> Result {
         guard project.duration > 0 else { throw EditError.invalid("timeline is empty") }
-        let out = try await CompositionBuilder.build(project)   // titles, stills, color and transitions all come from the compositor
+        let out = try await CompositionBuilder.build(project, depth: depth)   // titles, stills, color and transitions all come from the compositor
 
         let presetName: String = {
             switch preset {

@@ -515,6 +515,25 @@ private struct ClipBody: View, Equatable {
                 let w = min(size.width, CGFloat(clip.fadeOut) * pps)
                 ctx.fill(Path { $0.move(to: CGPoint(x: size.width, y: size.height)); $0.addLine(to: CGPoint(x: size.width - w, y: 0)); $0.addLine(to: CGPoint(x: size.width, y: 0)); $0.closeSubpath() }, with: .color(.black.opacity(0.45)))
             }
+            // Multicam: a line per angle cut, labeled with the angle number.
+            if let mc = clip.multicam {
+                for cut in mc.cuts where cut.time >= 0 && cut.time < clip.duration {
+                    let x = max(1, CGFloat(cut.time) * pps)
+                    ctx.stroke(Path { $0.move(to: CGPoint(x: x, y: 0)); $0.addLine(to: CGPoint(x: x, y: size.height)) }, with: .color(.white.opacity(0.85)), lineWidth: 1.5)
+                    ctx.draw(Text("\(cut.angle + 1)").font(.system(size: 9, weight: .bold)).foregroundColor(.white), at: CGPoint(x: x + 8, y: 8))
+                }
+            }
+            // Keyframes: a diamond per animated time, on a thin lane along the bottom of the bar.
+            let kts = clip.keyframeTimes
+            if !kts.isEmpty {
+                let y = size.height - 5, r: CGFloat = 3.5
+                ctx.fill(Path(CGRect(x: 0, y: size.height - 10, width: size.width, height: 10)), with: .color(.black.opacity(0.25)))
+                for kt in kts where kt >= 0 && kt <= clip.duration {
+                    let cx = CGFloat(kt) * pps
+                    let d = Path { $0.move(to: CGPoint(x: cx, y: y - r)); $0.addLine(to: CGPoint(x: cx + r, y: y)); $0.addLine(to: CGPoint(x: cx, y: y + r)); $0.addLine(to: CGPoint(x: cx - r, y: y)); $0.closeSubpath() }
+                    ctx.fill(d, with: .color(.yellow)); ctx.stroke(d, with: .color(.black.opacity(0.6)), lineWidth: 0.5)
+                }
+            }
         }
         .allowsHitTesting(false)
     }
@@ -547,7 +566,7 @@ private struct ClipBody: View, Equatable {
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 6))
             }
-            .overlay { if clip.transitionIn != nil || clip.fadeIn > 0 || clip.fadeOut > 0 { marks.clipShape(RoundedRectangle(cornerRadius: 6)) } }
+            .overlay { if clip.transitionIn != nil || clip.fadeIn > 0 || clip.fadeOut > 0 || clip.isAnimated || clip.multicam != nil { marks.clipShape(RoundedRectangle(cornerRadius: 6)) } }
             .overlay(RoundedRectangle(cornerRadius: 6).stroke(selected ? Color.white : Color.white.opacity(0.12), lineWidth: selected ? 1.5 : 0.5))
             .overlay(alignment: .topLeading) {
                 Text(clip.name).font(.caption2.weight(.medium)).lineLimit(1).foregroundStyle(.white)

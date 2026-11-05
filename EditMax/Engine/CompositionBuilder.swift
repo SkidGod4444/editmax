@@ -21,7 +21,14 @@ enum CompositionBuilder {
 
     /// Builds the AVFoundation composition for a project. Every project track gets two video and two audio composition
     /// tracks (A/B): consecutive clips alternate between them, which is what lets a transition overlap the clip before it.
-    static func build(_ project: Project) async throws -> Output {
+    /// `forPreview` swaps in proxy files where the project asks for them and they exist; the export never does.
+    static func build(_ project: Project, forPreview: Bool = false, depth: Int = 0) async throws -> Output {
+        var proxies: [UUID: URL] = (forPreview && project.settings.useProxies) ? await MainActor.run { Dictionary(uniqueKeysWithValues: project.assets.compactMap { a in ProxyStore.shared.ready(for: a).map { (a.id, $0) } }) } : [:]
+        // Nested sequences play their cached render (rendered now when the cache has none for the current content).
+        for a in project.assets where a.sequenceID != nil {
+            guard let seq = a.sequenceID.flatMap(project.sequence) else { continue }
+            proxies[a.id] = try await SequenceRenderer.shared.ensure(seq, depth: depth + 1)
+        }
         let comp = AVMutableComposition()
         let renderSize = CGSize(width: project.settings.width, height: project.settings.height)
         let total = CMTime(seconds: max(project.duration, 0.1), preferredTimescale: timescale)
@@ -39,6 +46,14 @@ enum CompositionBuilder {
             base.scaleTimeRange(CMTimeRange(start: .zero, duration: one.duration), toDuration: total)
         }
 
+        // Ducking: where the tracks being ducked under have sound.
+        var duckCurves: [UUID: DuckCurve] = [:]
+        for track in project.tracks {
+            guard let duck = track.duck, let src = project.track(duck.sourceTrackID), !src.isMuted, !src.isHidden else { continue }
+            let intervals = src.clips.filter { project.asset($0.assetID)?.kind != .image }.map { ($0.start, $0.end) }
+            if !intervals.isEmpty { duckCurves[track.id] = DuckCurve(intervals: intervals, duck: duck) }
+        }
+
         for track in project.tracks where !track.isHidden {
             let video: [AVMutableCompositionTrack?] = track.kind == .video
                 ? [comp.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid), comp.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid)]
@@ -46,7 +61,13 @@ enum CompositionBuilder {
             let audio = [comp.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid), comp.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)]
             let params = audio.map { $0.map { AVMutableAudioMixInputParameters(track: $0) } }
             var sources: [LayerSource] = []
-            let clips = track.clips.sorted { $0.start < $1.start }
+            // Multicam clips play as one plain piece per angle interval.
+            let clips = track.clips.flatMap { $0.multicamPieces(in: project) }.sorted { $0.start < $1.start }
+            // EQ/gate: one tap per slot, only when a clip on it asks for processing (plain projects never touch a tap).
+            for slot in 0..<2 {
+                let spans = clips.enumerated().filter { $0.offset % 2 == slot && !$0.element.audio.isIdentity }.map { AudioTapContext.Span(start: $0.element.start, end: $0.element.end, audio: $0.element.audio) }
+                if !spans.isEmpty, let tap = AudioTap.make(spans: spans) { params[slot]?.audioTapProcessor = tap }
+            }
             for (i, clip) in clips.enumerated() {
                 guard let asset = project.asset(clip.assetID) else { continue }
                 let slot = i % 2
@@ -57,21 +78,25 @@ enum CompositionBuilder {
                 if let tr = clip.transitionIn, tr.duration > 0.01 {
                     var d = min(tr.duration, clip.duration)
                     if i > 0, let prev = Optional(clips[i - 1]), abs(prev.end - clip.start) < 0.02, let prevAsset = project.asset(prev.assetID) {
-                        if prevAsset.kind != .image { d = min(d, max(0, (prevAsset.duration - prev.sourceOut) / prev.speed)) }
+                        let tailSpeed = max(0.05, prev.speed(at: prev.duration))
+                        if prevAsset.kind != .image { d = min(d, max(0, (prevAsset.duration - prev.sourceOut) / tailSpeed)) }
                         if d > 0.01 {
                             outgoingID = prev.id
                             let pslot = (i - 1) % 2
-                            let extra = CMTimeRange(start: t(prev.sourceOut), duration: t(d * prev.speed))
+                            let extra = CMTimeRange(start: t(prev.sourceOut), duration: t(d * tailSpeed))
                             let av = assetCache[prevAsset.id] ?? AVURLAsset(url: prevAsset.url)
                             if prevAsset.kind != .image {
                                 if let v = video[pslot], let vt = try await av.loadTracks(withMediaType: .video).first {
                                     try v.insertTimeRange(extra, of: vt, at: t(prev.end))
-                                    if prev.speed != 1 { v.scaleTimeRange(CMTimeRange(start: t(prev.end), duration: extra.duration), toDuration: t(d)) }
+                                    if tailSpeed != 1 { v.scaleTimeRange(CMTimeRange(start: t(prev.end), duration: extra.duration), toDuration: t(d)) }
                                 }
-                                if let a = audio[pslot], let at = try await av.loadTracks(withMediaType: .audio).first {
-                                    try a.insertTimeRange(extra, of: at, at: t(prev.end))
-                                    if prev.speed != 1 { a.scaleTimeRange(CMTimeRange(start: t(prev.end), duration: extra.duration), toDuration: t(d)) }
-                                    params[pslot]?.setVolumeRamp(fromStartVolume: track.isMuted ? 0 : Float(prev.volume), toEndVolume: 0, timeRange: CMTimeRange(start: t(prev.end), duration: t(d)))
+                                let prevAudioAsset = prev.audioAssetID.flatMap { project.asset($0) } ?? prevAsset
+                                let pav = prevAudioAsset.id == prevAsset.id ? av : AVURLAsset(url: prevAudioAsset.url)
+                                let audioExtra = CMTimeRange(start: t((prev.audioSourceIn ?? prev.sourceIn) + prev.sourceOffset(at: prev.duration)), duration: extra.duration)
+                                if let a = audio[pslot], let at = try await pav.loadTracks(withMediaType: .audio).first, audioExtra.end.seconds <= prevAudioAsset.duration + 0.01 {
+                                    try a.insertTimeRange(audioExtra, of: at, at: t(prev.end))
+                                    if tailSpeed != 1 { a.scaleTimeRange(CMTimeRange(start: t(prev.end), duration: extra.duration), toDuration: t(d)) }
+                                    params[pslot]?.setVolumeRamp(fromStartVolume: track.isMuted ? 0 : Float(prev.volume(at: prev.duration)), toEndVolume: 0, timeRange: CMTimeRange(start: t(prev.end), duration: t(d)))
                                 }
                             }
                             if let si = sources.firstIndex(where: { $0.clip.id == prev.id }) {
@@ -91,35 +116,42 @@ enum CompositionBuilder {
                     sources.append(LayerSource(trackID: kCMPersistentTrackID_Invalid, still: still, naturalSize: still.extent.size, preferredTransform: .identity, clip: clip, effectiveEnd: clip.end, transitionEnd: transitionEnd, outgoingID: outgoingID))
                     continue
                 }
-                let av = assetCache[asset.id] ?? AVURLAsset(url: asset.url)
+                let av = assetCache[asset.id] ?? AVURLAsset(url: proxies[asset.id] ?? asset.url)
                 assetCache[asset.id] = av
-                let srcRange = CMTimeRange(start: t(clip.sourceIn), duration: t(clip.duration * clip.speed))
-                let at = t(clip.start)
-                let placedRange = CMTimeRange(start: at, duration: srcRange.duration)
-                let targetDur = t(clip.duration)
+                let segments = TimeMap.segments(clip, assetDuration: asset.duration)
                 if let v = video[slot], let vt = try await av.loadTracks(withMediaType: .video).first {
-                    try v.insertTimeRange(srcRange, of: vt, at: at)
-                    if clip.speed != 1 { v.scaleTimeRange(placedRange, toDuration: targetDur) }
+                    try TimeMap.insert(segments, of: vt, into: v)
                     let size = try await vt.load(.naturalSize)
                     let pref = try await vt.load(.preferredTransform)
                     sources.append(LayerSource(trackID: v.trackID, still: nil, naturalSize: size, preferredTransform: pref, clip: clip, effectiveEnd: clip.end, transitionEnd: transitionEnd, outgoingID: outgoingID))
                 }
-                if let a = audio[slot], let atr = try await av.loadTracks(withMediaType: .audio).first, let prm = params[slot] {
-                    try a.insertTimeRange(srcRange, of: atr, at: at)
-                    if clip.speed != 1 { a.scaleTimeRange(placedRange, toDuration: targetDur) }
-                    prm.setVolume(volume, at: at)
-                    // Fades and the transition's crossfade as ramps; the transition ramp wins at the head.
+                // Sound may come from another asset (a multicam piece's audio angle); same time map, its own source offset.
+                let audioAsset = clip.audioAssetID.flatMap { project.asset($0) } ?? asset
+                let aav = audioAsset.id == asset.id ? av : (assetCache[audioAsset.id] ?? AVURLAsset(url: proxies[audioAsset.id] ?? audioAsset.url))
+                assetCache[audioAsset.id] = aav
+                var aclip = clip; if let s = clip.audioSourceIn { aclip.sourceIn = s }
+                let asegments = audioAsset.id == asset.id && clip.audioSourceIn == nil ? segments : TimeMap.segments(aclip, assetDuration: audioAsset.duration)
+                if let a = audio[slot], let atr = try await aav.loadTracks(withMediaType: .audio).first, let prm = params[slot] {
+                    try TimeMap.insert(asegments, of: atr, into: a)
+                    // One volume envelope per clip: keyframes × fades × the transition's crossfade, as back-to-back ramps.
                     let head = transitionEnd.map { $0 - clip.start } ?? clip.fadeIn
-                    if head > 0.01 { prm.setVolumeRamp(fromStartVolume: 0, toEndVolume: volume, timeRange: CMTimeRange(start: at, duration: t(min(head, clip.duration)))) }
-                    if clip.fadeOut > 0.01 {
-                        let fo = min(clip.fadeOut, clip.duration)
-                        prm.setVolumeRamp(fromStartVolume: volume, toEndVolume: 0, timeRange: CMTimeRange(start: t(clip.end - fo), duration: t(fo)))
+                    let env = VolumeEnvelope.points(clip, muted: track.isMuted, headFade: head, duck: duckCurves[track.id])
+                    prm.setVolume(env.first?.1 ?? volume, at: t(clip.start))
+                    for (p0, p1) in zip(env, env.dropFirst()) where p1.0 > p0.0 + 0.0005 {
+                        prm.setVolumeRamp(fromStartVolume: p0.1, toEndVolume: p1.1, timeRange: CMTimeRange(start: t(clip.start + p0.0), end: t(clip.start + p1.0)))
                     }
                 }
             }
             if track.kind == .video { layerSources.append(sources) }
             audioParams.append(contentsOf: params.compactMap { $0 })
         }
+
+        // Composition tracks that got no media (an empty V1, a stills-only track's audio slots) make the export session
+        // fail with "Operation Stopped"; drop them and the mix parameters that point at them.
+        let empty = comp.tracks.filter { $0.segments.isEmpty }
+        let emptyIDs = Set(empty.map(\.trackID))
+        for t in empty { comp.removeTrack(t) }
+        audioParams.removeAll { emptyIDs.contains($0.trackID) }
 
         // Titles, rasterized once per build.
         let texts: [TextLayer] = project.texts.compactMap { tx in
@@ -176,6 +208,72 @@ enum CompositionBuilder {
         let tx = (render.width - w * scale) / 2 - rect.minX * scale
         let ty = (render.height - h * scale) / 2 - rect.minY * scale
         return preferred.concatenating(CGAffineTransform(scaleX: scale, y: scale)).concatenating(CGAffineTransform(translationX: tx, y: ty))
+    }
+}
+
+/// Maps a clip's timeline span onto its media, one constant-rate piece at a time (a speed ramp is many short pieces).
+enum TimeMap {
+    struct Segment { let sourceStart: Double, sourceEnd: Double, timelineStart: Double, timelineEnd: Double }
+
+    static func segments(_ clip: Clip, assetDuration: Double) -> [Segment] {
+        var cuts: [Double] = [0, clip.duration]
+        let ks = clip.keyframes(.speed)
+        for k in ks where k.time > 0 && k.time < clip.duration { cuts.append(k.time) }
+        // Ramped spans (speed changing) get subdivided so each piece can play at one rate.
+        for (a, b) in zip(ks, ks.dropFirst()) where a.ease != .hold && abs(a.value - b.value) > 1e-6 {
+            var x = max(0, a.time) + 0.1
+            while x < min(clip.duration, b.time) { cuts.append(x); x += 0.1 }
+        }
+        cuts = Array(Set(cuts.map { ($0 * 1000).rounded() / 1000 })).sorted()
+        var out: [Segment] = []
+        for (t0, t1) in zip(cuts, cuts.dropFirst()) where t1 > t0 {
+            let s0 = min(assetDuration, clip.sourceIn + clip.sourceOffset(at: t0))
+            let s1 = min(assetDuration, clip.sourceIn + clip.sourceOffset(at: t1))
+            out.append(Segment(sourceStart: s0, sourceEnd: s1, timelineStart: clip.start + t0, timelineEnd: clip.start + t1))
+        }
+        return out
+    }
+
+    /// Inserts each piece and stretches it to its timeline length. Ranges are quantized so the pieces tile exactly:
+    /// a gap or an empty range makes AVFoundation reject the whole composition.
+    static func insert(_ segments: [Segment], of source: AVAssetTrack, into track: AVMutableCompositionTrack) throws {
+        let ts = CompositionBuilder.timescale
+        let q = { (s: Double) in CMTime(value: CMTimeValue((s * Double(ts)).rounded()), timescale: ts) }
+        for seg in segments {
+            let at = q(seg.timelineStart), target = q(seg.timelineEnd) - at
+            guard target.value > 0 else { continue }
+            var src = CMTimeRange(start: q(seg.sourceStart), end: q(seg.sourceEnd))
+            if src.duration.value < 1 { src = CMTimeRange(start: src.start, duration: CMTime(value: 1, timescale: ts)) }   // a freeze frame: one tick, held
+            try track.insertTimeRange(src, of: source, at: at)
+            if src.duration != target { track.scaleTimeRange(CMTimeRange(start: at, duration: src.duration), toDuration: target) }
+        }
+    }
+}
+
+/// A clip's volume over time as (clip-local seconds, volume) breakpoints, for `setVolumeRamp` piece by piece.
+enum VolumeEnvelope {
+    static func points(_ clip: Clip, muted: Bool, headFade: Double, duck: DuckCurve? = nil) -> [(Double, Float)] {
+        if muted { return [(0, 0), (clip.duration, 0)] }
+        var times: Set<Double> = [0, clip.duration]
+        for t in duck?.times ?? [] where t > clip.start && t < clip.end { times.insert(t - clip.start) }
+        let head = min(max(0, headFade), clip.duration), tail = min(max(0, clip.fadeOut), clip.duration)
+        if head > 0.01 { times.insert(head) }
+        if tail > 0.01 { times.insert(clip.duration - tail) }
+        let ks = clip.keyframes(.volume)
+        for k in ks where k.time > 0 && k.time < clip.duration { times.insert(k.time) }
+        for (a, b) in zip(ks, ks.dropFirst()) where a.ease == .smooth {   // sample the curve so straight ramps follow it
+            var x = max(0, a.time) + 0.1
+            while x < min(clip.duration, b.time) { times.insert(x); x += 0.1 }
+        }
+        for (a, b) in zip(ks, ks.dropFirst()) where a.ease == .hold && b.time > 0 && b.time < clip.duration { times.insert(b.time - 0.001) }
+        let sorted = times.sorted()
+        return sorted.map { lt in
+            var f = 1.0
+            if head > 0.01, lt < head { f = min(f, max(0, lt / head)) }
+            if tail > 0.01, lt > clip.duration - tail { f = min(f, max(0, (clip.duration - lt) / tail)) }
+            let d = duck?.factor(at: clip.start + lt) ?? 1
+            return (lt, Float(max(0, clip.volume(at: lt) * f * d)))
+        }
     }
 }
 

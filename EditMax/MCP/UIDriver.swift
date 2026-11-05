@@ -144,23 +144,12 @@ enum UIDriver {
     /// SwiftUI gestures only run while EditMax is the active app with a key window. For one gesture EditMax is activated,
     /// then the app that was in front gets the focus back and the window its place in the stack. Keystrokes arriving
     /// meanwhile are dropped, not applied, so nothing typed into another app can split or delete a clip.
+    /// Runs `body` with whether the EditMax window is the active, key window. The driver never activates the app itself:
+    /// bringing the window forward would steal the user's focus (and macOS may then refuse to hand it back), so views
+    /// register tap/drag/key handlers instead, and plain controls take posted events without activation.
     private static func withActiveWindow<T>(_ w: NSWindow, _ body: (_ active: Bool) async throws -> T) async throws -> T {
-        if NSApp.isActive && w.isKeyWindow { return try await body(true) }
-        let previous = NSWorkspace.shared.frontmostApplication
-        let above = windowAbove(w)
-        let monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) { _ in nil }
-        defer {
-            if let monitor { NSEvent.removeMonitor(monitor) }
-            if let previous, previous != .current {
-                if #available(macOS 14, *) { previous.activate(from: .current, options: []) } else { previous.activate(options: []) }
-            }
-            if let above { w.order(.below, relativeTo: above) }
-        }
-        NSApp.activate(ignoringOtherApps: true)
-        w.makeKeyAndOrderFront(nil)
-        try await Task.sleep(for: .milliseconds(100))
         let active = NSApp.isActive && w.isKeyWindow
-        DebugLog.event("ui-activate", ["active": active, "previous": previous?.localizedName ?? ""])
+        if !active { acceptFirstMouse(in: w) }
         return try await body(active)
     }
 
@@ -251,13 +240,15 @@ enum UIDriver {
     }
 
     /// The EditMax window's own pixels through ScreenCaptureKit, filtered to this one window (never the screen around
-    /// it). macOS asks for the Screen Recording permission once.
-    /// Without that permission it falls back to rendering the window's layer tree, which misses some inspector controls.
+    /// it), when the Screen Recording permission is already granted. The tool never asks for it: a debug build is
+    /// re-signed on every build, so macOS would forget the grant and nag again each time. Without the permission it
+    /// renders the window's layer tree instead, which misses some inspector controls.
     static func screenshot(maxWidth: Int) async throws -> (png: Data, method: String) {
         guard let w = window else { throw EditError.invalid("no window") }
         var method = "window-pixels"
         var cg: CGImage
         do {
+            guard CGPreflightScreenCaptureAccess() else { throw EditError.invalid("Screen Recording not granted") }
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
             guard let win = content.windows.first(where: { $0.windowID == CGWindowID(w.windowNumber) }) else { throw EditError.invalid("window not capturable") }
             let filter = SCContentFilter(desktopIndependentWindow: win)
@@ -269,7 +260,7 @@ enum UIDriver {
             cg = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: cfg)
         } catch {
             DebugLog.event("ui-screenshot-fallback", ["error": error.localizedDescription])
-            method = "layer-render (grant Screen Recording to EditMax in System Settings → Privacy & Security for true pixels)"
+            method = "layer-render (Screen Recording not granted to EditMax; grant it in System Settings → Privacy & Security for true pixels; the tool never prompts)"
             cg = try renderLayers(of: w)
         }
         var image = NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))

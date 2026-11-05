@@ -42,6 +42,7 @@ targets:
       path: EditMax/Resources/Info.plist
       properties:
         CFBundleDisplayName: EditMax
+        CFBundleIconFile: AppIcon
         CFBundleShortVersionString: "0.1.0"
         CFBundleVersion: "1"
         LSMinimumSystemVersion: "15.0"
@@ -61,7 +62,11 @@ targets:
       base:
         SWIFT_VERSION: "5.0"
         SWIFT_STRICT_CONCURRENCY: minimal
-        CODE_SIGN_IDENTITY: "-"
+        # A stable signing identity: with ad-hoc ("-") signing every build is a new app to macOS, so Screen Recording
+        # and keychain grants are forgotten on each rebuild. Falls back to ad-hoc when the certificate is not installed.
+        # Referenced by SHA-1 hash: by name Xcode insists on a matching team and this certificate's team ID is not
+        # the one in its common name. Run `security find-identity -v -p codesigning` to see the installed identities.
+        CODE_SIGN_IDENTITY: DEB9BB318F916293DEB2D9B0378F54C8D5154E81
         CODE_SIGNING_REQUIRED: "NO"
         CODE_SIGN_STYLE: Manual
         ENABLE_HARDENED_RUNTIME: "NO"

@@ -14,6 +14,12 @@ final class PlayerController: ObservableObject {
     @Published private(set) var renderSize = CGSize(width: 1920, height: 1080)
     @Published private(set) var buildError: String?
     @Published private(set) var lastOutput: CompositionBuilder.Output?
+    /// Scopes (waveform + histogram) of the frame on screen, sampled while `scopesEnabled`.
+    @Published var scopesEnabled = false { didSet { if scopesEnabled { attachScopes(); sampleScopes() } else { scopes = nil } } }
+    @Published private(set) var scopes: ScopeData?
+    private var videoOutput: AVPlayerItemVideoOutput?
+    private let scopeQueue = DispatchQueue(label: "io.openhorizon.editmax.scopes", qos: .utility)
+    private var scopeBusy = false
 
     private var timeObserver: Any?
     private var rebuildTask: Task<Void, Never>?
@@ -23,6 +29,7 @@ final class PlayerController: ObservableObject {
         timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(value: 1, timescale: 30), queue: .main) { [weak self] t in
             guard let self else { return }
             self.currentTime = t.seconds.isFinite ? t.seconds : 0
+            if self.scopesEnabled { self.sampleScopes() }
             if self.player.timeControlStatus != .playing, self.isPlaying { self.isPlaying = false; self.rate = 0 }
             if self.rate < 0, self.currentTime <= 0.001 { self.pause() }
         }
@@ -34,6 +41,9 @@ final class PlayerController: ObservableObject {
         document.$revision
             .debounce(for: .milliseconds(120), scheduler: DispatchQueue.main)
             .sink { [weak self, weak document] _ in guard let document else { return }; self?.rebuild(document.project) }
+            .store(in: &cancellables)
+        ProxyStore.shared.$version.dropFirst().receive(on: DispatchQueue.main)
+            .sink { [weak self, weak document] _ in guard let document, document.project.settings.useProxies else { return }; self?.rebuild(document.project) }
             .store(in: &cancellables)
         document.$seekRequest
             .compactMap { $0 }
@@ -50,7 +60,7 @@ final class PlayerController: ObservableObject {
         rebuildTask?.cancel()
         rebuildTask = Task {
             do {
-                let out = try await CompositionBuilder.build(project)
+                let out = try await CompositionBuilder.build(project, forPreview: true)
                 guard !Task.isCancelled else { return }
                 let item = AVPlayerItem(asset: out.composition)
                 item.videoComposition = out.videoComposition
@@ -60,10 +70,32 @@ final class PlayerController: ObservableObject {
                 renderSize = out.renderSize
                 lastOutput = out
                 buildError = nil
+                if scopesEnabled { attachScopes() }
                 if keep.isValid, keep.seconds < out.duration.seconds { await item.seek(to: keep, toleranceBefore: .zero, toleranceAfter: .zero) }
+                if scopesEnabled { try? await Task.sleep(for: .milliseconds(150)); sampleScopes() }
             } catch {
                 buildError = error.localizedDescription
             }
+        }
+    }
+
+    private func attachScopes() {
+        guard let item = player.currentItem else { return }
+        if let out = videoOutput, item.outputs.contains(out) { return }
+        let out = AVPlayerItemVideoOutput(pixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA])
+        item.add(out)
+        videoOutput = out
+    }
+
+    /// Pulls the frame at the current time and computes the scopes off the main thread (one at a time).
+    func sampleScopes() {
+        guard scopesEnabled, !scopeBusy, let out = videoOutput else { return }
+        let t = player.currentTime()
+        guard let buf = out.copyPixelBuffer(forItemTime: t, itemTimeForDisplay: nil) else { return }
+        scopeBusy = true
+        scopeQueue.async { [weak self] in
+            let data = ScopeSampler.sample(buf)
+            DispatchQueue.main.async { self?.scopeBusy = false; if let data { self?.scopes = data } }
         }
     }
 
@@ -83,7 +115,7 @@ final class PlayerController: ObservableObject {
     }
     func seek(to seconds: Double) {
         let t = CMTime(seconds: max(0, seconds), preferredTimescale: CompositionBuilder.timescale)
-        player.seek(to: t, toleranceBefore: .zero, toleranceAfter: .zero)
+        player.seek(to: t, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in self?.sampleScopes() }
         currentTime = max(0, seconds)
     }
     func step(frames: Int, fps: Double) { pause(); seek(to: currentTime + Double(frames) / max(1, fps)) }

@@ -8,6 +8,7 @@ struct AssetsSidebar: View {
     @State private var error: String?
     @State private var hovered: UUID?
     @ObservedObject private var thumbnails = ThumbnailStore.shared
+    @ObservedObject private var proxies = ProxyStore.shared
 
     var body: some View {
         VStack(spacing: 0) {
@@ -31,7 +32,12 @@ struct AssetsSidebar: View {
                             tile(asset)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(asset.name).font(.system(size: 12, weight: .medium)).lineLimit(1).truncationMode(.middle)
-                                Text(subtitle(asset)).font(.system(size: 10)).foregroundStyle(.secondary).monospacedDigit()
+                                HStack(spacing: 4) {
+                                    Text(subtitle(asset)).font(.system(size: 10)).foregroundStyle(.secondary).monospacedDigit()
+                                    if document.project.settings.useProxies, asset.kind == .video, proxies.ready(for: asset) != nil {
+                                        Text("PROXY").font(.system(size: 8, weight: .bold)).padding(.horizontal, 3).padding(.vertical, 1).background(Color.orange.opacity(0.3), in: RoundedRectangle(cornerRadius: 3)).help("Previewing from a 960×540 proxy; the export uses the original")
+                                    }
+                                }
                             }
                             Spacer(minLength: 0)
                         }
@@ -43,7 +49,7 @@ struct AssetsSidebar: View {
                             DebugLog.event("drag-start", ["asset": asset.name])
                             return NSItemProvider(object: AssetDrag.string(asset.id) as NSString)
                         } preview: {
-                            Label(asset.name, systemImage: asset.kind == .video ? "film" : asset.kind == .audio ? "waveform" : "photo")
+                            Label(asset.name, systemImage: asset.kind == .video ? "film" : asset.kind == .audio ? "waveform" : asset.kind == .sequence ? "film.stack" : "photo")
                                 .padding(6).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
                         }
                         .onTapGesture(count: 2) { add(asset) }
@@ -98,12 +104,12 @@ struct AssetsSidebar: View {
     @ViewBuilder private func tile(_ a: Asset) -> some View {
         ZStack {
             RoundedRectangle(cornerRadius: 4).fill(a.kind == .audio ? Color.green.opacity(0.25) : Color.black.opacity(0.35))
-            if a.kind == .video, let frame = thumbnails.strips[a.id]?.frames.first {
+            if a.kind == .video || a.kind == .sequence, let frame = thumbnails.strips[a.id]?.frames.first {
                 Image(decorative: frame, scale: 1).resizable().aspectRatio(contentMode: .fill)
             } else if a.kind == .image, let img = NSImage(contentsOfFile: a.path) {
                 Image(nsImage: img).resizable().aspectRatio(contentMode: .fill)
             } else {
-                Image(systemName: a.kind == .video ? "film" : a.kind == .audio ? "waveform" : "photo").font(.system(size: 13)).foregroundStyle(a.kind == .audio ? Color.green : .secondary)
+                Image(systemName: a.kind == .video ? "film" : a.kind == .audio ? "waveform" : a.kind == .sequence ? "film.stack" : "photo").font(.system(size: 13)).foregroundStyle(a.kind == .audio ? Color.green : .secondary)
             }
         }
         .frame(width: 56, height: 32)

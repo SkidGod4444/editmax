@@ -6,9 +6,20 @@ struct ProjectSettings: Codable, Equatable {
     var width: Int = 1920
     var height: Int = 1080
     var fps: Double = 30
+    /// Preview from low-resolution proxy files when they exist; the export always uses the originals.
+    var useProxies: Bool = false
+
+    init(width: Int = 1920, height: Int = 1080, fps: Double = 30, useProxies: Bool = false) { self.width = width; self.height = height; self.fps = fps; self.useProxies = useProxies }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        width = try c.decodeIfPresent(Int.self, forKey: .width) ?? 1920
+        height = try c.decodeIfPresent(Int.self, forKey: .height) ?? 1080
+        fps = try c.decodeIfPresent(Double.self, forKey: .fps) ?? 30
+        useProxies = try c.decodeIfPresent(Bool.self, forKey: .useProxies) ?? false
+    }
 }
 
-enum AssetKind: String, Codable { case video, audio, image }
+enum AssetKind: String, Codable { case video, audio, image, sequence }
 
 struct Asset: Codable, Identifiable, Equatable {
     var id: UUID = UUID()
@@ -19,6 +30,8 @@ struct Asset: Codable, Identifiable, Equatable {
     var duration: Double            // seconds; images use 5s default
     var width: Int? = nil
     var height: Int? = nil
+    /// For `kind == .sequence`: the `Project.sequences` entry this asset plays (its path is the cached render).
+    var sequenceID: UUID? = nil
     var url: URL { URL(fileURLWithPath: path) }
 }
 
@@ -47,8 +60,33 @@ struct ClipColor: Codable, Equatable {
     var saturation: Double = 1
     var temperature: Double = 0
     var tint: Double = 0
+    /// Tone curve lifts (+) or drops (−) of the shadows, midtones and highlights, -1 to 1.
+    var shadows: Double = 0
+    var midtones: Double = 0
+    var highlights: Double = 0
+    /// Saturation that favours muted colors, -1 to 1.
+    var vibrance: Double = 0
+    /// A look: a built-in name (`Looks.builtin`) or the path of a `.cube` file, blended by `lutMix`.
+    var lut: String? = nil
+    var lutMix: Double = 1
     var isIdentity: Bool { self == ClipColor() }
     static let identity = ClipColor()
+
+    init() {}
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        exposure = try c.decodeIfPresent(Double.self, forKey: .exposure) ?? 0
+        contrast = try c.decodeIfPresent(Double.self, forKey: .contrast) ?? 1
+        saturation = try c.decodeIfPresent(Double.self, forKey: .saturation) ?? 1
+        temperature = try c.decodeIfPresent(Double.self, forKey: .temperature) ?? 0
+        tint = try c.decodeIfPresent(Double.self, forKey: .tint) ?? 0
+        shadows = try c.decodeIfPresent(Double.self, forKey: .shadows) ?? 0
+        midtones = try c.decodeIfPresent(Double.self, forKey: .midtones) ?? 0
+        highlights = try c.decodeIfPresent(Double.self, forKey: .highlights) ?? 0
+        vibrance = try c.decodeIfPresent(Double.self, forKey: .vibrance) ?? 0
+        lut = try c.decodeIfPresent(String.self, forKey: .lut)
+        lutMix = try c.decodeIfPresent(Double.self, forKey: .lutMix) ?? 1
+    }
 }
 
 /// A transition into a clip from the clip that ends where it starts. It takes the first `duration` seconds of the
@@ -62,6 +100,38 @@ struct Transition: Codable, Equatable {
     }
     var kind: Kind = .crossDissolve
     var duration: Double = 0.5
+}
+
+/// One animated value of a clip parameter, at a clip-local time (0 = the clip's start). `ease` says how the value
+/// moves to the next keyframe: linear, smooth (ease in and out), or hold (jump at the next keyframe).
+struct Keyframe: Codable, Equatable {
+    enum Ease: String, Codable, CaseIterable { case linear, smooth, hold }
+    var time: Double
+    var value: Double
+    var ease: Ease = .linear
+
+    init(time: Double, value: Double, ease: Ease = .linear) { self.time = time; self.value = value; self.ease = ease }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        time = try c.decode(Double.self, forKey: .time)
+        value = try c.decode(Double.self, forKey: .value)
+        ease = try c.decodeIfPresent(Ease.self, forKey: .ease) ?? .linear
+    }
+}
+
+/// Every clip parameter that can carry keyframes.
+enum ClipParam: String, Codable, CaseIterable {
+    case scale, x, y, rotation, opacity, exposure, contrast, saturation, temperature, tint, shadows, midtones, highlights, vibrance, lutMix, volume, speed
+    var title: String {
+        switch self {
+        case .scale: return "Scale"; case .x: return "Position X"; case .y: return "Position Y"; case .rotation: return "Rotation"; case .opacity: return "Opacity"
+        case .exposure: return "Exposure"; case .contrast: return "Contrast"; case .saturation: return "Saturation"; case .temperature: return "Temperature"; case .tint: return "Tint"
+        case .shadows: return "Shadows"; case .midtones: return "Midtones"; case .highlights: return "Highlights"; case .vibrance: return "Vibrance"; case .lutMix: return "Look mix"
+        case .volume: return "Volume"; case .speed: return "Speed"
+        }
+    }
+    static let transformParams: [ClipParam] = [.scale, .x, .y, .rotation]
+    static let colorParams: [ClipParam] = [.exposure, .contrast, .saturation, .temperature, .tint, .shadows, .midtones, .highlights, .vibrance, .lutMix]
 }
 
 struct Clip: Codable, Identifiable, Equatable {
@@ -79,8 +149,18 @@ struct Clip: Codable, Identifiable, Equatable {
     var fadeIn: Double = 0     // seconds; picture from black and sound from silence
     var fadeOut: Double = 0
     var transitionIn: Transition? = nil
+    /// Keyframes per parameter (`ClipParam` raw values), sorted by time. A parameter with keyframes ignores its plain field.
+    var animations: [String: [Keyframe]] = [:]
+    /// EQ, high-pass and gate for the clip's sound.
+    var audio = ClipAudio()
+    /// Several synchronized angles behind one clip (see `Multicam`); nil for a plain clip.
+    var multicam: Multicam? = nil
+    /// Sound from another asset than the picture (a multicam piece's audio angle); nil = the clip's own asset.
+    var audioAssetID: UUID? = nil
+    var audioSourceIn: Double? = nil
     var end: Double { start + duration }
-    var sourceOut: Double { sourceIn + duration * speed }
+    /// Where the clip's media ends in the asset: with a speed ramp, the integral of speed over the clip.
+    var sourceOut: Double { sourceIn + sourceOffset(at: duration) }
 
     init(id: UUID = UUID(), assetID: UUID, name: String, start: Double, duration: Double, sourceIn: Double = 0, speed: Double = 1, volume: Double = 1, opacity: Double = 1) {
         self.id = id; self.assetID = assetID; self.name = name; self.start = start; self.duration = duration
@@ -104,6 +184,192 @@ struct Clip: Codable, Identifiable, Equatable {
         fadeIn = try c.decodeIfPresent(Double.self, forKey: .fadeIn) ?? 0
         fadeOut = try c.decodeIfPresent(Double.self, forKey: .fadeOut) ?? 0
         transitionIn = try c.decodeIfPresent(Transition.self, forKey: .transitionIn)
+        animations = try c.decodeIfPresent([String: [Keyframe]].self, forKey: .animations) ?? [:]
+        audio = try c.decodeIfPresent(ClipAudio.self, forKey: .audio) ?? ClipAudio()
+        multicam = try c.decodeIfPresent(Multicam.self, forKey: .multicam)
+        audioAssetID = try c.decodeIfPresent(UUID.self, forKey: .audioAssetID)
+        audioSourceIn = try c.decodeIfPresent(Double.self, forKey: .audioSourceIn)
+    }
+
+    /// The two clips a split at `local` seconds produces; the right one gets a new id and no transition or fade-in.
+    func split(atLocal local: Double) -> (Clip, Clip) {
+        var left = self, right = self
+        right.id = UUID()
+        let consumed = sourceOffset(at: local)
+        right.sourceIn = sourceIn + consumed
+        if let s = audioSourceIn { right.audioSourceIn = s + consumed }
+        left.duration = local
+        right.start = start + local
+        right.duration = duration - local
+        right.shiftKeyframes(by: -local)
+        right.transitionIn = nil
+        right.fadeIn = 0; left.fadeOut = 0
+        if let mc = multicam {
+            var l = mc, r = mc
+            l.cuts = mc.cuts.filter { $0.time < local }
+            r.cuts = [MulticamCut(time: 0, angle: mc.angle(at: local))] + mc.cuts.filter { $0.time > local }.map { MulticamCut(time: $0.time - local, angle: $0.angle) }
+            left.multicam = l; right.multicam = r
+        }
+        return (left, right)
+    }
+
+    /// What the engine plays for this clip: itself, or for a multicam clip one plain piece per cut interval, each on
+    /// its angle's asset (source time shifted by the angle's offset) with sound from the audio angle. Piece 0 keeps
+    /// the clip's id; the others derive theirs from it so a rebuild yields the same ids.
+    func multicamPieces(in project: Project) -> [Clip] {
+        guard let mc = multicam, !mc.angles.isEmpty else { return [self] }
+        let times = Array(Set(mc.cuts.map(\.time).filter { $0 > 0.01 && $0 < duration - 0.01 })).sorted()
+        var rest = self, pieces: [Clip] = []
+        for t in times { let (l, r) = rest.split(atLocal: t - (rest.start - start)); pieces.append(l); rest = r }
+        pieces.append(rest)
+        return pieces.enumerated().map { i, piece in
+            var p = piece
+            let ai = mc.angle(at: piece.start - start + 0.001)
+            let au = min(max(0, mc.audioAngle), mc.angles.count - 1)
+            p.assetID = mc.angles[ai]
+            p.sourceIn = max(0, piece.sourceIn + mc.offset(ai))
+            if let a = project.asset(p.assetID) { p.sourceIn = min(p.sourceIn, max(0, a.duration - 0.01)) }
+            p.audioAssetID = mc.angles[au]
+            p.audioSourceIn = max(0, piece.sourceIn + mc.offset(au))
+            p.multicam = nil
+            p.name = "\(name) ∠\(ai + 1)"
+            if i > 0 { var u = id.uuid; u.0 ^= UInt8(i & 0xff); u.1 ^= UInt8((i >> 8) & 0xff); p.id = UUID(uuid: u) }   // leading bytes: short ids stay distinct
+            return p
+        }
+    }
+}
+
+// MARK: - Keyframe evaluation (all times clip-local seconds)
+
+extension Clip {
+    func keyframes(_ p: ClipParam) -> [Keyframe] { animations[p.rawValue] ?? [] }
+    func isAnimated(_ p: ClipParam) -> Bool { !(animations[p.rawValue]?.isEmpty ?? true) }
+    var isAnimated: Bool { animations.values.contains { !$0.isEmpty } }
+    /// Every keyframe time of the clip, for the timeline marks and prev/next navigation.
+    var keyframeTimes: [Double] { Array(Set(animations.values.flatMap { $0.map(\.time) })).sorted() }
+
+    /// The plain (unanimated) value of a parameter.
+    func baseValue(_ p: ClipParam) -> Double {
+        switch p {
+        case .scale: return transform.scale; case .x: return transform.x; case .y: return transform.y; case .rotation: return transform.rotation
+        case .opacity: return opacity
+        case .exposure: return color.exposure; case .contrast: return color.contrast; case .saturation: return color.saturation
+        case .temperature: return color.temperature; case .tint: return color.tint
+        case .shadows: return color.shadows; case .midtones: return color.midtones; case .highlights: return color.highlights; case .vibrance: return color.vibrance; case .lutMix: return color.lutMix
+        case .volume: return volume; case .speed: return speed
+        }
+    }
+
+    /// The value of a parameter at a clip-local time: the plain value, or the keyframes interpolated.
+    func value(_ p: ClipParam, at local: Double) -> Double {
+        let ks = keyframes(p)
+        guard let first = ks.first, let last = ks.last else { return baseValue(p) }
+        if local <= first.time { return first.value }
+        if local >= last.time { return last.value }
+        var i = 0
+        while i + 1 < ks.count, ks[i + 1].time <= local { i += 1 }
+        let a = ks[i], b = ks[i + 1]
+        return Self.interpolate(a, b, at: local)
+    }
+
+    static func interpolate(_ a: Keyframe, _ b: Keyframe, at t: Double) -> Double {
+        let span = b.time - a.time
+        guard span > 1e-9 else { return b.value }
+        let u = max(0, min(1, (t - a.time) / span))
+        switch a.ease {
+        case .hold: return a.value
+        case .linear: return a.value + (b.value - a.value) * u
+        case .smooth: let s = u * u * (3 - 2 * u); return a.value + (b.value - a.value) * s
+        }
+    }
+
+    func transform(at local: Double) -> ClipTransform {
+        var t = transform
+        if isAnimated(.scale) { t.scale = value(.scale, at: local) }
+        if isAnimated(.x) { t.x = value(.x, at: local) }
+        if isAnimated(.y) { t.y = value(.y, at: local) }
+        if isAnimated(.rotation) { t.rotation = value(.rotation, at: local) }
+        return t
+    }
+    func color(at local: Double) -> ClipColor {
+        var c = color
+        if isAnimated(.exposure) { c.exposure = value(.exposure, at: local) }
+        if isAnimated(.contrast) { c.contrast = value(.contrast, at: local) }
+        if isAnimated(.saturation) { c.saturation = value(.saturation, at: local) }
+        if isAnimated(.temperature) { c.temperature = value(.temperature, at: local) }
+        if isAnimated(.tint) { c.tint = value(.tint, at: local) }
+        if isAnimated(.shadows) { c.shadows = value(.shadows, at: local) }
+        if isAnimated(.midtones) { c.midtones = value(.midtones, at: local) }
+        if isAnimated(.highlights) { c.highlights = value(.highlights, at: local) }
+        if isAnimated(.vibrance) { c.vibrance = value(.vibrance, at: local) }
+        if isAnimated(.lutMix) { c.lutMix = value(.lutMix, at: local) }
+        return c
+    }
+    func opacity(at local: Double) -> Double { value(.opacity, at: local) }
+    func volume(at local: Double) -> Double { value(.volume, at: local) }
+    func speed(at local: Double) -> Double { max(0, value(.speed, at: local)) }
+
+    /// Media consumed between the clip's start and a clip-local time: ∫ speed dt, exact for every ease.
+    func sourceOffset(at local: Double) -> Double {
+        let ks = keyframes(.speed)
+        guard let first = ks.first, let last = ks.last else { return max(0, local) * speed }
+        let end = max(0, local)
+        var acc = 0.0
+        // Before the first keyframe the speed is constant at its value.
+        acc += min(end, max(0, first.time)) * first.value
+        if end <= first.time { return acc }
+        for (a, b) in zip(ks, ks.dropFirst()) {
+            let s0 = max(0, a.time), s1 = min(end, b.time)
+            guard s1 > s0 else { if a.time >= end { break } else { continue } }
+            let span = b.time - a.time
+            let x0 = (s0 - a.time) / span, x1 = (s1 - a.time) / span
+            let f: (Double) -> Double
+            switch a.ease {
+            case .hold: f = { x in a.value * x }
+            case .linear: f = { x in a.value * x + (b.value - a.value) * x * x / 2 }
+            case .smooth: f = { x in a.value * x + (b.value - a.value) * (x * x * x - x * x * x * x / 2) }
+            }
+            acc += (f(x1) - f(x0)) * span
+        }
+        if end > last.time { acc += (end - max(0, last.time)) * last.value }
+        return acc
+    }
+
+    /// Adds or replaces a keyframe (same time within a frame), keeping the list sorted.
+    mutating func setKeyframe(_ p: ClipParam, at local: Double, value v: Double, ease: Keyframe.Ease? = nil) {
+        var ks = keyframes(p)
+        if let i = ks.firstIndex(where: { abs($0.time - local) < 1.0 / 120 }) { ks[i].value = v; if let ease { ks[i].ease = ease } }
+        else { ks.append(Keyframe(time: local, value: v, ease: ease ?? .linear)) }
+        ks.sort { $0.time < $1.time }
+        animations[p.rawValue] = ks
+    }
+    @discardableResult
+    mutating func removeKeyframe(_ p: ClipParam, at local: Double) -> Bool {
+        var ks = keyframes(p)
+        guard let i = ks.firstIndex(where: { abs($0.time - local) < 1.0 / 120 }) else { return false }
+        ks.remove(at: i)
+        animations[p.rawValue] = ks.isEmpty ? nil : ks
+        return true
+    }
+    /// Drops every keyframe of a parameter, freezing it at the value it has at `local` (nil keeps the plain value).
+    mutating func clearAnimation(_ p: ClipParam, freezeAt local: Double? = nil) {
+        if let local, isAnimated(p) { setBase(p, value(p, at: local)) }
+        animations[p.rawValue] = nil
+    }
+    mutating func setBase(_ p: ClipParam, _ v: Double) {
+        switch p {
+        case .scale: transform.scale = v; case .x: transform.x = v; case .y: transform.y = v; case .rotation: transform.rotation = v
+        case .opacity: opacity = v
+        case .exposure: color.exposure = v; case .contrast: color.contrast = v; case .saturation: color.saturation = v
+        case .temperature: color.temperature = v; case .tint: color.tint = v
+        case .shadows: color.shadows = v; case .midtones: color.midtones = v; case .highlights: color.highlights = v; case .vibrance: color.vibrance = v; case .lutMix: color.lutMix = v
+        case .volume: volume = v; case .speed: speed = v
+        }
+    }
+    /// Moves every keyframe in time (a head trim or split changes where local 0 is).
+    mutating func shiftKeyframes(by delta: Double) {
+        guard delta != 0 else { return }
+        for k in animations.keys { animations[k] = animations[k]?.map { var x = $0; x.time += delta; return x } }
     }
 }
 
@@ -122,6 +388,23 @@ struct Track: Codable, Identifiable, Equatable {
     var clips: [Clip] = []
     var isMuted = false
     var isHidden = false
+    /// Automatic ducking under another track's clips (audio tracks and video tracks with sound alike).
+    var duck: Ducking? = nil
+
+    init(id: UUID = UUID(), name: String, kind: TrackKind, clips: [Clip] = [], isMuted: Bool = false, isHidden: Bool = false, duck: Ducking? = nil) {
+        self.id = id; self.name = name; self.kind = kind; self.clips = clips; self.isMuted = isMuted; self.isHidden = isHidden; self.duck = duck
+    }
+    // Every optional key has a default, so files from any earlier version open.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        name = try c.decode(String.self, forKey: .name)
+        kind = try c.decode(TrackKind.self, forKey: .kind)
+        clips = try c.decodeIfPresent([Clip].self, forKey: .clips) ?? []
+        isMuted = try c.decodeIfPresent(Bool.self, forKey: .isMuted) ?? false
+        isHidden = try c.decodeIfPresent(Bool.self, forKey: .isHidden) ?? false
+        duck = try c.decodeIfPresent(Ducking.self, forKey: .duck)
+    }
 }
 
 struct TextOverlay: Codable, Identifiable, Equatable {
@@ -174,6 +457,8 @@ struct Project: Codable, Equatable {
     var texts: [TextOverlay] = []
     var markers: [Marker] = []
     var transcripts: [String: Transcript]? = nil   // keyed by asset id; a cache, left out of history snapshots
+    /// Nested sequences (timelines folded into one clip); assets of kind `.sequence` point at them.
+    var sequences: [Sequence] = []
     var history: [HistoryEntry] = []
 
     init() {}
@@ -188,6 +473,7 @@ struct Project: Codable, Equatable {
         texts = try c.decodeIfPresent([TextOverlay].self, forKey: .texts) ?? []
         markers = try c.decodeIfPresent([Marker].self, forKey: .markers) ?? []
         transcripts = try c.decodeIfPresent([String: Transcript].self, forKey: .transcripts)
+        sequences = try c.decodeIfPresent([Sequence].self, forKey: .sequences) ?? []
         history = try c.decodeIfPresent([HistoryEntry].self, forKey: .history) ?? []
     }
 
@@ -198,6 +484,9 @@ struct Project: Codable, Equatable {
     }
 
     func asset(_ id: UUID) -> Asset? { assets.first { $0.id == id } }
+    func sequence(_ id: UUID) -> Sequence? { sequences.first { $0.id == id } }
+    /// The nested sequence a clip plays, if its asset is one.
+    func sequence(of clip: Clip) -> Sequence? { asset(clip.assetID)?.sequenceID.flatMap(sequence) }
     func track(_ id: UUID) -> Track? { tracks.first { $0.id == id } }
     func clip(_ id: UUID) -> (track: Track, clip: Clip)? {
         for t in tracks { if let c = t.clips.first(where: { $0.id == id }) { return (t, c) } }
@@ -223,11 +512,11 @@ enum EditError: LocalizedError {
 // MARK: - Timeline operations (pure mutations on Project)
 
 extension Project {
-    private func trackIndex(_ id: UUID) throws -> Int {
+    func trackIndex(_ id: UUID) throws -> Int {
         guard let i = tracks.firstIndex(where: { $0.id == id }) else { throw EditError.notFound("track \(id)") }
         return i
     }
-    private func clipIndex(_ id: UUID) throws -> (Int, Int) {
+    func clipIndex(_ id: UUID) throws -> (Int, Int) {
         for (ti, t) in tracks.enumerated() {
             if let ci = t.clips.firstIndex(where: { $0.id == id }) { return (ti, ci) }
         }
@@ -337,13 +626,8 @@ extension Project {
         guard time > left.start + 0.01, time < left.end - 0.01 else {
             throw EditError.invalid("split time \(time) is outside clip \(left.start)...\(left.end)")
         }
-        var right = left
-        right.id = UUID()
-        let leftDur = time - left.start
-        left.duration = leftDur
-        right.start = time
-        right.duration = right.duration - leftDur
-        right.sourceIn = left.sourceIn + leftDur * left.speed
+        let right: Clip
+        (left, right) = left.split(atLocal: time - left.start)
         tracks[ti].clips[ci] = left
         tracks[ti].clips.insert(right, at: ci + 1)
         return (left, right)
@@ -367,10 +651,12 @@ extension Project {
         let e = newEnd ?? c.end
         guard e - s > 0.01 else { throw EditError.invalid("trim would leave an empty clip") }
         let delta = s - c.start
-        guard c.sourceIn + delta * c.speed >= 0 else { throw EditError.invalid("cannot trim before source start") }
-        c.sourceIn += delta * c.speed
+        let consumed = delta >= 0 ? c.sourceOffset(at: delta) : -c.speed(at: 0) * -delta   // extending the head runs the first speed backwards
+        guard c.sourceIn + consumed >= 0 else { throw EditError.invalid("cannot trim before source start") }
+        c.sourceIn += consumed
         c.start = s
         c.duration = e - s
+        c.shiftKeyframes(by: -delta)
         tracks[ti].clips[ci] = c
     }
 

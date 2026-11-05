@@ -101,19 +101,53 @@ enum EditMaxTools {
              inputSchema: schema(["clip": str("Clip id prefix"), "scale": num("0.05 to 10"), "x": num("-2 to 2"), "y": num("-2 to 2"), "rotation": num("Degrees"),
                                   "crop_left": num("0 to 0.95"), "crop_right": num("0 to 0.95"), "crop_top": num("0 to 0.95"), "crop_bottom": num("0 to 0.95"),
                                   "reset": .object(["type": "boolean", "description": "Clear the transform first"]), "project": projectArg], required: ["clip"])),
-        Tool(name: "set_clip_color", description: "Color-correct a clip: exposure in stops (-4 to 4), contrast and saturation as multipliers (1 = untouched), temperature (-100 cool to 100 warm), tint (-100 green to 100 magenta). reset=true clears everything first.",
-             inputSchema: schema(["clip": str("Clip id prefix"), "exposure": num("Stops"), "contrast": num("0.25 to 3"), "saturation": num("0 to 3"), "temperature": num("-100 to 100"), "tint": num("-100 to 100"),
-                                  "reset": .object(["type": "boolean", "description": "Clear the correction first"]), "project": projectArg], required: ["clip"])),
+        Tool(name: "set_clip_color", description: "Color-correct a clip: exposure in stops (-4 to 4), contrast and saturation as multipliers (1 = untouched), temperature (-100 cool to 100 warm), tint (-100 green to 100 magenta), shadows/midtones/highlights tone-curve lifts (-1 to 1), vibrance (-1 to 1), and a look: a built-in name (Teal & Orange, Black & White, Film Fade, Cool Blue, Warm Vintage, High Contrast) or the path of a .cube LUT file, blended by look_mix (0 to 1). look \"none\" removes it. reset=true clears everything first. Use frame_stats to check the result.",
+             inputSchema: schema(["clip": str("Clip id prefix"), "exposure": num("-4 to 4 stops"), "contrast": num("0.25 to 3"), "saturation": num("0 to 3"), "temperature": num("-100 to 100"), "tint": num("-100 to 100"),
+                                  "shadows": num("-1 to 1"), "midtones": num("-1 to 1"), "highlights": num("-1 to 1"), "vibrance": num("-1 to 1"), "look": str("Built-in look name, a .cube path, or none"), "look_mix": num("0 to 1 (default 1)"),
+                                  "reset": .object(["type": "boolean", "description": "Clear the color correction first"]), "project": projectArg], required: ["clip"])),
+        Tool(name: "set_clip_audio", description: "Shape a clip's sound: three-band EQ gains in dB (low shelf 200 Hz, mid peak 1 kHz, high shelf 6 kHz; -18 to 18), a high-pass filter in Hz (0 = off; 80-120 removes rumble and hum), and a noise gate threshold in dBFS (0 = off; e.g. -45 closes the gate by 26 dB between words). reset=true clears all.",
+             inputSchema: schema(["clip": str("Clip id prefix"), "low": num("dB"), "mid": num("dB"), "high": num("dB"), "high_pass": num("Hz, 0 = off"), "gate": num("dBFS threshold, 0 = off"),
+                                  "reset": .object(["type": "boolean", "description": "Clear the audio settings first"]), "project": projectArg], required: ["clip"])),
+        Tool(name: "set_ducking", description: "Auto-duck a track (music) under another track's clips (voice): its volume drops to level while clips play on the other track, with attack and release ramps. under \"none\" stops ducking.",
+             inputSchema: schema(["track": str("Track name or id to duck (e.g. A2)"), "under": str("Track whose clips cause the duck (e.g. A1), or none"), "level": num("Volume while ducked, 0 to 1 (default 0.25)"), "attack": num("Seconds to drop (default 0.15)"), "release": num("Seconds to come back (default 0.4)"), "project": projectArg], required: ["track"])),
+        Tool(name: "frame_stats", description: "Measure the composed frame at a time (default: the playhead): mean RGB, luma mean and median, fraction of crushed-black and clipped-white pixels, and a 16-bin luma histogram. The numbers behind the scopes; use them to judge exposure and color before and after a correction.",
+             inputSchema: schema(["seconds": num("Timeline time"), "project": projectArg]), annotations: .init(readOnlyHint: true)),
         Tool(name: "set_clip_fades", description: "Fade a clip in from black and silence and/or out to them, in seconds.",
              inputSchema: schema(["clip": str("Clip id prefix"), "fade_in": num("Seconds"), "fade_out": num("Seconds"), "project": projectArg], required: ["clip"])),
         Tool(name: "set_transition", description: "Put a transition on the start of a clip, from the clip that ends where it starts (or from black): crossDissolve, dipToBlack, wipeLeft, wipeRight, or none to remove. It takes the first `duration` seconds of the clip; the outgoing clip needs that much media past its out point.",
              inputSchema: schema(["clip": str("Incoming clip id prefix"), "kind": str("crossDissolve | dipToBlack | wipeLeft | wipeRight | none"), "duration": num("Seconds, default 0.5"), "project": projectArg], required: ["clip"])),
+        Tool(name: "set_keyframe", description: "Animate a clip parameter: set its value at a time (keyframe). Two or more keyframes on a parameter interpolate between them (linear, smooth = ease in/out, hold = jump). The first keyframe replaces the plain value. speed keyframes make a speed ramp (0 = freeze frame).",
+             inputSchema: schema(["clip": str("Clip id prefix"), "param": str("scale, x, y, rotation, opacity, exposure, contrast, saturation, temperature, tint, volume, speed"), "time": num("Timeline seconds (default: the playhead); clamped to the clip"), "value": num("The value at that time"), "ease": str("linear (default), smooth, hold: how it moves to the next keyframe"), "project": projectArg], required: ["clip", "param", "value"])),
+        Tool(name: "remove_keyframe", description: "Remove one keyframe (at time, default the playhead) or, with all=true, every keyframe of the parameter, which freezes it at its current value.",
+             inputSchema: schema(["clip": str("Clip id prefix"), "param": str("Parameter name"), "time": num("Timeline seconds"), "all": .object(["type": "boolean", "description": "Remove every keyframe of the parameter"]), "project": projectArg], required: ["clip", "param"])),
         Tool(name: "add_marker", description: "Add a named marker at a timeline time.",
              inputSchema: schema(["at": num("Seconds"), "name": str("Label"), "color": str("Hex color like #3B82F6"), "project": projectArg], required: ["at"])),
         Tool(name: "remove_marker", description: "Remove a marker by id.",
              inputSchema: schema(["marker": str("Marker id prefix"), "project": projectArg], required: ["marker"]), annotations: .init(destructiveHint: true)),
+        Tool(name: "nest_clips", description: "Fold clips into one nested sequence (a compound clip): they leave the timeline and one clip playing the whole group takes their place, so you can speed, grade, fade, transition or keyframe the group as a unit. The sequence is rendered before the call returns.",
+             inputSchema: schema(["clips": strs("Clip ids or names"), "name": str("Sequence name (default: Sequence N)"), "project": projectArg], required: ["clips"])),
+        Tool(name: "unnest_clip", description: "Expand a nested-sequence clip back into its clips on the timeline (the whole sequence from the clip's start; tracks matched by name).",
+             inputSchema: schema(["clip": str("Clip id or name that plays a nested sequence"), "project": projectArg], required: ["clip"])),
+        Tool(name: "inspect_sequence", description: "The contents of a nested sequence: its tracks and clips (times inside the sequence) and whether its render is cached. Without a name, lists every sequence.",
+             inputSchema: schema(["sequence": str("Sequence name or id, or a clip that plays it"), "project": projectArg]), annotations: .init(readOnlyHint: true)),
+        Tool(name: "make_multicam", description: "Fold two or more clips (the same moment shot from several cameras) into one multicam clip: the earliest clip stays as angle 1, the others become its angles and leave the timeline. sync audio lines the angles up by their sound; start keeps the timeline placement; none sets offsets to 0. Then cut_angle switches the picture.",
+             inputSchema: schema(["clips": strs("Clip ids or names (two or more)"), "sync": str("audio (default), start or none"), "project": projectArg], required: ["clips"])),
+        Tool(name: "cut_angle", description: "Switch a multicam clip's picture to an angle from a timeline time on (a cut at the clip start sets the opening angle). remove true deletes the cut at that time instead.",
+             inputSchema: schema(["clip": str("Multicam clip id or name"), "at": num("Timeline time in seconds"), "angle": num("Angle number, 1-based"), "remove": .object(["type": "boolean"]), "project": projectArg], required: ["clip", "at"])),
+        Tool(name: "set_multicam", description: "Multicam settings: which angle's sound plays (audio_angle), explicit per-angle offsets in seconds, or flatten true to turn the clip back into plain clips (one per cut).",
+             inputSchema: schema(["clip": str("Multicam clip id or name"), "audio_angle": num("1-based"), "offsets": .object(["type": "array", "items": .object(["type": "number"]), "description": "Seconds to add to angle 1's time to reach the same moment in each angle (one value per angle, first is 0)"]), "flatten": .object(["type": "boolean"]), "project": projectArg], required: ["clip"])),
+        Tool(name: "sync_angles", description: "Recompute a multicam clip's angle offsets from the audio (cross-correlation of loudness envelopes; reports a confidence per angle).",
+             inputSchema: schema(["clip": str("Multicam clip id or name"), "project": projectArg], required: ["clip"])),
+        Tool(name: "make_proxies", description: "Build low-resolution proxy files (960×540) for the project's video assets and switch the preview to them for smooth playback; the export always uses the originals. Returns each asset's proxy status; call again to poll progress.",
+             inputSchema: schema(["project": projectArg])),
+        Tool(name: "list_templates", description: "Project templates: built-in formats (YouTube 16:9, Shorts 9:16, Square, 4K, Cinema, 4:5) and templates saved from projects.",
+             inputSchema: schema(["project": projectArg]), annotations: .init(readOnlyHint: true)),
+        Tool(name: "apply_template", description: "Replace the current project with a template (undoable). A built-in sets the frame size and fps on an empty timeline; a saved template restores its tracks, clips and titles.",
+             inputSchema: schema(["name": str("Template name from list_templates"), "project": projectArg], required: ["name"])),
+        Tool(name: "save_template", description: "Save the current project (without history) as a named template for later apply_template calls.",
+             inputSchema: schema(["name": str("Template name"), "project": projectArg], required: ["name"])),
         Tool(name: "set_project_settings", description: "Change output resolution, frame rate or project name.",
-             inputSchema: schema(["width": int("Pixels"), "height": int("Pixels"), "fps": num("Frames per second"), "name": str("Project name"), "project": projectArg])),
+             inputSchema: schema(["width": int("Pixels"), "height": int("Pixels"), "fps": num("Frames per second"), "name": str("Project name"), "project": projectArg, "use_proxies": .object(["type": "boolean", "description": "Preview from proxy files when they exist (see make_proxies)"])])),
     ]
 
     static func register(on server: Server) async {
@@ -258,13 +292,51 @@ enum EditMaxTools {
         case "move_track":
             return try payload(try x.moveTrack(try req("track"), toRow: Int(try reqNum("row"))))
         case "set_project_settings":
-            try x.setProjectSettings(width: i("width"), height: i("height"), fps: d("fps"), name: s("name")); return message("Settings updated")
+            try x.setProjectSettings(width: i("width"), height: i("height"), fps: d("fps"), name: s("name"), useProxies: a["use_proxies"]?.boolValue); return message("Settings updated")
         case "set_clip_transform":
             try x.setClipTransform(try req("clip"), scale: d("scale"), x: d("x"), y: d("y"), rotation: d("rotation"), cropLeft: d("crop_left"), cropRight: d("crop_right"), cropTop: d("crop_top"), cropBottom: d("crop_bottom"), reset: b("reset")); return message("Transform updated")
         case "set_clip_color":
-            try x.setClipColor(try req("clip"), exposure: d("exposure"), contrast: d("contrast"), saturation: d("saturation"), temperature: d("temperature"), tint: d("tint"), reset: b("reset")); return message("Color updated")
+            try x.setClipColor(try req("clip"), exposure: d("exposure"), contrast: d("contrast"), saturation: d("saturation"), temperature: d("temperature"), tint: d("tint"), reset: b("reset"),
+                               shadows: d("shadows"), midtones: d("midtones"), highlights: d("highlights"), vibrance: d("vibrance"), lut: s("look"), lutMix: d("look_mix")); return message("Color updated")
+        case "set_clip_audio":
+            try x.setClipAudio(try req("clip"), low: d("low"), mid: d("mid"), high: d("high"), highPass: d("high_pass"), gate: d("gate"), reset: b("reset")); return message("Audio updated")
+        case "set_ducking":
+            return try payload(try x.setDucking(try req("track"), under: s("under"), level: d("level"), attack: d("attack"), release: d("release")))
+        case "nest_clips":
+            return try payload(try await x.nestClips(list("clips"), name: s("name")))
+        case "unnest_clip":
+            return message("Unnested \(try x.unnestClip(try req("clip"))) clip(s) onto the timeline")
+        case "inspect_sequence":
+            if let name = s("sequence"), !name.isEmpty { return try payload(x.sequenceInfo(try x.resolveSequence(name))) }
+            return try payload(x.listSequences())
+        case "make_multicam":
+            return try payload(try await x.makeMulticam(list("clips"), sync: s("sync") ?? "audio"))
+        case "cut_angle":
+            guard let at = d("at") else { throw MCPError.invalidParams("'at' is required") }
+            if b("remove") { return try payload(try x.cutAngle(try req("clip"), at: at, angle: 0, remove: true)) }
+            guard let angle = i("angle") else { throw MCPError.invalidParams("'angle' is required unless remove is true") }
+            return try payload(try x.cutAngle(try req("clip"), at: at, angle: angle))
+        case "set_multicam":
+            let offsets = a["offsets"]?.arrayValue?.compactMap { $0.doubleValue ?? $0.intValue.map(Double.init) }
+            return try payload(try x.setMulticam(try req("clip"), audioAngle: i("audio_angle"), offsets: offsets, flatten: b("flatten")))
+        case "sync_angles":
+            return try payload(try await x.syncAngles(try req("clip")))
+        case "make_proxies":
+            return try payload(await x.makeProxies(enable: true))
+        case "list_templates":
+            return try payload(x.listTemplates())
+        case "apply_template":
+            return try payload(try x.applyTemplate(try req("name")))
+        case "save_template":
+            return message("Saved template to \(try x.saveTemplate(try req("name")))")
+        case "frame_stats":
+            return try payload(try await x.frameStats(at: d("seconds") ?? UIRegistry.shared.playheads[x.document.id]?() ?? 0))
         case "set_clip_fades":
             try x.setClipFades(try req("clip"), fadeIn: d("fade_in"), fadeOut: d("fade_out")); return message("Fades updated")
+        case "set_keyframe":
+            return try payload(try x.setKeyframe(try req("clip"), param: try req("param"), time: d("time"), value: try reqNum("value"), ease: s("ease")))
+        case "remove_keyframe":
+            let n = try x.removeKeyframe(try req("clip"), param: try req("param"), time: d("time"), all: b("all")); return message("Removed \(n) keyframe\(n == 1 ? "" : "s")")
         case "set_transition":
             return try payload(try x.setTransition(try req("clip"), kind: s("kind"), duration: d("duration")))
         case "add_marker":

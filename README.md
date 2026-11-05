@@ -28,12 +28,45 @@ Working:
   composition tracks so transitions can overlap. No color management: an ungraded frame exports with the source's pixel values.
 - Timeline: snapping to clip and text edges, markers, in/out points and the playhead (⌥ drags free); ⇧/⌘-click multi-select with group
   move; markers (M) on the ruler; in/out points (I, O, X) with "Delete range" (ripples every track); transition and fade marks on clips
+- Keyframes: every transform, color, opacity, volume and speed value can be animated. The diamond next to a slider adds a keyframe
+  at the playhead (the first one starts the animation from the plain value); once animated, dragging the slider writes a keyframe.
+  Linear, smooth (ease in/out) and hold easing; `[` and `]` jump between keyframes; yellow diamonds on the clip bar. Speed keyframes
+  are a speed ramp (0× = freeze frame); the clip's media use is the exact integral of the ramp, played as short constant-rate pieces.
+  Tools: `set_keyframe`, `remove_keyframe`; `inspect_timeline` lists keyframes per clip on timeline times.
+- Color: besides exposure/contrast/saturation/temperature/tint, a five-point tone curve (shadows, midtones, highlights), vibrance,
+  and looks: six built-in LUTs generated in code (Teal & Orange, Black & White, Film Fade, Cool Blue, Warm Vintage, High Contrast)
+  or any `.cube` 3D LUT (bigger than Core Image's limit = resampled), blended by a mix amount; all keyframeable. Scopes (luma
+  waveform + RGB histogram of the frame on screen) toggle from the preview's corner button; `frame_stats` gives the agent the same
+  numbers (mean RGB, luma mean/median, crushed-black and clipped-white fractions, histogram).
+- Audio: per-clip three-band EQ (200 Hz / 1 kHz / 6 kHz), high-pass and noise gate through an `MTAudioProcessingTap`
+  (`EditMax/Engine/AudioTap.swift`, only attached when a clip asks for it); automatic ducking of one track under another's
+  clips with attack/release (Project inspector → Ducking, `set_ducking`); clip volume is one envelope per clip (keyframes ×
+  fades × transition crossfade × ducking) emitted as back-to-back ramps. Audio-only timelines export.
+- App icon: `EditMax/Resources/AppIcon.svg` is the source (a play triangle cut into three metallic strips on a dark
+  plate); render it to a 1024 PNG with headless Chrome, build an iconset with `sips` and `iconutil -c icns` into
+  `EditMax/Resources/AppIcon.icns` (`CFBundleIconFile` in `project.yml`).
+- Signing: debug builds are signed with the Apple Development certificate pinned by hash in `project.yml`, so macOS keeps
+  the Screen Recording and keychain grants across rebuilds (ad-hoc signing made every build a new app). On another Mac,
+  replace the hash with one from `security find-identity -v -p codesigning` or with `"-"` for ad-hoc.
+- Proxies: 960×540 copies of video files for smooth preview (`make_proxies`, Project inspector → Proxies); the export and
+  `capture_frame` always use the originals. Templates: built-in formats (YouTube 16:9, Shorts 9:16, Square, 4K, Cinema, 4:5)
+  and projects saved as templates in Application Support (`list_templates`, `apply_template`, `save_template`).
+- Multicam: `make_multicam` folds clips of the same moment into one clip whose angles are lined up by audio
+  (`AngleSync`, cross-correlation of the loudness envelopes; falls back to the timeline placement when the match is
+  weak), `cut_angle` switches the picture at a time, the sound always comes from one angle (`set_multicam`), `flatten`
+  turns it back into clips. The builder expands a multicam clip into one piece per cut (`Clip.multicamPieces`), so
+  speed ramps, keyframes, transitions and fades on the clip keep working. Inspector: angle buttons cut at the playhead;
+  timeline: numbered cut lines.
+- Nested sequences: `nest_clips` folds clips into a sub-project (`Project.sequences`) rendered once per content hash
+  into Application Support/EditMax/nested (`SequenceRenderer`); the clip plays that file, so grading, speed, fades,
+  transitions and keyframes apply to the group; `unnest_clip` expands it back; `inspect_sequence` lists its contents.
+  Sequence assets have kind `sequence` and get thumbnails and waveforms like video.
 - Keys: Space, J/K/L shuttle (repeat to double, up to 8×), ←/→ frame (⇧ = 10), Home/End, S split, ⌫ delete, M, I/O/X, ⌘T transition,
   ⌘= / ⌘- zoom, ⌘Z / ⇧⌘Z. Letter keys never fire while a text field has the focus.
 - Grouped inspectors: a clip shows its thumbnail, name, split/delete, timing and reset-able sliders; a text shows text, style, size, a color picker and position; the project inspector adds titles at the playhead. Right-click menus on media rows (add, reveal, remove), track headers (mute, hide, delete) and bars (split, show, style, delete); empty-state hints in the preview and timeline
 - Live preview with AVPlayer + Core Animation overlays; frame stepping
 - Export to H.264/AAC MP4 (`File > Export Video…`, ⌘E, or the `export_video` tool), verified with ffprobe
-- MCP server on `http://127.0.0.1:19790/mcp` (port and token in `~/Library/Application Support/EditMax/mcp.json`), 40 tools
+- MCP server on `http://127.0.0.1:19790/mcp` (port and token in `~/Library/Application Support/EditMax/mcp.json`), 56 tools
 - Cleanup: remove silence (from the waveform) and filler words (from the transcript) with ripple deletes across every track
 - Captions: on-device transcription with word timings (Apple SpeechAnalyzer on macOS 26+; SFSpeechRecognizer on macOS 15–25, on-device
   where the Mac has the model, else Apple's servers), six text presets, one click or one tool call
@@ -90,7 +123,7 @@ app's event queue (`NSApp.postEvent`, so nothing can reach another app and the r
 EditMax is behind another app it is activated for that one gesture, keystrokes arriving meanwhile are dropped rather than
 applied, and the previous app gets the focus straight back; macOS refuses that activation while another app is being used, and then
 `ui_drag` applies the move or trim through the bar's own code, `ui_click` calls the bar's or media row's own tap code, and
-`ui_key` hands the key to the editor's key handler, each saying so in its result; ⇧/⌘/⌥ go in `modifiers`); `ui_key` presses
+`ui_key` hands the key to the editor's key handler, each saying so in its result; the driver never activates the app, so the user's focus is never taken; ⇧/⌘/⌥ go in `modifiers`); `ui_key` presses
 Space, J/K/L, arrows, I/O/M/S/X, ⌫ and ⌘ chords; `ui_scroll` scrolls the inspector or a list; `ui_screenshot`
 returns the window's own pixels as a PNG through ScreenCaptureKit, filtered to that one window (never the screen around
 it; macOS asks for the Screen Recording permission once; without it the tool falls back to rendering the window's layer

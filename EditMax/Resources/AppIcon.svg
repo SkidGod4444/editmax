@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+<defs>
+  <linearGradient id="plate" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2a2a2a"/><stop offset="0.55" stop-color="#161616"/><stop offset="1" stop-color="#0c0c0c"/></linearGradient>
+  <radialGradient id="glowgrad" cx="0.5" cy="0.5" r="0.5"><stop offset="0" stop-color="#ffffff" stop-opacity="0.11"/><stop offset="0.5" stop-color="#ffffff" stop-opacity="0.04"/><stop offset="1" stop-color="#ffffff" stop-opacity="0"/></radialGradient>
+  <radialGradient id="sheen" cx="0.5" cy="0.12" r="0.75"><stop offset="0" stop-color="#ffffff" stop-opacity="0.10"/><stop offset="0.6" stop-color="#ffffff" stop-opacity="0"/></radialGradient>
+  <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff" stop-opacity="0.7"/><stop offset="0.25" stop-color="#ffffff" stop-opacity="0.12"/><stop offset="1" stop-color="#ffffff" stop-opacity="0.03"/></linearGradient>
+  <linearGradient id="metal" x1="0" y1="0" x2="0.35" y2="1"><stop offset="0" stop-color="#fbfbfb"/><stop offset="0.45" stop-color="#d9d9dc"/><stop offset="0.75" stop-color="#9c9ca2"/><stop offset="1" stop-color="#6b6b71"/></linearGradient>
+  <linearGradient id="edge" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#8d8d93"/></linearGradient>
+  <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%"><feDropShadow dx="0" dy="22" stdDeviation="22" flood-color="#000" flood-opacity="0.55"/></filter>
+  <filter id="glyphshadow" x="-30%" y="-30%" width="160%" height="160%"><feDropShadow dx="0" dy="14" stdDeviation="16" flood-color="#000" flood-opacity="0.7"/></filter>
+  <filter id="glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="40"/></filter>
+  <filter id="grainOld"><feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" seed="3"/><feColorMatrix type="matrix" values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 0.06 0"/><feComposite in2="SourceGraphic" operator="in"/></filter>
+  <clipPath id="plateclip"><rect x="100" y="100" width="824" height="824" rx="184"/></clipPath>
+  <clipPath id="s0"><rect x="-388.0" y="231.0" width="1800" height="170" transform="rotate(-45 512.0 512.0)"/></clipPath><clipPath id="s1"><rect x="-388.0" y="427.0" width="1800" height="170" transform="rotate(-45 512.0 512.0)"/></clipPath><clipPath id="s2"><rect x="-388.0" y="623.0" width="1800" height="170" transform="rotate(-45 512.0 512.0)"/></clipPath>
+  <filter id="dither" x="0" y="0" width="1" height="1"><feTurbulence type="fractalNoise" baseFrequency="1.4" numOctaves="1" seed="7" result="n"/><feColorMatrix in="n" type="matrix" values="0 0 0 0 0.5  0 0 0 0 0.5  0 0 0 0 0.5  0 0 0 0.03 0" result="d"/><feComposite in="d" in2="SourceGraphic" operator="in"/></filter>
+</defs>
+<g filter="url(#shadow)"><rect x="100" y="100" width="824" height="824" rx="184" fill="url(#plate)"/></g>
+<g clip-path="url(#plateclip)">
+  <rect x="100" y="100" width="824" height="824" fill="url(#sheen)"/>
+  <rect x="100" y="100" width="824" height="824" fill="#808080" filter="url(#dither)"/>
+  <ellipse cx="512.0" cy="552.0" rx="420" ry="330" fill="url(#glowgrad)"/>
+</g>
+<rect x="101.5" y="101.5" width="821" height="821" rx="183" fill="none" stroke="url(#rim)" stroke-width="3"/>
+<g filter="url(#glyphshadow)">
+  <g clip-path="url(#s0)">
+    <g transform="translate(-10,10)">
+      <g fill="#5e5e64" stroke="#5e5e64" transform="translate(0,6)"><polygon points="357.4,312.0 725.4,512.0 357.4,712.0" stroke-width="56" stroke-linejoin="round" /></g>
+      <g fill="url(#metal)" stroke="url(#metal)"><polygon points="357.4,312.0 725.4,512.0 357.4,712.0" stroke-width="56" stroke-linejoin="round" /></g>
+      <g fill="none" stroke="url(#edge)" stroke-opacity="0.35" transform="translate(0,-3)"><polygon points="357.4,312.0 725.4,512.0 357.4,712.0" stroke-width="50" stroke-linejoin="round" /></g>
+      <g fill="url(#metal)" stroke="url(#metal)"><polygon points="357.4,312.0 725.4,512.0 357.4,712.0" stroke-width="56" stroke-linejoin="round" /></g>
+    </g>
+  </g>
+  <g clip-path="url(#s1)">
+    <g transform="translate(0,0)">
+      <g fill="#5e5e64" stroke="#5e5e64" transform="translate(0,6)"><polygon points="357.4,312.0 725.4,512.0 357.4,712.0" stroke-width="56" stroke-linejoin="round" /></g>
+      <g fill="url(#metal)" stroke="url(#metal)"><polygon points="357.4,312.0 725.4,512.0 357.4,712.0" stroke-width="56" stroke-linejoin="round" /></g>
+      <g fill="none" stroke="url(#edge)" stroke-opacity="0.35" transform="translate(0,-3)"><polygon points="357.4,312.0 725.4,512.0 357.4,712.0" stroke-width="50" stroke-linejoin="round" /></g>
+      <g fill="url(#metal)" stroke="url(#metal)"><polygon points="357.4,312.0 725.4,512.0 357.4,712.0" stroke-width="56" stroke-linejoin="round" /></g>
+    </g>
+  </g>
+  <g clip-path="url(#s2)">
+    <g transform="translate(10,-10)">
+      <g fill="#5e5e64" stroke="#5e5e64" transform="translate(0,6)"><polygon points="357.4,312.0 725.4,512.0 357.4,712.0" stroke-width="56" stroke-linejoin="round" /></g>
+      <g fill="url(#metal)" stroke="url(#metal)"><polygon points="357.4,312.0 725.4,512.0 357.4,712.0" stroke-width="56" stroke-linejoin="round" /></g>
+      <g fill="none" stroke="url(#edge)" stroke-opacity="0.35" transform="translate(0,-3)"><polygon points="357.4,312.0 725.4,512.0 357.4,712.0" stroke-width="50" stroke-linejoin="round" /></g>
+      <g fill="url(#metal)" stroke="url(#metal)"><polygon points="357.4,312.0 725.4,512.0 357.4,712.0" stroke-width="56" stroke-linejoin="round" /></g>
+    </g>
+  </g>
+</g>
+</svg>

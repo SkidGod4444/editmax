@@ -13,7 +13,7 @@ final class ThumbnailStore: ObservableObject {
     private var inFlight: Set<UUID> = []
 
     func request(_ asset: Asset) {
-        guard asset.kind == .video, strips[asset.id] == nil, !inFlight.contains(asset.id) else { return }
+        guard asset.kind == .video || asset.kind == .sequence, strips[asset.id] == nil, !inFlight.contains(asset.id) else { return }
         inFlight.insert(asset.id)
         let url = asset.url, id = asset.id, duration = max(0.1, asset.duration)
         Task.detached(priority: .utility) {
@@ -25,6 +25,12 @@ final class ThumbnailStore: ObservableObject {
     private static func generate(url: URL, duration: Double) async -> Strip {
         let started = Date()
         let asset = AVURLAsset(url: url)
+        // The generator's reader raises an uncatchable ObjC exception (seen once: SIGABRT on its own queue) when the
+        // file has no readable video track, so check first and give such a file an empty strip.
+        guard let tracks = try? await asset.loadTracks(withMediaType: .video), !tracks.isEmpty, (try? await asset.load(.isReadable)) == true else {
+            DebugLog.event("thumbnails-skipped", ["file": url.lastPathComponent, "reason": "no readable video track"])
+            return Strip(interval: 1, frames: [], aspect: 16 / 9)
+        }
         let gen = AVAssetImageGenerator(asset: asset)
         gen.appliesPreferredTrackTransform = true
         gen.maximumSize = CGSize(width: 320, height: 88)

@@ -34,6 +34,13 @@ struct EditorActions {
     private var x: ToolExecutor { ToolExecutor(document: document, origin: .user) }
     private var fps: Double { document.project.settings.fps }
 
+    /// Moves the playhead to the previous/next keyframe of the selected clips (every animated parameter counts).
+    func jumpKeyframe(forward: Bool) {
+        let ts = document.project.allClips.filter { state.selectedClipIDs.contains($0.id) }.flatMap { c in c.keyframeTimes.map { c.start + $0 } }.sorted()
+        let t = forward ? ts.first { $0 > player.currentTime + 0.001 } : ts.last { $0 < player.currentTime - 0.001 }
+        if let t { player.pause(); player.seek(to: t) }
+    }
+
     func splitAtPlayhead() { for id in state.selectedClipIDs { try? x.splitClip(id.uuidString, at: player.currentTime) } }
 
     func deleteSelection() {
@@ -99,6 +106,8 @@ struct EditorActions {
         case "m": addMarker(); return true
         case "s": splitAtPlayhead(); return true
         case "x": clearInOut(); return true
+        case "[": jumpKeyframe(forward: false); return true
+        case "]": jumpKeyframe(forward: true); return true
         default: return false
         }
     }

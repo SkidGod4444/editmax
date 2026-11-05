@@ -41,6 +41,15 @@ struct EditorRootView: View {
                                 .allowsHitTesting(false)
                             }
                         }
+                        .overlay(alignment: .topTrailing) {
+                            Button { player.scopesEnabled.toggle() } label: {
+                                Label("Scopes", systemImage: "waveform.path.ecg").labelStyle(.iconOnly).font(.system(size: 12))
+                                    .padding(6).background(.black.opacity(player.scopesEnabled ? 0.6 : 0.35), in: RoundedRectangle(cornerRadius: 6))
+                                    .foregroundStyle(player.scopesEnabled ? Color.accentColor : .white)
+                            }
+                            .buttonStyle(.plain).padding(8).help(player.scopesEnabled ? "Hide the scopes" : "Show the scopes (waveform and histogram)").pointer().uiFrame("preview.scopes")
+                        }
+                    if player.scopesEnabled { ScopesView(data: player.scopes) }
                     if let e = player.buildError { Text(e).font(.caption).foregroundStyle(.red).padding(4) }
                 }
                 .frame(minWidth: 400)

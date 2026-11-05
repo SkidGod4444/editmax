@@ -69,6 +69,7 @@ Working:
   (with a transport bar: play/pause, frame steps, scrubber) beside the chat, for directing the agent while watching. Same
   button, "Back to editor" or ⌥⌘F returns.
   Full-screen preview: the ⤢ button on the preview, ⇧⌘F, or double-click the picture; Esc, double-click or ⇧⌘F leaves.
+  All three entry points do nothing while the project has no clips (the button is disabled with a not-allowed cursor).
   It is a borderless window on the editor's screen showing the same player, so play/scrub/edits stay live. A transport
   bar (play/pause, scrubber, time, leave) sits at the bottom and hides 2.5 s after the mouse rests; the editor's keys
   (space, J/K/L, arrows, I/O) work there too.
@@ -177,6 +178,12 @@ returns the window's own pixels as a PNG through ScreenCaptureKit, filtered to t
 it; macOS asks for the Screen Recording permission once; without it the tool falls back to rendering the window's layer
 tree, which misses some inspector controls, and says so). Verified: moving and trimming bars, dropping a media row on a lane, reordering
 headers, clicking toolbar buttons. Views register themselves with `.uiFrame("id")` (`EditMax/MCP/UIDriver.swift`).
+
+UI conventions (every control): `.pointer()` for the hand cursor, written inside `.disabled(...)` as
+`.pointer().disabled(x)` so a disabled control shows the not-allowed cursor; a `.uiFrame("area.name")` id; plain-style
+and icon buttons in bars and overlays get `.focusable(false)` so none of them takes the keyboard focus ring; sliders
+and continuous edits coalesce into one undo step. Menu items must not gate on `@FocusedObject` state: the focused
+document goes nil whenever the editor window is not key, so gate in the notification receiver instead.
 
 ## Cleanup
 

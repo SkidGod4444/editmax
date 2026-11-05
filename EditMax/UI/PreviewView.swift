@@ -5,12 +5,16 @@ import AppKit
 /// The player's picture, aspect-fit. Titles, stills, color and transitions are all in the frames themselves (the compositor).
 struct PreviewView: NSViewRepresentable {
     @ObservedObject var controller: PlayerController
+    /// False while the project has no clips: a double-click then does nothing (there is nothing to show full screen).
+    var canFullScreen = true
     func makeNSView(context: Context) -> PlayerLayerView {
         let v = PlayerLayerView(player: controller.player)
-        v.onDoubleClick = { [weak controller] in if let controller { FullScreenPreview.shared.toggle(controller, keys: nil) } }
+        updateNSView(v, context: context)
         return v
     }
-    func updateNSView(_ view: PlayerLayerView, context: Context) {}
+    func updateNSView(_ view: PlayerLayerView, context: Context) {
+        view.onDoubleClick = canFullScreen ? { [weak controller] in if let controller { FullScreenPreview.shared.toggle(controller, keys: nil) } } : nil
+    }
 }
 
 /// The preview filling the screen: a borderless black window showing the same player (so play, scrub and edits stay

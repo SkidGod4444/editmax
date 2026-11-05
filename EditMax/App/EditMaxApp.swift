@@ -15,11 +15,7 @@ struct EditMaxApp: App {
             CommandGroup(after: .saveItem) {
                 Button("Export Video…") { NotificationCenter.default.post(name: .editmaxExport, object: nil) }.keyboardShortcut("e", modifiers: [.command])
             }
-            CommandGroup(after: .toolbar) {
-                Button("Full Screen Preview") { NotificationCenter.default.post(name: .editmaxFullScreenPreview, object: nil) }.keyboardShortcut("f", modifiers: [.command, .shift])
-                Button("Focus on Player and Chat") { NotificationCenter.default.post(name: .editmaxFocusMode, object: nil) }.keyboardShortcut("f", modifiers: [.command, .option])
-                Button("Before / After") { NotificationCenter.default.post(name: .editmaxCompare, object: nil) }.keyboardShortcut("b", modifiers: [.command, .option])
-            }
+            ViewCommands()
             EditCommands()
         }
     }
@@ -73,7 +69,7 @@ struct EditorRootView: View {
             if DocumentRegistry.shared.active?.id == document.id { state.focusMode.toggle() }
         }
         .onReceive(NotificationCenter.default.publisher(for: .editmaxFullScreenPreview)) { _ in
-            if DocumentRegistry.shared.active?.id == document.id { FullScreenPreview.shared.toggle(player, keys: EditorActions(document: document, state: state, player: player).handle) }
+            if DocumentRegistry.shared.active?.id == document.id { toggleFullScreen() }
         }
         .onReceive(NotificationCenter.default.publisher(for: .editmaxExport)) { _ in
             guard DocumentRegistry.shared.activeID == document.id, !state.isExporting else { return }
@@ -118,7 +114,7 @@ struct EditorRootView: View {
     /// The picture with its overlays (empty state, version banner, scopes / full screen / focus buttons), scopes and build errors.
     private var previewArea: some View {
         VStack(spacing: 0) {
-            PreviewView(controller: player)
+            PreviewView(controller: player, canFullScreen: !noClips)
                 .overlay {
                     if document.project.allClips.isEmpty {
                         VStack(spacing: 8) {
@@ -157,14 +153,15 @@ struct EditorRootView: View {
                                 .padding(6).background(.black.opacity(player.compareMode != .off ? 0.6 : 0.35), in: RoundedRectangle(cornerRadius: 6))
                                 .foregroundStyle(player.compareMode != .off ? Color.accentColor : .white)
                         }
-                        .buttonStyle(.plain).focusable(false).disabled(!document.project.hasColorGrade)
+                        .buttonStyle(.plain).focusable(false)
                         .help(!document.project.hasColorGrade ? "Before / after compares the color grade; no clip is graded yet" : player.compareMode == .off ? "Before / after the color grade: split the picture at a divider you can drag (⌥⌘B)" : player.compareMode == .split ? "Show the whole picture before the grade (⌥⌘B)" : "Back to the graded picture (⌥⌘B)")
-                        .pointer().uiFrame("preview.compare").uiTap("preview.compare") { if document.project.hasColorGrade { player.cycleCompare() } }
-                        Button { FullScreenPreview.shared.toggle(player, keys: EditorActions(document: document, state: state, player: player).handle) } label: {
+                        .pointer().disabled(!document.project.hasColorGrade).uiFrame("preview.compare").uiTap("preview.compare") { if document.project.hasColorGrade { player.cycleCompare() } }
+                        Button { toggleFullScreen() } label: {
                             Label("Full screen", systemImage: "arrow.up.left.and.arrow.down.right").labelStyle(.iconOnly).font(.system(size: 12))
                                 .padding(6).background(.black.opacity(0.35), in: RoundedRectangle(cornerRadius: 6)).foregroundStyle(.white)
                         }
-                        .buttonStyle(.plain).focusable(false).help("Show the preview full screen (⇧⌘F, or double-click the preview; Esc leaves)").pointer().uiFrame("preview.fullscreen")
+                        .buttonStyle(.plain).focusable(false).help(noClips ? "Add a clip to the timeline to view it full screen" : "Show the preview full screen (⇧⌘F, or double-click the preview; Esc leaves)")
+                        .pointer().disabled(noClips).uiFrame("preview.fullscreen").uiTap("preview.fullscreen") { toggleFullScreen() }
                         Button { state.focusMode.toggle(); if state.focusMode, state.chat == nil { state.chat = ChatSession(document: document) } } label: {
                             Label("Focus", systemImage: state.focusMode ? "rectangle.3.group" : "rectangle.split.2x1").labelStyle(.iconOnly).font(.system(size: 12))
                                 .padding(6).background(.black.opacity(state.focusMode ? 0.6 : 0.35), in: RoundedRectangle(cornerRadius: 6)).foregroundStyle(state.focusMode ? Color.accentColor : .white)
@@ -178,6 +175,15 @@ struct EditorRootView: View {
             if player.scopesEnabled { ScopesView(data: player.scopes) }
             if let e = player.buildError { Text(e).font(.caption).foregroundStyle(.red).padding(4) }
         }
+    }
+
+    /// No clips on any track: nothing to show full screen, so every entry point (button, menu, double-click) stays off.
+    private var noClips: Bool { document.project.allClips.isEmpty }
+
+    /// Opens the full-screen preview only when there is something to show; closing it always works.
+    private func toggleFullScreen() {
+        guard FullScreenPreview.shared.isShowing || !noClips else { return }
+        FullScreenPreview.shared.toggle(player, keys: EditorActions(document: document, state: state, player: player).handle)
     }
 
     private func exportVideo() {
@@ -204,6 +210,19 @@ struct EditorRootView: View {
             state.isExporting = false
             try? await Task.sleep(for: .seconds(6))
             state.exportStatus = nil
+        }
+    }
+}
+
+/// View menu items. Full Screen Preview does nothing while the project has no clips: the receiver in EditorRootView
+/// (`toggleFullScreen`) guards it, the same way the preview button does. The item itself stays enabled because the
+/// focused document is not reliably visible to the menu (it goes nil whenever the editor window is not key).
+struct ViewCommands: Commands {
+    var body: some Commands {
+        CommandGroup(after: .toolbar) {
+            Button("Full Screen Preview") { NotificationCenter.default.post(name: .editmaxFullScreenPreview, object: nil) }.keyboardShortcut("f", modifiers: [.command, .shift])
+            Button("Focus on Player and Chat") { NotificationCenter.default.post(name: .editmaxFocusMode, object: nil) }.keyboardShortcut("f", modifiers: [.command, .option])
+            Button("Before / After") { NotificationCenter.default.post(name: .editmaxCompare, object: nil) }.keyboardShortcut("b", modifiers: [.command, .option])
         }
     }
 }

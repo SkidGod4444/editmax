@@ -53,9 +53,9 @@ struct TimelineView: View {
     private var toolbar: some View {
         HStack(spacing: 10) {
             HStack(spacing: 2) {
-                Button { player.step(frames: -1, fps: document.project.settings.fps) } label: { Image(systemName: "backward.frame") }.help("Previous frame").pointer()
-                Button { player.togglePlay() } label: { Image(systemName: player.isPlaying ? "pause.fill" : "play.fill").frame(width: 18) }.help("Play or pause (space)").pointer().uiFrame("toolbar.play")
-                Button { player.step(frames: 1, fps: document.project.settings.fps) } label: { Image(systemName: "forward.frame") }.help("Next frame").pointer()
+                Button { player.step(frames: -1, fps: document.project.settings.fps) } label: { Image(systemName: "backward.frame") }.focusable(false).help("Previous frame").pointer().uiFrame("toolbar.stepBack")
+                Button { player.togglePlay() } label: { Image(systemName: player.isPlaying ? "pause.fill" : "play.fill").frame(width: 18) }.focusable(false).help("Play or pause (space)").pointer().uiFrame("toolbar.play")
+                Button { player.step(frames: 1, fps: document.project.settings.fps) } label: { Image(systemName: "forward.frame") }.focusable(false).help("Next frame").pointer().uiFrame("toolbar.stepForward")
             }
             .font(.system(size: 12))
             HStack(spacing: 4) {
@@ -65,25 +65,25 @@ struct TimelineView: View {
             .frame(width: 170, alignment: .leading)
             Divider().frame(height: 14)
             HStack(spacing: 2) {
-                Button { document.undo() } label: { Image(systemName: "arrow.uturn.backward") }.disabled(!document.canUndo).help(document.undoLabel.map { "Undo \($0) (⌘Z)" } ?? "Undo (⌘Z)").pointer().uiFrame("toolbar.undo")
-                Button { document.redo() } label: { Image(systemName: "arrow.uturn.forward") }.disabled(!document.canRedo).help(document.redoLabel.map { "Redo \($0) (⇧⌘Z)" } ?? "Redo (⇧⌘Z)").pointer().uiFrame("toolbar.redo")
+                Button { document.undo() } label: { Image(systemName: "arrow.uturn.backward") }.focusable(false).help(document.undoLabel.map { "Undo \($0) (⌘Z)" } ?? "Undo (⌘Z)").pointer().disabled(!document.canUndo).uiFrame("toolbar.undo")
+                Button { document.redo() } label: { Image(systemName: "arrow.uturn.forward") }.focusable(false).help(document.redoLabel.map { "Redo \($0) (⇧⌘Z)" } ?? "Redo (⇧⌘Z)").pointer().disabled(!document.canRedo).uiFrame("toolbar.redo")
             }
             .font(.system(size: 12))
             Divider().frame(height: 14)
             HStack(spacing: 4) {
-                Button("Split", systemImage: "scissors") { actions.splitAtPlayhead() }.disabled(state.selectedClipIDs.isEmpty).help("Split the selected clip at the playhead (S)").pointer().uiFrame("toolbar.split")
-                Button("Delete", systemImage: "trash") { actions.deleteSelection() }.disabled(state.selectedClipIDs.isEmpty && state.selectedTextID == nil).help("Delete the selection (⌫)").pointer().uiFrame("toolbar.delete")
-                Button("Close gaps", systemImage: "arrow.left.and.line.vertical.and.arrow.right") { actions.closeGaps() }.help("Remove the empty space between clips").pointer().uiFrame("toolbar.closeGaps")
+                Button("Split", systemImage: "scissors") { actions.splitAtPlayhead() }.focusable(false).help("Split the selected clip at the playhead (S)").pointer().disabled(state.selectedClipIDs.isEmpty).uiFrame("toolbar.split")
+                Button("Delete", systemImage: "trash") { actions.deleteSelection() }.focusable(false).help("Delete the selection (⌫)").pointer().disabled(state.selectedClipIDs.isEmpty && state.selectedTextID == nil).uiFrame("toolbar.delete")
+                Button("Close gaps", systemImage: "arrow.left.and.line.vertical.and.arrow.right") { actions.closeGaps() }.focusable(false).help("Remove the empty space between clips").pointer().uiFrame("toolbar.closeGaps")
                 Divider().frame(height: 14)
-                Button("Transition", systemImage: "square.on.square.dashed") { actions.addTransition() }.disabled(state.selectedClipIDs.isEmpty).help("Cross dissolve into the selected clip from the one before it (⌘T)").pointer().uiFrame("toolbar.transition")
-                Button("Marker", systemImage: "flag") { actions.addMarker() }.help("Add a marker at the playhead (M)").pointer().uiFrame("toolbar.marker")
-                Button("Delete range", systemImage: "scissors.badge.ellipsis") { actions.deleteRange() }.disabled(!actions.hasRange).help("Ripple out everything between the in and out points (I and O set them, X clears)").pointer().uiFrame("toolbar.deleteRange")
+                Button("Transition", systemImage: "square.on.square.dashed") { actions.addTransition() }.focusable(false).help("Cross dissolve into the selected clip from the one before it (⌘T)").pointer().disabled(state.selectedClipIDs.isEmpty).uiFrame("toolbar.transition")
+                Button("Marker", systemImage: "flag") { actions.addMarker() }.focusable(false).help("Add a marker at the playhead (M)").pointer().uiFrame("toolbar.marker")
+                Button("Delete range", systemImage: "scissors.badge.ellipsis") { actions.deleteRange() }.focusable(false).help("Ripple out everything between the in and out points (I and O set them, X clears)").pointer().disabled(!actions.hasRange).uiFrame("toolbar.deleteRange")
             }
             .font(.system(size: 11))
             Spacer()
-            Button { state.pixelsPerSecond = max(10, state.pixelsPerSecond / 1.4) } label: { Image(systemName: "minus.magnifyingglass") }.help("Zoom out").pointer()
-            Slider(value: $state.pixelsPerSecond, in: 10...400).frame(width: 110).controlSize(.small)
-            Button { state.pixelsPerSecond = min(400, state.pixelsPerSecond * 1.4) } label: { Image(systemName: "plus.magnifyingglass") }.help("Zoom in").pointer()
+            Button { state.pixelsPerSecond = max(10, state.pixelsPerSecond / 1.4) } label: { Image(systemName: "minus.magnifyingglass") }.focusable(false).help("Zoom out").pointer().uiFrame("toolbar.zoomOut")
+            Slider(value: $state.pixelsPerSecond, in: 10...400).frame(width: 110).controlSize(.small).pointer().uiFrame("toolbar.zoom")
+            Button { state.pixelsPerSecond = min(400, state.pixelsPerSecond * 1.4) } label: { Image(systemName: "plus.magnifyingglass") }.focusable(false).help("Zoom in").pointer().uiFrame("toolbar.zoomIn")
         }
         .buttonStyle(.borderless)
         .padding(.horizontal, 10).padding(.vertical, 6)
@@ -117,10 +117,10 @@ struct TimelineView: View {
                     Spacer(minLength: 2)
                     if track.kind == .video {
                         Button { toggleHidden(track) } label: { Image(systemName: track.isHidden ? "eye.slash" : "eye").frame(width: 16) }
-                            .buttonStyle(.borderless).font(.system(size: 10)).foregroundStyle(track.isHidden ? Color.orange : Color.secondary).help(track.isHidden ? "Hidden; click to show" : "Hide this track").pointer().uiFrame("header.\(track.name).hide")
+                            .buttonStyle(.borderless).focusable(false).font(.system(size: 10)).foregroundStyle(track.isHidden ? Color.orange : Color.secondary).help(track.isHidden ? "Hidden; click to show" : "Hide this track").pointer().uiFrame("header.\(track.name).hide")
                     }
                     Button { toggleMute(track) } label: { Image(systemName: track.isMuted ? "speaker.slash" : "speaker.wave.2").frame(width: 16) }
-                        .buttonStyle(.borderless).font(.system(size: 10)).foregroundStyle(track.isMuted ? Color.orange : Color.secondary).help(track.isMuted ? "Muted; click to unmute" : "Mute this track").pointer().uiFrame("header.\(track.name).mute")
+                        .buttonStyle(.borderless).focusable(false).font(.system(size: 10)).foregroundStyle(track.isMuted ? Color.orange : Color.secondary).help(track.isMuted ? "Muted; click to unmute" : "Mute this track").pointer().uiFrame("header.\(track.name).mute")
                 }
                 .padding(.leading, 6).padding(.trailing, 6).frame(height: rowHeight)
                 .contentShape(Rectangle())
@@ -171,8 +171,8 @@ struct TimelineView: View {
 
     private var addTrackRow: some View {
             HStack(spacing: 6) {
-                Button { addTrack(.video) } label: { Label("Video", systemImage: "plus").font(.system(size: 11)).fixedSize() }.help("Add a video track").pointer().uiFrame("addtrack.video")
-                Button { addTrack(.audio) } label: { Label("Audio", systemImage: "plus").font(.system(size: 11)).fixedSize() }.help("Add an audio track").pointer().uiFrame("addtrack.audio")
+                Button { addTrack(.video) } label: { Label("Video", systemImage: "plus").font(.system(size: 11)).fixedSize() }.focusable(false).help("Add a video track").pointer().uiFrame("addtrack.video")
+                Button { addTrack(.audio) } label: { Label("Audio", systemImage: "plus").font(.system(size: 11)).fixedSize() }.focusable(false).help("Add an audio track").pointer().uiFrame("addtrack.audio")
             }
             .buttonStyle(.plain).labelStyle(.titleAndIcon).foregroundStyle(.secondary)
             .padding(.horizontal, 10).frame(height: 30)

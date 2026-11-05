@@ -57,9 +57,9 @@ struct InspectorView: View {
             Text("Any MCP client can edit this project. The server listens on localhost only and requires the bearer token below. \(mcp.requestCount) requests served.").font(.caption).foregroundStyle(.secondary)
             agentRuntime
             Group {
-                snippet("Claude Code", mcp.claudeCodeCommand)
-                snippet("Codex CLI", mcp.codexCommand)
-                snippet("Cursor / Claude Desktop / any JSON config", mcp.genericJSON)
+                snippet("Claude Code", mcp.claudeCodeCommand, id: "claudeCode")
+                snippet("Codex CLI", mcp.codexCommand, id: "codex")
+                snippet("Cursor / Claude Desktop / any JSON config", mcp.genericJSON, id: "json")
             }
             if let c = mcp.lastClient { Text("Last connected client: \(c)").font(.caption) }
             Text("Config file: \(MCPService.configDirectory.appendingPathComponent("mcp.json").path)").font(.caption2).foregroundStyle(.tertiary).textSelection(.enabled)
@@ -80,8 +80,8 @@ struct InspectorView: View {
                         exportNote = "Saved to \(zip.lastPathComponent) on the Desktop."
                         NSWorkspace.shared.activateFileViewerSelecting([zip])
                     } catch { exportNote = "Export failed: \(error.localizedDescription)" }
-                }.controlSize(.small).pointer()
-                Button("Reveal logs") { DebugLog.reveal() }.controlSize(.small).pointer()
+                }.controlSize(.small).pointer().uiFrame("agents.exportDiagnostics")
+                Button("Reveal logs") { DebugLog.reveal() }.controlSize(.small).pointer().uiFrame("agents.revealLogs")
             }
             if let n = exportNote { Text(n).font(.caption2).foregroundStyle(.secondary) }
         }
@@ -97,7 +97,7 @@ struct InspectorView: View {
                 Text("Updates: running \(updater.status.activeVersion ?? "?") (\(updater.status.activeSource))" + (updater.status.latest.map { " · latest release \($0)" } ?? "")).font(.caption2).foregroundStyle(.tertiary)
                 Spacer()
                 if updater.status.busy { ProgressView().controlSize(.mini) }
-                Button("Check now") { updater.check(reason: "button") }.controlSize(.mini).disabled(updater.status.busy).pointer()
+                Button("Check now") { updater.check(reason: "button") }.controlSize(.mini).pointer().disabled(updater.status.busy).uiFrame("agents.checkUpdate")
             }
             Text(updater.status.message).font(.caption2).foregroundStyle(.secondary).textSelection(.enabled)
             Text("New codemax releases install on their own (checked every 12 h) after passing a health check; one that crashes twice is rolled back.").font(.caption2).foregroundStyle(.tertiary)
@@ -124,9 +124,9 @@ struct InspectorView: View {
         case .stopped: return "MCP server stopped"
         }
     }
-    private func snippet(_ title: String, _ text: String) -> some View {
+    private func snippet(_ title: String, _ text: String, id: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack { Text(title).font(.caption.bold()); Spacer(); Button("Copy") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string) }.pointer().font(.caption) }
+            HStack { Text(title).font(.caption.bold()); Spacer(); Button("Copy") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string) }.pointer().font(.caption).uiFrame("agents.copy.\(id)") }
             Text(text).font(.system(size: 10, design: .monospaced)).textSelection(.enabled).padding(6)
                 .frame(maxWidth: .infinity, alignment: .leading).background(Color(nsColor: .textBackgroundColor)).cornerRadius(4)
         }
@@ -261,8 +261,8 @@ struct ClipInspector: View {
                 }
                 HStack(spacing: 8) {
                     Button("Split at playhead", systemImage: "scissors") { try? x.splitClip(clip.id.uuidString, at: player.currentTime) }
-                        .disabled(player.currentTime <= clip.start + 0.01 || player.currentTime >= clip.end - 0.01).pointer()
-                    Button("Delete", systemImage: "trash", role: .destructive) { state.selectedClipIDs = []; try? x.removeClips([clip.id.uuidString]) }.pointer()
+                        .pointer().disabled(player.currentTime <= clip.start + 0.01 || player.currentTime >= clip.end - 0.01).uiFrame("inspector.clip.split")
+                    Button("Delete", systemImage: "trash", role: .destructive) { state.selectedClipIDs = []; try? x.removeClips([clip.id.uuidString]) }.pointer().uiFrame("inspector.clip.delete")
                     Spacer()
                 }
                 .controlSize(.small)
@@ -308,8 +308,8 @@ struct ClipInspector: View {
                         HStack {
                             Text("\(Timecode.string(clip.start + cut.time))  →  angle \(cut.angle + 1)").font(.caption).monospacedDigit()
                             Spacer()
-                            Button { player.pause(); player.seek(to: clip.start + cut.time) } label: { Image(systemName: "arrow.right.to.line") }.buttonStyle(.borderless).help("Go to cut").pointer()
-                            Button { _ = try? plain.cutAngle(clip.id.uuidString, at: clip.start + cut.time, angle: 0, remove: true) } label: { Image(systemName: "trash") }.buttonStyle(.borderless).help("Remove cut").pointer()
+                            Button { player.pause(); player.seek(to: clip.start + cut.time) } label: { Image(systemName: "arrow.right.to.line") }.buttonStyle(.borderless).help("Go to cut").pointer().uiFrame("inspector.multicam.cut.\(cut.time).go")
+                            Button { _ = try? plain.cutAngle(clip.id.uuidString, at: clip.start + cut.time, angle: 0, remove: true) } label: { Image(systemName: "trash") }.buttonStyle(.borderless).help("Remove cut").pointer().uiFrame("inspector.multicam.cut.\(cut.time).remove")
                         }
                     }
                     if mc.angles.count > 1 {
@@ -344,7 +344,7 @@ struct ClipInspector: View {
                     slider("Crop bottom", value: tf.cropBottom, range: 0...0.9, format: { "\(Int($0 * 100))%" }, reset: 0) { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: nil, y: nil, rotation: nil, cropLeft: nil, cropRight: nil, cropTop: nil, cropBottom: $0, reset: false) }
                     slider("Opacity", param: .opacity, value: clip.opacity, range: 0...1, format: { "\(Int($0 * 100))%" }, reset: 1) { try? x.setClipProperties(clip.id.uuidString, opacity: $0) }
                 } header: {
-                    HStack { Text("Transform"); Spacer(); if !clip.transform.isIdentity { Button("Reset") { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: nil, y: nil, rotation: nil, cropLeft: nil, cropRight: nil, cropTop: nil, cropBottom: nil, reset: true) }.controlSize(.mini).pointer() } }
+                    HStack { Text("Transform"); Spacer(); if !clip.transform.isIdentity { Button("Reset") { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: nil, y: nil, rotation: nil, cropLeft: nil, cropRight: nil, cropTop: nil, cropBottom: nil, reset: true) }.controlSize(.mini).pointer().uiFrame("inspector.transform.reset") } }
                 }
                 Section {
                     let c = clip.color
@@ -358,7 +358,7 @@ struct ClipInspector: View {
                     slider("Highlights", param: .highlights, value: c.highlights, range: -1...1, format: { "\(Int($0 * 100))" }, reset: 0) { try? x.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: nil, temperature: nil, tint: nil, reset: false, highlights: $0) }
                     slider("Vibrance", param: .vibrance, value: c.vibrance, range: -1...1, format: { "\(Int($0 * 100))" }, reset: 0) { try? x.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: nil, temperature: nil, tint: nil, reset: false, vibrance: $0) }
                 } header: {
-                    HStack { Text("Color"); Spacer(); if !clip.color.isIdentity { Button("Reset") { try? x.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: nil, temperature: nil, tint: nil, reset: true) }.controlSize(.mini).pointer() } }
+                    HStack { Text("Color"); Spacer(); if !clip.color.isIdentity { Button("Reset") { try? x.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: nil, temperature: nil, tint: nil, reset: true) }.controlSize(.mini).pointer().uiFrame("inspector.color.reset") } }
                 }
             }
             if track.kind == .video {
@@ -403,13 +403,13 @@ struct ClipInspector: View {
                 slider("Noise gate", value: au.gate, range: -80...0, format: { $0 >= 0 ? "off" : "\(Int($0)) dB" }, reset: 0) { try? x.setClipAudio(clip.id.uuidString, low: nil, mid: nil, high: nil, highPass: nil, gate: $0 > -1 ? 0 : $0, reset: false) }
                 Text("EQ shelves at 200 Hz and 6 kHz, a 1 kHz peak. A high-pass around 80–120 Hz removes rumble; the gate drops 26 dB below its threshold.").font(.caption).foregroundStyle(.secondary)
             } header: {
-                HStack { Text("EQ & cleanup"); Spacer(); if !clip.audio.isIdentity { Button("Reset") { try? x.setClipAudio(clip.id.uuidString, low: nil, mid: nil, high: nil, highPass: nil, gate: nil, reset: true) }.controlSize(.mini).pointer() } }
+                HStack { Text("EQ & cleanup"); Spacer(); if !clip.audio.isIdentity { Button("Reset") { try? x.setClipAudio(clip.id.uuidString, low: nil, mid: nil, high: nil, highPass: nil, gate: nil, reset: true) }.controlSize(.mini).pointer().uiFrame("inspector.audio.reset") } }
             }
             Section("Transition in") {
                 Picker("Kind", selection: Binding(get: { clip.transitionIn?.kind.rawValue ?? "none" }, set: { v in _ = try? ToolExecutor(document: document, origin: .user).setTransition(clip.id.uuidString, kind: v, duration: nil); transitionNote = nil })) {
                     Text("None").tag("none")
                     ForEach(Transition.Kind.allCases, id: \.rawValue) { Text($0.title).tag($0.rawValue) }
-                }.pointer()
+                }.pointer().uiFrame("inspector.transition.kind")
                 if let tr = clip.transitionIn {
                     slider("Duration", value: tr.duration, range: 0.1...min(3, clip.duration), format: { String(format: "%.2f s", $0) }, reset: 0.5) { d in
                         transitionNote = (try? x.setTransition(clip.id.uuidString, kind: nil, duration: d))?.note
@@ -458,6 +458,8 @@ struct ClipInspector: View {
         let apply: (Double) -> Void = { v in
             if let param, animated { _ = try? x.setKeyframe(clip.id.uuidString, param: param.rawValue, time: player.currentTime, value: v, ease: nil) } else { set(v) }
         }
+        // Stable driver id: the parameter name, or the title in lowerCamel ("Crop left" → cropLeft) for plain values.
+        let key = param?.rawValue ?? title.split(separator: " ").enumerated().map { $0.offset == 0 ? $0.element.lowercased() : $0.element.capitalized }.joined()
         return LabeledContent(title) {
             HStack(spacing: 8) {
                 if let param {
@@ -486,9 +488,10 @@ struct ClipInspector: View {
                         }
                     }
                 }
-                Slider(value: .init(get: { shown }, set: apply), in: range).controlSize(.small)
+                Slider(value: .init(get: { shown }, set: apply), in: range).controlSize(.small).pointer().uiFrame("inspector.\(key).slider")
                 Text(format(shown)).font(.caption).monospacedDigit().foregroundStyle(.secondary).frame(width: 44, alignment: .trailing)
-                    .onTapGesture(count: 2) { apply(reset) }.help("Double-click to reset")
+                    .onTapGesture(count: 2) { apply(reset) }.help("Double-click to reset").pointer()
+                    .uiFrame("inspector.\(key).reset").uiTap("inspector.\(key).reset", count: 2) { apply(reset) }
             }
         }
     }
@@ -513,12 +516,12 @@ struct TextInspector: View {
                 TextField("Text", text: $draft, axis: .vertical).lineLimit(1...4)
                     .onSubmit { commitText() }
                 HStack(spacing: 8) {
-                    Button("Apply text") { commitText() }.disabled(draft == text.text).pointer()
-                    Button("Show", systemImage: "eye") { player.pause(); player.seek(to: text.start + 0.05) }.help("Move the playhead to this text").pointer()
+                    Button("Apply text") { commitText() }.pointer().disabled(draft == text.text).uiFrame("inspector.text.apply")
+                    Button("Show", systemImage: "eye") { player.pause(); player.seek(to: text.start + 0.05) }.help("Move the playhead to this text").pointer().uiFrame("inspector.text.show")
                     Button("Delete", systemImage: "trash", role: .destructive) {
                         state.selectedTextID = nil
                         document.apply("Delete text", origin: .user) { p in p.texts.removeAll { $0.id == text.id } }
-                    }.pointer()
+                    }.pointer().uiFrame("inspector.text.delete")
                     Spacer()
                 }
                 .controlSize(.small)
@@ -527,29 +530,29 @@ struct TextInspector: View {
             Section("Look") {
                 Picker("Style", selection: Binding(get: { text.preset ?? "title" }, set: { v in
                     document.apply("Text style", origin: .user) { p in if let i = p.texts.firstIndex(where: { $0.id == text.id }) { p.texts[i].preset = v } }
-                })) { ForEach(CaptionPresets.all, id: \.name) { Text($0.title).tag($0.name) } }.pointer()
+                })) { ForEach(CaptionPresets.all, id: \.name) { Text($0.title).tag($0.name) } }.pointer().uiFrame("inspector.text.style")
                 LabeledContent("Size") {
                     HStack(spacing: 8) {
-                        Slider(value: binding(\.fontSize), in: 12...300).controlSize(.small)
+                        Slider(value: binding(\.fontSize, "Text size"), in: 12...300).controlSize(.small).pointer().uiFrame("inspector.text.size")
                         Text("\(Int(text.fontSize)) pt").font(.caption).monospacedDigit().foregroundStyle(.secondary).frame(width: 44, alignment: .trailing)
                     }
                 }
                 ColorPicker("Color", selection: Binding(get: { Color(hex: text.colorHex) }, set: { c in
                     let hex = c.hexString
                     guard hex != text.colorHex else { return }
-                    document.apply("Text color", origin: .user) { p in if let i = p.texts.firstIndex(where: { $0.id == text.id }) { p.texts[i].colorHex = hex } }
-                }), supportsOpacity: false).pointer()
+                    document.apply("Text color", origin: .user, coalesce: true) { p in if let i = p.texts.firstIndex(where: { $0.id == text.id }) { p.texts[i].colorHex = hex } }   // a drag in the wheel is one undo step
+                }), supportsOpacity: false).pointer().uiFrame("inspector.text.color")
             }
             Section("Position") {
                 LabeledContent("Horizontal") {
                     HStack(spacing: 8) {
-                        Slider(value: binding(\.x), in: 0...1).controlSize(.small)
+                        Slider(value: binding(\.x, "Text horizontal"), in: 0...1).controlSize(.small).pointer().uiFrame("inspector.text.x")
                         Text("\(Int(text.x * 100))%").font(.caption).monospacedDigit().foregroundStyle(.secondary).frame(width: 44, alignment: .trailing)
                     }
                 }
                 LabeledContent("Vertical") {
                     HStack(spacing: 8) {
-                        Slider(value: binding(\.y), in: 0...1).controlSize(.small)
+                        Slider(value: binding(\.y, "Text vertical"), in: 0...1).controlSize(.small).pointer().uiFrame("inspector.text.y")
                         Text("\(Int(text.y * 100))%").font(.caption).monospacedDigit().foregroundStyle(.secondary).frame(width: 44, alignment: .trailing)
                     }
                 }
@@ -572,10 +575,11 @@ struct TextInspector: View {
         document.apply("Edit text", origin: .user) { p in if let i = p.texts.firstIndex(where: { $0.id == text.id }) { p.texts[i].text = t } }
     }
 
-    private func binding<T: Equatable>(_ kp: WritableKeyPath<TextOverlay, T>) -> Binding<T> {
+    /// A slider binding: the drag coalesces into one undo step under `label` (one label per field, so drags stay apart).
+    private func binding<T: Equatable>(_ kp: WritableKeyPath<TextOverlay, T>, _ label: String) -> Binding<T> {
         .init(get: { text[keyPath: kp] }, set: { v in
             guard v != text[keyPath: kp] else { return }
-            document.apply("Edit text", origin: .user) { p in if let i = p.texts.firstIndex(where: { $0.id == text.id }) { p.texts[i][keyPath: kp] = v } }
+            document.apply(label, origin: .user, coalesce: true) { p in if let i = p.texts.firstIndex(where: { $0.id == text.id }) { p.texts[i][keyPath: kp] = v } }
         })
     }
 }
@@ -646,7 +650,7 @@ struct ProjectInspector: View {
                 let building = videos.filter { if case .building = proxies.status[$0.id] { return true }; return false }
                 Toggle("Preview from proxies", isOn: Binding(get: { p.settings.useProxies }, set: { v in try? x.setProjectSettings(width: nil, height: nil, fps: nil, name: nil, useProxies: v) })).pointer().uiFrame("inspector.proxies")
                 HStack {
-                    Button("Make proxies", systemImage: "arrow.down.right.and.arrow.up.left") { _ = x.makeProxies(enable: true) }.disabled(videos.isEmpty || ready == videos.count).pointer()
+                    Button("Make proxies", systemImage: "arrow.down.right.and.arrow.up.left") { _ = x.makeProxies(enable: true) }.pointer().disabled(videos.isEmpty || ready == videos.count).uiFrame("inspector.makeProxies")
                     Spacer()
                     Text(videos.isEmpty ? "No video files yet." : building.isEmpty ? "\(ready) of \(videos.count) ready" : "Building \(building.count)…").font(.caption).foregroundStyle(.secondary)
                 }
@@ -661,20 +665,20 @@ struct ProjectInspector: View {
                     }.labelsHidden().pointer().uiFrame("inspector.template")
                     Button("Apply") {
                         do { let t = try x.applyTemplate(templateChoice); templateStatus = "Applied \(t.name). Undo with ⌘Z." } catch { templateStatus = error.localizedDescription }
-                    }.disabled(templateChoice.isEmpty).pointer().uiFrame("inspector.template.apply")
+                    }.pointer().disabled(templateChoice.isEmpty).uiFrame("inspector.template.apply")
                 }
                 HStack {
                     TextField("Save this project as a template", text: $templateName).textFieldStyle(.roundedBorder).controlSize(.small)
                     Button("Save") {
                         do { _ = try x.saveTemplate(templateName); templateStatus = "Saved template '\(templateName)'."; templateName = "" } catch { templateStatus = error.localizedDescription }
-                    }.disabled(templateName.trimmingCharacters(in: .whitespaces).isEmpty).pointer()
+                    }.pointer().disabled(templateName.trimmingCharacters(in: .whitespaces).isEmpty).uiFrame("inspector.template.save")
                 }
                 Text(templateStatus ?? "Built-in templates set the format on an empty timeline; a saved template restores its tracks, clips and titles.").font(.caption).foregroundStyle(.secondary)
             }
             Section("Add text") {
                 TextField("Title text", text: $newText, prompt: Text("Type a title and press Return")).onSubmit { addTitle() }
                 HStack {
-                    Button("Add at playhead", systemImage: "plus") { addTitle() }.disabled(newText.trimmingCharacters(in: .whitespaces).isEmpty).pointer()
+                    Button("Add at playhead", systemImage: "plus") { addTitle() }.pointer().disabled(newText.trimmingCharacters(in: .whitespaces).isEmpty).uiFrame("inspector.addTitle")
                     Spacer()
                     Text("Starts at \(Timecode.string(player.currentTime)), 3 s long. Drag the bar to adjust.").font(.caption).foregroundStyle(.secondary)
                 }
@@ -685,8 +689,8 @@ struct ProjectInspector: View {
                         HStack {
                             Text("In \(Timecode.string(i)) → Out \(Timecode.string(o))").font(.caption)
                             Spacer()
-                            Button("Delete range") { EditorActions(document: document, state: state, player: player).deleteRange() }.controlSize(.small).pointer()
-                            Button("Clear") { state.inPoint = nil; state.outPoint = nil }.controlSize(.small).pointer()
+                            Button("Delete range") { EditorActions(document: document, state: state, player: player).deleteRange() }.controlSize(.small).pointer().uiFrame("inspector.markers.deleteRange")
+                            Button("Clear") { state.inPoint = nil; state.outPoint = nil }.controlSize(.small).pointer().uiFrame("inspector.markers.clear")
                         }
                     }
                     ForEach(p.markers) { m in
@@ -694,8 +698,8 @@ struct ProjectInspector: View {
                             Circle().fill(Color(hex: m.colorHex)).frame(width: 8, height: 8)
                             TextField("Name", text: Binding(get: { m.name }, set: { v in document.apply("Rename marker", origin: .user, coalesce: true) { p in if let i = p.markers.firstIndex(where: { $0.id == m.id }) { p.markers[i].name = v } } })).textFieldStyle(.plain).font(.caption)
                             Text(Timecode.string(m.time)).font(.caption).monospacedDigit().foregroundStyle(.secondary)
-                            Button { player.pause(); player.seek(to: m.time) } label: { Image(systemName: "arrow.right.to.line") }.buttonStyle(.borderless).help("Go to marker").pointer()
-                            Button { document.apply("Remove marker", origin: .user) { p in p.markers.removeAll { $0.id == m.id } } } label: { Image(systemName: "trash") }.buttonStyle(.borderless).help("Remove marker").pointer()
+                            Button { player.pause(); player.seek(to: m.time) } label: { Image(systemName: "arrow.right.to.line") }.buttonStyle(.borderless).help("Go to marker").pointer().uiFrame("inspector.marker.\(m.id.short).go")
+                            Button { document.apply("Remove marker", origin: .user) { p in p.markers.removeAll { $0.id == m.id } } } label: { Image(systemName: "trash") }.buttonStyle(.borderless).help("Remove marker").pointer().uiFrame("inspector.marker.\(m.id.short).remove")
                         }
                     }
                 }
@@ -711,7 +715,7 @@ struct ProjectInspector: View {
                                 ForEach(p.tracks.filter { $0.id != t.id }) { o in Text("Under \(o.name)").tag(o.id.uuidString) }
                             }.labelsHidden().pointer().uiFrame("inspector.duck.\(t.name)")
                             if let d = t.duck {
-                                Slider(value: Binding(get: { d.level }, set: { v in _ = try? ToolExecutor(document: document, origin: .user, coalesce: true).setDucking(t.id.uuidString, under: nil, level: v, attack: nil, release: nil) }), in: 0...1).controlSize(.small).frame(width: 70)
+                                Slider(value: Binding(get: { d.level }, set: { v in _ = try? ToolExecutor(document: document, origin: .user, coalesce: true).setDucking(t.id.uuidString, under: nil, level: v, attack: nil, release: nil) }), in: 0...1).controlSize(.small).frame(width: 70).pointer().uiFrame("inspector.duck.\(t.name).level")
                                 Text("\(Int(d.level * 100))%").font(.caption).monospacedDigit().foregroundStyle(.secondary).frame(width: 34, alignment: .trailing)
                             }
                         }
@@ -721,18 +725,18 @@ struct ProjectInspector: View {
             }
             Section("Cleanup") {
                 HStack {
-                    Button(cleanupBusy ? "Working…" : "Remove silence") { cleanup(.silence) }.disabled(cleanupBusy || p.allClips.isEmpty).pointer().uiFrame("inspector.removeSilence")
-                    Button("Remove filler words") { cleanup(.fillers) }.disabled(cleanupBusy || p.allClips.isEmpty).pointer().uiFrame("inspector.removeFillers")
+                    Button(cleanupBusy ? "Working…" : "Remove silence") { cleanup(.silence) }.pointer().disabled(cleanupBusy || p.allClips.isEmpty).uiFrame("inspector.removeSilence")
+                    Button("Remove filler words") { cleanup(.fillers) }.pointer().disabled(cleanupBusy || p.allClips.isEmpty).uiFrame("inspector.removeFillers")
                 }
                 Text(cleanupStatus ?? cleanupHint)
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Captions") {
-                Picker("Style", selection: $captionPreset) { ForEach(CaptionPresets.all, id: \.name) { Text($0.title).tag($0.name) } }.pointer()
+                Picker("Style", selection: $captionPreset) { ForEach(CaptionPresets.all, id: \.name) { Text($0.title).tag($0.name) } }.pointer().uiFrame("inspector.captions.style")
                 HStack {
-                    Button(captionBusy ? "Transcribing…" : "Add captions") { addCaptions() }.disabled(captionBusy || p.allClips.isEmpty).pointer()
+                    Button(captionBusy ? "Transcribing…" : "Add captions") { addCaptions() }.pointer().disabled(captionBusy || p.allClips.isEmpty).uiFrame("inspector.addCaptions")
                     if captionCount > 0 {
-                        Button("Remove \(captionCount)") { captionStatus = nil; _ = try? ToolExecutor(document: document, origin: .user).removeCaptions(group: nil) }.pointer()
+                        Button("Remove \(captionCount)") { captionStatus = nil; _ = try? ToolExecutor(document: document, origin: .user).removeCaptions(group: nil) }.pointer().uiFrame("inspector.removeCaptions")
                     }
                 }
                 Text(captionStatus ?? Transcriber.privacyNote)

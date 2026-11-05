@@ -49,13 +49,13 @@ struct ChatView: View {
         VStack(spacing: 6) {
             HStack(spacing: 6) {
                 Picker("", selection: $chat.backend) { ForEach(ChatSession.Backend.allCases, id: \.self) { Text($0.rawValue).tag($0) } }
-                    .pickerStyle(.segmented).labelsHidden().controlSize(.small).frame(maxWidth: 160).pointer()
+                    .pickerStyle(.segmented).labelsHidden().controlSize(.small).frame(maxWidth: 160).pointer().uiFrame("chat.backend")
                     .onChange(of: chat.backend) { old, new in chat.switchBackend(from: old, to: new) }
                 Spacer()
                 if chat.backend == .apiKey {
-                    Button { editingKey.toggle() } label: { Image(systemName: "key") }.buttonStyle(.borderless).help("API keys").pointer()
+                    Button { editingKey.toggle() } label: { Image(systemName: "key") }.buttonStyle(.borderless).focusable(false).help("API keys").pointer().uiFrame("chat.keys")
                 }
-                Button { chat.clear() } label: { Image(systemName: "trash") }.buttonStyle(.borderless).help("Clear conversation").disabled(chat.items.isEmpty).pointer()
+                Button { chat.clear() } label: { Image(systemName: "trash") }.buttonStyle(.borderless).focusable(false).help("Clear conversation").pointer().disabled(chat.items.isEmpty).uiFrame("chat.clear")
             }
             if chat.backend == .agent {
                 HStack(spacing: 6) {
@@ -68,9 +68,9 @@ struct ChatView: View {
                         }
                         if chat.agents.isEmpty { Text(chat.agent).tag(chat.agent) }
                     }
-                    .labelsHidden().controlSize(.small).frame(maxWidth: 200).disabled(chat.isRunning).pointer()
+                    .labelsHidden().controlSize(.small).frame(maxWidth: 200).pointer().disabled(chat.isRunning).uiFrame("chat.agent")
                     Button { chat.refreshAgents() } label: { Image(systemName: "arrow.clockwise") }
-                        .buttonStyle(.borderless).controlSize(.small).help("Look for installed agents again").disabled(chat.isRunning).pointer()
+                        .buttonStyle(.borderless).focusable(false).controlSize(.small).help("Look for installed agents again").pointer().disabled(chat.isRunning).uiFrame("chat.refreshAgents")
                     Spacer(minLength: 4)
                     Text(agentDetail).font(.caption2).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.middle)
                         .help(chat.agentStatus)
@@ -86,12 +86,12 @@ struct ChatView: View {
                         }
                         if chat.providers.isEmpty { Text(chat.provider).tag(chat.provider) }
                     }
-                    .labelsHidden().controlSize(.small).frame(maxWidth: 170).disabled(chat.isRunning).pointer()
+                    .labelsHidden().controlSize(.small).frame(maxWidth: 170).pointer().disabled(chat.isRunning).uiFrame("chat.provider")
                     TextField(chat.selectedProvider?.defaultModel ?? "model id", text: $chat.model)
                         .textFieldStyle(.roundedBorder).controlSize(.small).frame(maxWidth: 150).disabled(chat.isRunning)
-                        .help("Model id; empty uses the provider's default")
+                        .help("Model id; empty uses the provider's default").uiFrame("chat.model")
                     Button { chat.refreshProviders() } label: { Image(systemName: "arrow.clockwise") }
-                        .buttonStyle(.borderless).controlSize(.small).help("Check keys and Claude Code again").disabled(chat.isRunning).pointer()
+                        .buttonStyle(.borderless).focusable(false).controlSize(.small).help("Check keys and Claude Code again").pointer().disabled(chat.isRunning).uiFrame("chat.refreshProviders")
                     Spacer(minLength: 4)
                     Text(apiDetail).font(.caption2).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.middle).help(chat.apiStatus)
                 }
@@ -166,14 +166,14 @@ struct ChatView: View {
                 if source != "environment" {
                     HStack {
                         SecureField(p.keySlot == "anthropic" ? "sk-ant-…" : p.keySlot == "google" ? "AIza…" : p.keySlot == "xai" ? "xai-…" : "sk-…", text: $keyDraft)
-                            .textFieldStyle(.roundedBorder).controlSize(.small)
+                            .textFieldStyle(.roundedBorder).controlSize(.small).uiFrame("chat.keyField")
                         Button("Save") { chat.saveKey(keyDraft, slot: p.keySlot); keyDraft = ""; editingKey = false }
-                            .controlSize(.small).disabled(keyDraft.trimmingCharacters(in: .whitespaces).isEmpty).pointer()
-                        if source == "keychain" { Button("Remove") { chat.saveKey("", slot: p.keySlot) }.controlSize(.small).pointer() }
+                            .controlSize(.small).pointer().disabled(keyDraft.trimmingCharacters(in: .whitespaces).isEmpty).uiFrame("chat.saveKey")
+                        if source == "keychain" { Button("Remove") { chat.saveKey("", slot: p.keySlot) }.controlSize(.small).pointer().uiFrame("chat.removeKey") }
                     }
                 }
                 if let url = ChatSession.keyConsoles[p.keySlot].flatMap(URL.init(string:)) {
-                    Link("Get a key: \(url.host ?? url.absoluteString)", destination: url).font(.caption2).pointer()
+                    Link("Get a key: \(url.host ?? url.absoluteString)", destination: url).font(.caption2).pointer().uiFrame("chat.keyConsole")
                 }
             }
         }
@@ -184,13 +184,13 @@ struct ChatView: View {
             HStack(alignment: .bottom) {
                 TextField("Tell \(workerName) what to change…", text: $chat.input, axis: .vertical)
                     .textFieldStyle(.roundedBorder).lineLimit(1...6)
-                    .onSubmit { chat.send() }
+                    .onSubmit { chat.send() }.uiFrame("chat.input")
                 if chat.isRunning {
-                    Button { chat.stop() } label: { Image(systemName: "stop.circle.fill").font(.title2) }.buttonStyle(.borderless).help("Stop").pointer()
+                    Button { chat.stop() } label: { Image(systemName: "stop.circle.fill").font(.title2) }.buttonStyle(.borderless).focusable(false).help("Stop").pointer().uiFrame("chat.stop")
                 } else {
                     Button { chat.send() } label: { Image(systemName: "arrow.up.circle.fill").font(.title2) }
-                        .buttonStyle(.borderless).keyboardShortcut(.return, modifiers: .command)
-                        .disabled(chat.input.trimmingCharacters(in: .whitespaces).isEmpty || (chat.backend == .apiKey ? !chat.apiReady : !chat.agentReady)).pointer()
+                        .buttonStyle(.borderless).focusable(false).keyboardShortcut(.return, modifiers: .command)
+                        .pointer().disabled(chat.input.trimmingCharacters(in: .whitespaces).isEmpty || (chat.backend == .apiKey ? !chat.apiReady : !chat.agentReady)).uiFrame("chat.send")
                 }
             }
             if chat.backend == .apiKey, !chat.lastUsage.isEmpty { Text(chat.lastUsage).font(.caption2).foregroundStyle(.tertiary) }
@@ -218,6 +218,7 @@ private struct ItemView: View {
                     if hasDetails { Image(systemName: expanded ? "chevron.down" : "chevron.right").font(.caption2).foregroundStyle(.tertiary) }
                 }
                 .contentShape(Rectangle()).onTapGesture { if hasDetails { expanded.toggle() } }.pointer()
+                .uiFrame("chat.tool.\(item.id.short)").uiTap("chat.tool.\(item.id.short)") { if hasDetails { expanded.toggle() } }
                 if expanded {
                     if let i = item.input { block("Input", i) }
                     if let d = item.detail { block(item.status == "failed" ? "Error" : "Result", d) }

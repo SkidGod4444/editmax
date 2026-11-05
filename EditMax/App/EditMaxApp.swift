@@ -15,6 +15,10 @@ struct EditMaxApp: App {
             CommandGroup(after: .saveItem) {
                 Button("Export Video…") { NotificationCenter.default.post(name: .editmaxExport, object: nil) }.keyboardShortcut("e", modifiers: [.command])
             }
+            CommandGroup(after: .toolbar) {
+                Button("Full Screen Preview") { NotificationCenter.default.post(name: .editmaxFullScreenPreview, object: nil) }.keyboardShortcut("f", modifiers: [.command, .shift])
+                Button("Focus on Player and Chat") { NotificationCenter.default.post(name: .editmaxFocusMode, object: nil) }.keyboardShortcut("f", modifiers: [.command, .option])
+            }
             EditCommands()
         }
     }
@@ -27,36 +31,19 @@ struct EditorRootView: View {
     @StateObject private var player = PlayerController()
 
     var body: some View {
-        VSplitView {
-            HSplitView {
-                AssetsSidebar(document: document).frame(minWidth: 200, idealWidth: 240, maxWidth: 360)
-                VStack(spacing: 0) {
-                    PreviewView(controller: player)
-                        .overlay {
-                            if document.project.allClips.isEmpty {
-                                VStack(spacing: 8) {
-                                    Image(nsImage: NSApp.applicationIconImage).resizable().interpolation(.high).frame(width: 72, height: 72).opacity(0.55)
-                                    Text("Drop a clip on the timeline to see it here").font(.system(size: 12)).foregroundStyle(.secondary)
-                                }
-                                .allowsHitTesting(false)
-                            }
-                        }
-                        .overlay(alignment: .topTrailing) {
-                            Button { player.scopesEnabled.toggle() } label: {
-                                Label("Scopes", systemImage: "waveform.path.ecg").labelStyle(.iconOnly).font(.system(size: 12))
-                                    .padding(6).background(.black.opacity(player.scopesEnabled ? 0.6 : 0.35), in: RoundedRectangle(cornerRadius: 6))
-                                    .foregroundStyle(player.scopesEnabled ? Color.accentColor : .white)
-                            }
-                            .buttonStyle(.plain).padding(8).help(player.scopesEnabled ? "Hide the scopes" : "Show the scopes (waveform and histogram)").pointer().uiFrame("preview.scopes")
-                        }
-                    if player.scopesEnabled { ScopesView(data: player.scopes) }
-                    if let e = player.buildError { Text(e).font(.caption).foregroundStyle(.red).padding(4) }
+        Group {
+            if state.focusMode {
+                HSplitView {
+                    VStack(spacing: 0) {
+                        previewArea
+                        TransportBar(player: player, fps: document.project.settings.fps)
+                    }
+                    .frame(minWidth: 480)
+                    focusChat.frame(minWidth: 340, idealWidth: 440, maxWidth: 680)
                 }
-                .frame(minWidth: 400)
-                InspectorView(document: document).frame(minWidth: 280, idealWidth: 360, maxWidth: 560)
+            } else {
+                editorLayout
             }
-            .frame(minHeight: 320)
-            TimelineView(document: document, player: player).frame(minHeight: 200, idealHeight: 280)
         }
         .environmentObject(state)
         .environmentObject(player)
@@ -77,6 +64,12 @@ struct EditorRootView: View {
         .onChange(of: fileURL) { _, new in document.fileURL = new }
         .onDisappear { DocumentRegistry.shared.unregister(document); player.pause() }
         .background(WindowFocusObserver { DocumentRegistry.shared.activate(document) })
+        .onReceive(NotificationCenter.default.publisher(for: .editmaxFocusMode)) { _ in
+            if DocumentRegistry.shared.active?.id == document.id { state.focusMode.toggle() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .editmaxFullScreenPreview)) { _ in
+            if DocumentRegistry.shared.active?.id == document.id { FullScreenPreview.shared.toggle(player, keys: EditorActions(document: document, state: state, player: player).handle) }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .editmaxExport)) { _ in
             guard DocumentRegistry.shared.activeID == document.id, !state.isExporting else { return }
             exportVideo()
@@ -85,6 +78,90 @@ struct EditorRootView: View {
             if let s = state.exportStatus {
                 Text(s).font(.caption).padding(8).background(.thinMaterial).cornerRadius(6).padding(8)
             }
+        }
+    }
+
+    /// The normal editor: media, preview, inspector above the timeline.
+    private var editorLayout: some View {
+        VSplitView {
+            HSplitView {
+                AssetsSidebar(document: document).frame(minWidth: 200, idealWidth: 240, maxWidth: 360)
+                previewArea.frame(minWidth: 400)
+                InspectorView(document: document).frame(minWidth: 280, idealWidth: 360, maxWidth: 560)
+            }
+            .frame(minHeight: 320)
+            TimelineView(document: document, player: player).frame(minHeight: 200, idealHeight: 280)
+        }
+    }
+
+    /// Focus: only the player and the chat, for directing the agent while watching the picture (⌥⌘F or the preview button).
+    private var focusChat: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "sparkles").foregroundStyle(.purple)
+                Text("Chat").font(.headline)
+                Spacer()
+                Button { state.focusMode = false } label: { Label("Back to editor", systemImage: "rectangle.3.group") }
+                    .controlSize(.small).pointer().uiFrame("focus.exit").uiTap("focus.exit") { state.focusMode = false }.help("Back to the full editor (⌥⌘F)")
+            }
+            .padding(.horizontal, 12).padding(.vertical, 8)
+            Divider()
+            if let chat = state.chat { ChatView(chat: chat) } else { Spacer() }
+        }
+    }
+
+    /// The picture with its overlays (empty state, version banner, scopes / full screen / focus buttons), scopes and build errors.
+    private var previewArea: some View {
+        VStack(spacing: 0) {
+            PreviewView(controller: player)
+                .overlay {
+                    if document.project.allClips.isEmpty {
+                        VStack(spacing: 8) {
+                            Image(nsImage: NSApp.applicationIconImage).resizable().interpolation(.high).frame(width: 72, height: 72).opacity(0.55)
+                            Text("Drop a clip on the timeline to see it here").font(.system(size: 12)).foregroundStyle(.secondary)
+                        }
+                        .allowsHitTesting(false)
+                    }
+                }
+                .overlay(alignment: .top) {
+                    if let v = state.viewingVersion, !v.isCurrent {
+                        HStack(spacing: 8) {
+                            Image(systemName: "clock.arrow.circlepath")
+                            Text("Viewing version: \(v.label) · \(v.date.formatted(date: .omitted, time: .shortened))").lineLimit(1)
+                            Button("Back to current") { state.viewingVersion = nil; player.view(nil) }.controlSize(.small).pointer().uiFrame("preview.versionBack")
+                                .uiTap("preview.versionBack") { state.viewingVersion = nil; player.view(nil) }
+                            Button("Restore") { state.viewingVersion = nil; player.view(nil); try? document.restore(version: v, origin: .user) }.controlSize(.small).buttonStyle(.borderedProminent).pointer().uiFrame("preview.versionRestore")
+                                .uiTap("preview.versionRestore", key: v.id) { state.viewingVersion = nil; player.view(nil); try? document.restore(version: v, origin: .user) }
+                        }
+                        .font(.system(size: 12)).foregroundStyle(.white)
+                        .padding(.horizontal, 10).padding(.vertical, 6).background(.orange.opacity(0.85), in: Capsule()).padding(8)
+                        .uiFrame("preview.versionBanner")
+                    }
+                }
+                .overlay(alignment: .topTrailing) {
+                    HStack(spacing: 6) {
+                        Button { player.scopesEnabled.toggle() } label: {
+                            Label("Scopes", systemImage: "waveform.path.ecg").labelStyle(.iconOnly).font(.system(size: 12))
+                                .padding(6).background(.black.opacity(player.scopesEnabled ? 0.6 : 0.35), in: RoundedRectangle(cornerRadius: 6))
+                                .foregroundStyle(player.scopesEnabled ? Color.accentColor : .white)
+                        }
+                        .buttonStyle(.plain).help(player.scopesEnabled ? "Hide the scopes" : "Show the scopes (waveform and histogram)").pointer().uiFrame("preview.scopes")
+                        Button { FullScreenPreview.shared.toggle(player, keys: EditorActions(document: document, state: state, player: player).handle) } label: {
+                            Label("Full screen", systemImage: "arrow.up.left.and.arrow.down.right").labelStyle(.iconOnly).font(.system(size: 12))
+                                .padding(6).background(.black.opacity(0.35), in: RoundedRectangle(cornerRadius: 6)).foregroundStyle(.white)
+                        }
+                        .buttonStyle(.plain).help("Show the preview full screen (⇧⌘F, or double-click the preview; Esc leaves)").pointer().uiFrame("preview.fullscreen")
+                        Button { state.focusMode.toggle(); if state.focusMode, state.chat == nil { state.chat = ChatSession(document: document) } } label: {
+                            Label("Focus", systemImage: state.focusMode ? "rectangle.3.group" : "rectangle.split.2x1").labelStyle(.iconOnly).font(.system(size: 12))
+                                .padding(6).background(.black.opacity(state.focusMode ? 0.6 : 0.35), in: RoundedRectangle(cornerRadius: 6)).foregroundStyle(state.focusMode ? Color.accentColor : .white)
+                        }
+                        .buttonStyle(.plain).help(state.focusMode ? "Back to the full editor (⌥⌘F)" : "Focus: just the player and the chat (⌥⌘F)").pointer().uiFrame("preview.focus")
+                        .uiTap("preview.focus") { state.focusMode.toggle() }
+                    }
+                    .padding(8)
+                }
+            if player.scopesEnabled { ScopesView(data: player.scopes) }
+            if let e = player.buildError { Text(e).font(.caption).foregroundStyle(.red).padding(4) }
         }
     }
 
@@ -155,7 +232,11 @@ struct WindowFocusObserver: NSViewRepresentable {
     func updateNSView(_ nsView: NSView, context: Context) {}
 }
 
-extension Notification.Name { static let editmaxExport = Notification.Name("io.openhorizon.editmax.export") }
+extension Notification.Name {
+    static let editmaxExport = Notification.Name("io.openhorizon.editmax.export")
+    static let editmaxFullScreenPreview = Notification.Name("io.openhorizon.editmax.fullScreenPreview")
+    static let editmaxFocusMode = Notification.Name("io.openhorizon.editmax.focusMode")
+}
 
 /// The format choice in the export save panel.
 final class ExportFormatBox: ObservableObject { @Published var preset: ExportService.Preset = .high }

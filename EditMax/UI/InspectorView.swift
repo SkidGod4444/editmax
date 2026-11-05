@@ -5,6 +5,7 @@ import AppKit
 struct InspectorView: View {
     @ObservedObject var document: EditMaxDocument
     @EnvironmentObject var state: EditorState
+    @EnvironmentObject var player: PlayerController
     @ObservedObject var mcp = MCPService.shared
     @ObservedObject var installer = CodemaxInstaller.shared
     @ObservedObject private var updater = CodemaxUpdater.shared
@@ -14,7 +15,10 @@ struct InspectorView: View {
             Picker("", selection: $state.inspectorTab) {
                 ForEach(EditorState.InspectorTab.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }
-            .pickerStyle(.segmented).padding(8).pointer()
+            .pickerStyle(.segmented).padding(8).pointer().uiFrame("inspector.tabs")
+            // The driver switches tabs through these (ids tab.inspector, tab.chat, tab.agents, tab.history), never by posting a click on the control.
+            .uiTap("tab.inspector") { state.inspectorTab = .inspector }.uiTap("tab.chat") { state.inspectorTab = .chat }
+            .uiTap("tab.agents") { state.inspectorTab = .agents }.uiTap("tab.history") { state.inspectorTab = .history }
             Divider()
             if state.inspectorTab == .chat, let chat = state.chat {
                 ChatView(chat: chat)
@@ -128,25 +132,85 @@ struct InspectorView: View {
         }
     }
 
-    // MARK: History
+    // MARK: History (versions)
+    /// One row per edit, newest first, each showing the project *as it was after that edit*. Click a row to see that version in
+    /// the preview; Restore makes it current again (itself an edit, so nothing is lost). The bottom row is the original.
     private var history: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Every edit records the state before it. Restore any point; restoring is itself an edit, so nothing is lost.").font(.caption).foregroundStyle(.secondary)
-            ForEach(Array(document.project.history.reversed().enumerated()), id: \.element.id) { i, h in
+        let h = document.project.history
+        let viewing = state.viewingVersion
+        return VStack(alignment: .leading, spacing: 6) {
+            Text("Every edit is a version. Click one to see it in the preview, Restore to go back to it. Restoring is itself an edit, so nothing is lost.").font(.caption).foregroundStyle(.secondary)
+            if let v = viewing, !v.isCurrent {
                 HStack(spacing: 8) {
-                    Image(systemName: h.origin == .agent ? "sparkles" : h.origin == .user ? "person" : "gear").foregroundStyle(h.origin == .agent ? .purple : .secondary).frame(width: 16)
+                    Image(systemName: "clock.arrow.circlepath").foregroundStyle(.orange)
+                    Text("Viewing: \(v.label) · \(v.date.formatted(date: .omitted, time: .shortened))").font(.caption).lineLimit(1)
+                    Spacer()
+                    Button("Back to current") { stopViewing() }.font(.caption).controlSize(.small).pointer().uiFrame("history.back").uiTap("history.back") { stopViewing() }
+                    Button("Restore") { restore(v) }.font(.caption).controlSize(.small).buttonStyle(.borderedProminent).pointer().uiFrame("history.restoreViewing").uiTap("history.restoreViewing") { restore(v) }
+                }
+                .padding(6).background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+            }
+            ForEach(Array(h.indices.reversed()), id: \.self) { k in
+                let e = h[k]
+                let isCurrent = k == h.count - 1
+                let selected = viewing.map { $0.id == (isCurrent ? "current" : h[k + 1].id.short) } ?? isCurrent
+                HStack(spacing: 8) {
+                    Image(systemName: e.origin == .agent ? "sparkles" : e.origin == .user ? "person" : "gear").foregroundStyle(e.origin == .agent ? .purple : .secondary).frame(width: 16)
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(h.label).font(.caption).lineLimit(1)
-                        Text(i == 0 ? "Latest · \(h.createdAt.formatted(date: .omitted, time: .shortened))" : h.createdAt.formatted(.relative(presentation: .named))).font(.caption2).foregroundStyle(.tertiary)
+                        Text(e.label).font(.caption).lineLimit(1)
+                        Text((isCurrent ? "Current · " : "") + e.createdAt.formatted(date: .omitted, time: .shortened) + changes(k)).font(.caption2).foregroundStyle(.tertiary).lineLimit(2)
                     }
                     Spacer()
-                    Button("Restore") { try? document.restore(snapshotID: h.id, origin: .user) }.font(.caption).controlSize(.small).pointer().help("Go back to the state before this edit")
+                    if !isCurrent {
+                        Button("Restore") { if let v = try? document.version(afterEditAt: k) { restore(v) } }.font(.caption).controlSize(.small).pointer().help("Make this version current again")
+                            .uiFrame("history.restore.\(k)").uiTap("history.restore.\(k)", key: e.id.uuidString) { if let v = try? document.version(afterEditAt: k) { restore(v) } }
+                    }
                 }
                 .padding(.vertical, 3).padding(.horizontal, 6)
-                .background(i == 0 ? Color.primary.opacity(0.05) : Color.clear, in: RoundedRectangle(cornerRadius: 5))
+                .background(selected ? Color.accentColor.opacity(0.18) : isCurrent ? Color.primary.opacity(0.05) : Color.clear, in: RoundedRectangle(cornerRadius: 5))
+                .contentShape(Rectangle()).onTapGesture { if isCurrent { stopViewing() } else { view(try? document.version(afterEditAt: k)) } }
+                .pointer().uiFrame("history.\(k)").help(isCurrent ? "The project as it is now" : "Show the project as it was after this edit")
+                .uiTap("history.\(k)", key: "\(e.id.uuidString)-\(isCurrent)") { if isCurrent { stopViewing() } else { view(try? document.version(afterEditAt: k)) } }
             }
-            if document.project.history.isEmpty { Text("No edits yet.").font(.caption).foregroundStyle(.tertiary) }
+            if !h.isEmpty {
+                HStack(spacing: 8) {
+                    Image(systemName: "doc").foregroundStyle(.secondary).frame(width: 16)
+                    VStack(alignment: .leading, spacing: 1) { Text("Original").font(.caption); Text("Before the first edit").font(.caption2).foregroundStyle(.tertiary) }
+                    Spacer()
+                    Button("Restore") { if let v = try? document.version(afterEditAt: nil) { restore(v) } }.font(.caption).controlSize(.small).pointer().uiFrame("history.restore.original")
+                        .uiTap("history.restore.original") { if let v = try? document.version(afterEditAt: nil) { restore(v) } }
+                }
+                .padding(.vertical, 3).padding(.horizontal, 6)
+                .background(viewing?.id == "original" ? Color.accentColor.opacity(0.18) : Color.clear, in: RoundedRectangle(cornerRadius: 5))
+                .contentShape(Rectangle()).onTapGesture { view(try? document.version(afterEditAt: nil)) }.pointer().uiFrame("history.original")
+                .uiTap("history.original") { view(try? document.version(afterEditAt: nil)) }
+            }
+            if h.isEmpty { Text("No edits yet.").font(.caption).foregroundStyle(.tertiary) }
         }
+        .onChange(of: document.revision) { _, _ in if state.viewingVersion != nil { state.viewingVersion = nil } }   // any edit returns to the live project
+        .onDisappear { if state.viewingVersion != nil { stopViewing() } }
+    }
+
+    private func view(_ v: ProjectVersion?) {
+        guard let v else { return }
+        if v.isCurrent { stopViewing(); return }
+        state.viewingVersion = v
+        player.view(v.project)
+    }
+    private func stopViewing() { state.viewingVersion = nil; player.view(nil) }
+    private func restore(_ v: ProjectVersion) { stopViewing(); try? document.restore(version: v, origin: .user) }
+
+    /// " · what changed" for edit k, from the snapshot before it to the state after it. Decoded once per entry.
+    private func changes(_ k: Int) -> String {
+        let h = document.project.history
+        let key = h[k].id
+        if let c = VersionDiffCache.shared.text[key] { return c }
+        guard let before = try? EditMaxDocument.decoder.decode(Project.self, from: h[k].project),
+              let after = k == h.count - 1 ? document.project : (try? EditMaxDocument.decoder.decode(Project.self, from: h[k + 1].project)) else { return "" }
+        let d = ProjectDiff.summary(from: before, to: after)
+        let text = d.isEmpty ? "" : " · " + d
+        if k < h.count - 1 { VersionDiffCache.shared.text[key] = text }   // the newest edit's "after" is live and may still coalesce
+        return text
     }
 }
 

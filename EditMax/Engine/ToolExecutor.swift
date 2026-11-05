@@ -377,9 +377,18 @@ struct ToolExecutor {
 
     // MARK: History
 
-    struct SnapshotInfo: Codable { var id: String, label: String, origin: String, createdAt: Date }
+    struct SnapshotInfo: Codable { var id: String, label: String, origin: String, createdAt: Date, changes: String }
+    /// Newest first. Each entry is the state *before* the edit it is named after; `changes` says what that edit did.
     func listHistory(limit: Int = 50) -> [SnapshotInfo] {
-        project.history.suffix(limit).reversed().map { .init(id: $0.id.short, label: $0.label, origin: $0.origin.rawValue, createdAt: $0.createdAt) }
+        let h = project.history
+        return h.indices.suffix(limit).reversed().map { k in
+            let changes: String = {
+                guard let before = try? EditMaxDocument.decoder.decode(Project.self, from: h[k].project),
+                      let after = k == h.count - 1 ? project : (try? EditMaxDocument.decoder.decode(Project.self, from: h[k + 1].project)) else { return "" }
+                return ProjectDiff.summary(from: before, to: after)
+            }()
+            return .init(id: h[k].id.short, label: h[k].label, origin: h[k].origin.rawValue, createdAt: h[k].createdAt, changes: changes)
+        }
     }
     func restore(_ snapshot: String) throws {
         guard let id = Project.resolve(snapshot, in: project.history.map(\.id)) else { throw EditError.notFound("snapshot '\(snapshot)'") }

@@ -69,7 +69,7 @@ enum EditMaxTools {
              inputSchema: schema(["group": str("Caption group id prefix from add_captions or inspect_timeline (optional)"), "project": projectArg]), annotations: .init(destructiveHint: true)),
         Tool(name: "remove_texts", description: "Delete text overlays by id.",
              inputSchema: schema(["ids": strs("Text overlay id prefixes"), "project": projectArg], required: ["ids"]), annotations: .init(destructiveHint: true)),
-        Tool(name: "list_history", description: "Named snapshots recorded before each edit (newest first), by user, agent or system.",
+        Tool(name: "list_history", description: "Named snapshots recorded before each edit (newest first), by user, agent or system, each with a line saying what that edit changed. To get back to how things looked AFTER an edit, restore the entry just above it (the next edit's snapshot).",
              inputSchema: schema(["limit": int("Max entries (default 50)"), "project": projectArg]), annotations: .init(readOnlyHint: true)),
         Tool(name: "restore_snapshot", description: "Restore the project to the state captured by a history snapshot. The current state is snapshotted first, so this is always reversible.",
              inputSchema: schema(["snapshot": str("Snapshot id prefix from list_history"), "project": projectArg], required: ["snapshot"])),

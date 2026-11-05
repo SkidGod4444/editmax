@@ -114,4 +114,41 @@ final class EditMaxDocument: ReferenceFileDocument, ObservableObject {
     }
 
     var displayName: String { fileURL?.deletingPathExtension().lastPathComponent ?? project.name }
+
+    // MARK: Versions
+
+    /// History entries hold the state *before* each edit. A version is the state *after* an edit (what the user thinks of as
+    /// "how it looked once I did that"), so version k = the snapshot stored by edit k+1, and the newest version is the live project.
+    /// `nil` index = the original state before the first edit.
+    func version(afterEditAt index: Int?) throws -> ProjectVersion {
+        let h = project.history
+        guard let index else {
+            guard let first = h.first else { return ProjectVersion(id: "current", label: "Current", date: Date(), project: project, isCurrent: true) }
+            return ProjectVersion(id: "original", label: "Original", date: first.createdAt, project: try Self.decoder.decode(Project.self, from: first.project), isCurrent: false)
+        }
+        guard h.indices.contains(index) else { throw EditError.notFound("version \(index)") }
+        if index == h.count - 1 { return ProjectVersion(id: "current", label: h[index].label, date: h[index].createdAt, project: project, isCurrent: true) }
+        return ProjectVersion(id: h[index + 1].id.short, label: h[index].label, date: h[index].createdAt, project: try Self.decoder.decode(Project.self, from: h[index + 1].project), isCurrent: false)
+    }
+
+    /// Makes a version the live project again; the current state is snapshotted first, so this is itself undoable.
+    func restore(version v: ProjectVersion, origin: EditOrigin) throws {
+        guard !v.isCurrent else { return }
+        try apply("Restore: \(v.label)", origin: origin) { p in
+            let history = p.history, transcripts = p.transcripts
+            p = v.project
+            p.history = history
+            p.transcripts = transcripts
+        }
+    }
+}
+
+/// A point in the project's history, decoded for viewing or restoring.
+struct ProjectVersion: Identifiable, Equatable {
+    let id: String
+    let label: String
+    let date: Date
+    let project: Project
+    let isCurrent: Bool
+    static func == (a: ProjectVersion, b: ProjectVersion) -> Bool { a.id == b.id }
 }

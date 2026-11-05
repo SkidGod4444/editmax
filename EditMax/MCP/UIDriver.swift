@@ -117,6 +117,8 @@ enum UIDriver {
     static func resolve(_ v: Value?, dx: Double, dy: Double) throws -> CGPoint {
         if let id = v?.stringValue {
             guard let f = UIRegistry.shared.frame(id) else {
+                // Handler-only elements (tab.history, …) have no frame; the click goes to their handler, never to a point.
+                if UIRegistry.shared.tapHandlers[id] != nil { return CGPoint(x: -1, y: -1) }
                 throw EditError.notFound("ui element '\(id)'. ui_layout lists what is on screen")
             }
             return CGPoint(x: f.midX + dx, y: f.midY + dy)
@@ -222,12 +224,13 @@ enum UIDriver {
         guard let w = window else { throw EditError.invalid("no window") }
         acceptFirstMouse(in: w)
         return try await withActiveWindow(w) { active in
-            if !active, let id, let h = UIRegistry.shared.tapHandlers[id]?[count] {
+            if let id, let h = UIRegistry.shared.tapHandlers[id]?[count], !active || p.x < 0 {
                 UIRegistry.shared.modifiers = modifiers; defer { UIRegistry.shared.modifiers = nil }
                 h()
                 try await Task.sleep(for: .milliseconds(120))
                 return .handler(id)
             }
+            guard p.x >= 0 else { throw EditError.invalid("no handler for a \(count)-click on '\(id ?? "")'") }
             for c in 1...max(1, count) {
                 post(.leftMouseDown, at: p, in: w, clickCount: c)
                 try await Task.sleep(for: .milliseconds(30))

@@ -36,11 +36,21 @@ final class PlayerController: ObservableObject {
         player.actionAtItemEnd = .pause
     }
 
+    /// A history version shown instead of the live project (History tab). Any edit to the document drops it.
+    @Published private(set) var viewingProject: Project?
+    private weak var boundDocument: EditMaxDocument?
+
+    func view(_ project: Project?) {
+        viewingProject = project
+        if let project { rebuild(project) } else if let d = boundDocument { rebuild(d.project) }
+    }
+
     func bind(to document: EditMaxDocument) {
         cancellables.removeAll()
+        boundDocument = document
         document.$revision
             .debounce(for: .milliseconds(120), scheduler: DispatchQueue.main)
-            .sink { [weak self, weak document] _ in guard let document else { return }; self?.rebuild(document.project) }
+            .sink { [weak self, weak document] _ in guard let self, let document else { return }; self.viewingProject = nil; self.rebuild(document.project) }
             .store(in: &cancellables)
         ProxyStore.shared.$version.dropFirst().receive(on: DispatchQueue.main)
             .sink { [weak self, weak document] _ in guard let document, document.project.settings.useProxies else { return }; self?.rebuild(document.project) }

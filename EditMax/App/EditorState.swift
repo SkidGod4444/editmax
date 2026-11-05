@@ -16,6 +16,10 @@ final class EditorState: ObservableObject {
     @Published var outPoint: Double?
     enum InspectorTab: String, CaseIterable { case inspector = "Inspector", chat = "Chat", agents = "Agents", history = "History" }
     @Published var chat: ChatSession?
+    /// Focus layout: only the player and the chat (no media list, inspector or timeline).
+    @Published var focusMode = false
+    /// History tab: the version being shown in the preview instead of the live project (nil = current). Not an edit.
+    @Published var viewingVersion: ProjectVersion?
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {

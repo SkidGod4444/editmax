@@ -49,6 +49,24 @@ Working:
   a Rec.709 image; the creative look still runs last. Sources are decoded to 16-bit half floats
   (`kCVPixelFormatType_64RGBAHalf`), so 10-bit footage keeps its precision through the LUT: on a 10-bit ramp stretched
   ×6 the exported staircase matches the ideal (RMS 0.95 vs 0.93, max step 2) where the 8-bit decode had steps of 9.
+  Versions: the History tab lists every edit as a version (newest first, the project as it was *after* that edit, with a
+  line saying what changed: "red.mp4: color: exposure 0 → 2"). Click a row to see that version in the preview (an orange
+  banner marks it; any edit returns to the live project), Restore to make it current again (itself an edit, so nothing is
+  lost); the bottom row is the original. The MCP `list_history` entries carry the same `changes` line; they are the
+  "before" snapshots, so to return to the state after an edit, restore the entry just above it.
+  Chat replies render Markdown (headings, lists, tables, code). Agent-harness errors are reworded for the person editing
+  ("The agent stopped before finishing its last step…"); the raw text stays in the debug log.
+  The agent's system prompt (`ChatSession.agentInstructions`) makes it an expert editor: method, cutting, color order
+  (conversion LUT first, creative look last), sound, captions, delivery, and the honest list of what EditMax cannot do.
+  Focus layout: the ▯▯ button on the preview or ⌥⌘F hides the media list, inspector and timeline and shows just the player
+  (with a transport bar: play/pause, frame steps, scrubber) beside the chat, for directing the agent while watching. Same
+  button, "Back to editor" or ⌥⌘F returns.
+  Full-screen preview: the ⤢ button on the preview, ⇧⌘F, or double-click the picture; Esc, double-click or ⇧⌘F leaves.
+  It is a borderless window on the editor's screen showing the same player, so play/scrub/edits stay live. A transport
+  bar (play/pause, scrubber, time, leave) sits at the bottom and hides 2.5 s after the mouse rests; the editor's keys
+  (space, J/K/L, arrows, I/O) work there too.
+  Switching the chat between Agent and API key keeps the transcript on screen; the first message after the switch carries
+  a digest of the earlier user/assistant turns (not tool output) so the new session can carry on.
   Tested with DJI's official D-Log to Rec.709 cube on DJI's Inspire 3 D-Log sample (ProRes HQ and a 10-bit HEVC
   Main 10 transcode of it): EditMax's export matches ffmpeg's `lut3d` within 5 levels. DJI's cubes use tabs after
   `LUT_3D_SIZE` and CR line ends; the parser accepts any whitespace and Latin-1 text.

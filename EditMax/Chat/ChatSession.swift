@@ -151,13 +151,25 @@ final class ChatSession: ObservableObject {
             guard CodemaxRunner.bundledBinary != nil else { items.append(Item(kind: .error, text: "codemax is missing from this build of EditMax.")); return }
             input = ""
             items.append(Item(kind: .user, text: text))
-            runAgent(prompt: text)
+            runAgent(prompt: withHandoff(text))
         case .apiKey:
             if let problem = apiProblem { items.append(Item(kind: .error, text: problem)); return }
             input = ""
             items.append(Item(kind: .user, text: text))
-            runAPI(prompt: text)
+            runAPI(prompt: withHandoff(text))
         }
+    }
+
+    /// The first message after a backend switch carries a digest of the earlier conversation (user requests and the
+    /// assistant's replies, not tool output), so "continue the grade" still means something to the new session.
+    private var handoffPending = false
+    private func withHandoff(_ text: String) -> String {
+        guard handoffPending else { return text }
+        handoffPending = false
+        let earlier = items.dropLast().filter { $0.kind == .user || $0.kind == .assistant }.suffix(30)
+            .map { ($0.kind == .user ? "User: " : "Assistant: ") + $0.text.prefix(600) }.joined(separator: "\n")
+        guard !earlier.isEmpty else { return text }
+        return "Earlier in this chat (a previous session, whose edits are already in the timeline and History):\n\(earlier)\n\nNew request: \(text)"
     }
 
     func stop() { (backend == .apiKey ? apiRunner : runner).cancel() }
@@ -170,19 +182,77 @@ final class ChatSession: ObservableObject {
         items = []; lastUsage = ""; currentAssistant = nil; toolItems = [:]
     }
 
+    /// Agent ↔ API key: the transcript stays on screen (it is the user's record of what was done); only the running
+    /// session ends. The next message starts a fresh session on the new backend, which has not read the earlier turns.
+    func switchBackend(from old: Backend, to new: Backend) {
+        guard old != new else { return }
+        stop()
+        if configuredAgent != nil { runner.close(); configuredAgent = nil }
+        if configuredAPI != nil { apiRunner.close(); configuredAPI = nil }
+        currentAssistant = nil; toolItems = [:]
+        if !items.isEmpty {
+            handoffPending = true
+            items.append(Item(kind: .note, text: "Switched to \(new.rawValue). The next message starts a new session there; it gets a digest of the messages above so you can carry on, and every edit so far is in the timeline and History."))
+        }
+    }
+
     static let agentInstructions = """
-    You are working inside EditMax, a macOS video editor, through its `editmax` MCP tools. Edit only with those tools; do not read or write files directly. \
-    Call inspect_timeline before editing and after a series of changes; use capture_frame when visual judgement matters; use set_playhead to show the user the moment you changed. \
-    Times are seconds on the timeline; ids may be given as the 8-character prefixes you see. Every edit records a snapshot in History. \
-    Reply briefly: say what you did in one or two sentences, use a short bullet list when there are several changes, give timecodes as mm:ss. \
-    Before removing more than one clip, or restoring an old snapshot, confirm with the user unless they clearly asked for exactly that. \
-    Captions: add_captions transcribes on this Mac and adds timed lines (presets subtitle, boxed, bold, outline, minimal, title); get_transcript gives the words with times; \
-    remove_captions clears them. Long files take a while to transcribe the first time. \
-    Cleanup: detect_silence lists quiet stretches, remove_silence and remove_words (fillers like um/uh) cut them from every track and close the gaps; do cleanup before captions.
+    You are EditMax's editor: the best video editor in the world, with the complete craft of picture editing, color grading, sound and delivery, \
+    and nobody beats you at it. You prove it the way great editors do: by looking, measuring and shipping, never by saying so. \
+    You work inside EditMax, a macOS video editor, through its `editmax` MCP tools. Edit only with those tools; do not read or write files directly. \
+    The user sees the real timeline change as you work.
+
+    Method. inspect_timeline before editing and after a run of changes. Plan the cut before touching it. After each visual change, judge it: \
+    frame_stats for numbers (luma, clipping, color balance), capture_frame when you must see the picture. Show the user the moment you changed with set_playhead. \
+    Times are seconds on the timeline; ids are the 8-character prefixes you see. Every edit records a snapshot in History (restore_snapshot goes back). \
+    Before removing more than one clip, or restoring an old snapshot, confirm with the user unless they clearly asked for exactly that.
+
+    Cutting. Cut on action and on the beat of the sound. Straight cuts by default; a cross dissolve only for a passage of time or a mood change; \
+    fades at the head and tail. Hold a title long enough to read it twice. Trim the air out of speech with detect_silence / remove_silence / remove_words \
+    before adding captions. Keep clips from drifting out of sync when you ripple. Match the project's frame rate and aspect to the delivery \
+    (apply_template for YouTube 16:9, vertical 9:16, 4K).
+
+    Color. Log footage first gets its conversion: set input_lut to the camera maker's log-to-Rec.709 cube (DJI D-Log and D-Log M are different \
+    profiles with different cubes; never stack two conversions). Then, in order: exposure, white balance (temperature, tint), contrast, \
+    shadows / midtones / highlights, saturation and vibrance, and last a creative look at a partial look_mix. Skin stays skin-colored; \
+    whites stay below clipping (check frame_stats: clipped white and black well under 1 %); snow and sky keep texture. Match shots cut together \
+    before styling them. Say which settings you chose and why.
+
+    Sound. Speech is the priority: high_pass 80-120 Hz against rumble, a gate (about -45 dBFS) for room tone between words, a gentle EQ. \
+    Music ducks under voice (set_ducking, about -12 dB, short attack, longer release). Short fades on every audio edge against clicks. \
+    Keep loudness consistent across the timeline; use volume keyframes for ramps.
+
+    Captions. add_captions transcribes on this Mac and adds timed lines (presets subtitle, boxed, bold, outline, minimal, title); get_transcript gives \
+    the words with times; remove_captions clears them. Long files take a while to transcribe the first time.
+
+    Delivery. export_video: H.264 (high) for sharing, hevc10 (10-bit HEVC Main 10, Rec.709) when the result goes to a colorist or further grading.
+
+    Limits. EditMax has no masks, motion tracking, stabilization, keying, HDR output or multi-layer compositing beyond stills, titles, \
+    transforms and transitions. When asked for one of those, say so plainly and offer the nearest thing the tools do; never claim it was done.
+
+    Reply briefly: what you did in one or two sentences, a short bullet list when there are several changes, timecodes as mm:ss, \
+    Markdown tables for measurements. No boasting; the work speaks.
     """
 
     private var instructions: String {
         Self.agentInstructions + " The user's project id is \(document.id.short); pass project: \"\(document.id.short)\" to every editmax tool."
+    }
+
+    /// Agent-harness errors in words for the person editing. The raw text stays in the debug log for us.
+    static func plainError(_ message: String) -> String {
+        let m = message.lowercased()
+        if m.contains("incomplete_tool_call") || m.contains("without returning results for tool calls") {
+            return "The agent stopped before finishing its last step. Your edits so far are kept; send \"continue\" to pick up where it left off."
+        }
+        if m.contains("rate limit") || m.contains("429") || m.contains("overloaded") {
+            return "The model is busy right now (rate limited). Wait a moment and send the message again."
+        }
+        if m.contains("context") && (m.contains("too long") || m.contains("exceed")) {
+            return "This conversation got too long for the agent. Clear the chat (trash icon) and continue with a fresh request."
+        }
+        if m.contains("timed out") || m.contains("timeout") { return "The agent took too long to answer and was stopped. Try the request again, or split it in two." }
+        if m.contains("connection") || m.contains("network") || m.contains("enotfound") { return "No connection to the model service. Check the network and try again." }
+        return message
     }
 
     private static func status(_ version: String?, _ info: CodemaxRunner.StartInfo, prefix: String) -> String {
@@ -222,7 +292,7 @@ final class ChatSession: ObservableObject {
             currentAssistant = nil
             // A protocol breakdown or crash in the agent side of an updated codemax counts against the update.
             if backend == .agent, kind == "protocol" || kind == "crashed" { CodemaxUpdater.shared.noteAgentFailure("turn-\(kind)", detail: message) }
-            items.append(Item(kind: .error, text: kind == "quota" ? "Out of quota: \(message)" : kind == "auth" ? (backend == .apiKey ? "Key rejected: \(message)" : "Login needed: \(message)") : message))
+            items.append(Item(kind: .error, text: kind == "quota" ? "Out of quota: \(message)" : kind == "auth" ? (backend == .apiKey ? "Key rejected: \(message)" : "Login needed: \(message)") : Self.plainError(message)))
         case .notice(let text):
             items.append(Item(kind: .note, text: text))
         case .usage(let input, let output, let cost):

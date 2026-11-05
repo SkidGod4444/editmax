@@ -50,7 +50,7 @@ struct ChatView: View {
             HStack(spacing: 6) {
                 Picker("", selection: $chat.backend) { ForEach(ChatSession.Backend.allCases, id: \.self) { Text($0.rawValue).tag($0) } }
                     .pickerStyle(.segmented).labelsHidden().controlSize(.small).frame(maxWidth: 160).pointer()
-                    .onChange(of: chat.backend) { _, _ in chat.clear() }
+                    .onChange(of: chat.backend) { old, new in chat.switchBackend(from: old, to: new) }
                 Spacer()
                 if chat.backend == .apiKey {
                     Button { editingKey.toggle() } label: { Image(systemName: "key") }.buttonStyle(.borderless).help("API keys").pointer()
@@ -208,7 +208,7 @@ private struct ItemView: View {
             HStack { Spacer(minLength: 40)
                 Text(item.text).font(.callout).padding(8).background(Color.accentColor.opacity(0.25)).cornerRadius(8).textSelection(.enabled) }
         case .assistant:
-            Text(Self.markdown(item.text)).font(.callout).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+            MarkdownBlocks(text: item.text).frame(maxWidth: .infinity, alignment: .leading)
         case .tool:
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
@@ -258,5 +258,94 @@ private struct ItemView: View {
             return t.hasPrefix("- ") || t.hasPrefix("* ") ? String(line.prefix(line.count - t.count)) + "•" + t.dropFirst() : String(line)
         }.joined(separator: "\n")
         return (try? AttributedString(markdown: bulleted, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(s)
+    }
+}
+
+
+/// Block-level Markdown for chat replies: headings, bullet and numbered lists, fenced code, pipe tables, paragraphs with
+/// inline **bold**, `code` and links. Enough for an editing assistant's reports; not a full renderer.
+struct MarkdownBlocks: View {
+    let text: String
+    private enum Block { case heading(Int, String), bullets([String]), numbered([String]), code(String), table([[String]]), paragraph(String) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(Array(Self.parse(text).enumerated()), id: \.offset) { _, b in
+                switch b {
+                case .heading(let level, let t):
+                    Text(Self.inline(t)).font(level == 1 ? .headline : level == 2 ? .subheadline.weight(.semibold) : .callout.weight(.semibold)).padding(.top, 2)
+                case .bullets(let items):
+                    VStack(alignment: .leading, spacing: 2) {
+                        ForEach(Array(items.enumerated()), id: \.offset) { _, it in
+                            HStack(alignment: .firstTextBaseline, spacing: 6) { Text("•").foregroundStyle(.secondary); Text(Self.inline(it)).font(.callout) }
+                        }
+                    }
+                case .numbered(let items):
+                    VStack(alignment: .leading, spacing: 2) {
+                        ForEach(Array(items.enumerated()), id: \.offset) { i, it in
+                            HStack(alignment: .firstTextBaseline, spacing: 6) { Text("\(i + 1).").foregroundStyle(.secondary).monospacedDigit(); Text(Self.inline(it)).font(.callout) }
+                        }
+                    }
+                case .code(let c):
+                    ScrollView(.horizontal, showsIndicators: false) { Text(c).font(.system(size: 11, design: .monospaced)).padding(8) }
+                        .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
+                case .table(let rows):
+                    Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 3) {
+                        ForEach(Array(rows.enumerated()), id: \.offset) { r, row in
+                            GridRow {
+                                ForEach(Array(row.enumerated()), id: \.offset) { _, cell in
+                                    Text(Self.inline(cell)).font(r == 0 ? .caption.weight(.semibold) : .caption).foregroundStyle(r == 0 ? .secondary : .primary)
+                                }
+                            }
+                            if r == 0 { Divider().gridCellUnsizedAxes(.horizontal) }
+                        }
+                    }
+                    .padding(6).background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
+                case .paragraph(let t):
+                    Text(Self.inline(t)).font(.callout)
+                }
+            }
+        }
+        .textSelection(.enabled)
+    }
+
+    static func inline(_ s: String) -> AttributedString {
+        (try? AttributedString(markdown: s, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(s)
+    }
+
+    private static func parse(_ text: String) -> [Block] {
+        var blocks: [Block] = []
+        var para: [String] = [], bullets: [String] = [], numbered: [String] = [], table: [[String]] = []
+        var code: [String]? = nil
+        func flush() {
+            if !para.isEmpty { blocks.append(.paragraph(para.joined(separator: " "))); para = [] }
+            if !bullets.isEmpty { blocks.append(.bullets(bullets)); bullets = [] }
+            if !numbered.isEmpty { blocks.append(.numbered(numbered)); numbered = [] }
+            if !table.isEmpty { blocks.append(.table(table)); table = [] }
+        }
+        for raw in text.components(separatedBy: "\n") {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            if let c = code {
+                if line.hasPrefix("```") { blocks.append(.code(c.joined(separator: "\n"))); code = nil } else { code!.append(raw) }
+                continue
+            }
+            if line.hasPrefix("```") { flush(); code = []; continue }
+            if line.isEmpty { flush(); continue }
+            if line.hasPrefix("|") {
+                let cells = line.trimmingCharacters(in: CharacterSet(charactersIn: "|")).components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) }
+                if cells.allSatisfy({ $0.allSatisfy { "-: ".contains($0) } && !$0.isEmpty }) { continue }   // the |---|---| separator
+                if !para.isEmpty || !bullets.isEmpty || !numbered.isEmpty { flush() }
+                table.append(cells); continue
+            }
+            if !table.isEmpty { flush() }
+            if let m = line.firstMatch(of: /^(#{1,4})\s+(.*)$/) { flush(); blocks.append(.heading(m.1.count, String(m.2))); continue }
+            if let m = line.firstMatch(of: /^[-*•]\s+(.*)$/) { if !para.isEmpty || !numbered.isEmpty { flush() }; bullets.append(String(m.1)); continue }
+            if let m = line.firstMatch(of: /^\d+[.)]\s+(.*)$/) { if !para.isEmpty || !bullets.isEmpty { flush() }; numbered.append(String(m.1)); continue }
+            if !bullets.isEmpty || !numbered.isEmpty { flush() }
+            para.append(line)
+        }
+        if let c = code { blocks.append(.code(c.joined(separator: "\n"))) }
+        flush()
+        return blocks
     }
 }

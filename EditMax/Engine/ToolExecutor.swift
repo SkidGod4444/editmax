@@ -8,6 +8,8 @@ import AppKit
 struct ToolExecutor {
     let document: EditMaxDocument
     let origin: EditOrigin
+    /// Slider-style callers: fold rapid same-kind edits into one undo step.
+    var coalesce = false
 
     private var project: Project { document.project }
 
@@ -17,11 +19,14 @@ struct ToolExecutor {
         struct ClipInfo: Codable {
             var id: String, name: String, asset: String, track: String
             var start: Double, end: Double, duration: Double, sourceIn: Double, speed: Double, volume: Double, opacity: Double
+            var transform: ClipTransform?, color: ClipColor?, fadeIn: Double?, fadeOut: Double?, transition: Transition?   // only when set
         }
+        struct MarkerInfo: Codable { var id: String, time: Double, name: String, color: String }
         struct TextInfo: Codable { var id: String, text: String, start: Double, end: Double, preset: String?, caption: String? }
         struct TrackInfo: Codable { var id: String, name: String, kind: String, clipCount: Int, muted: Bool, hidden: Bool }
         var project: String, projectID: String, width: Int, height: Int, fps: Double, duration: Double
-        var tracks: [TrackInfo], clips: [ClipInfo], texts: [TextInfo], historyCount: Int
+        var tracks: [TrackInfo], clips: [ClipInfo], texts: [TextInfo], markers: [MarkerInfo], historyCount: Int
+        var playhead: Double?
     }
 
     func inspectTimeline() -> TimelineSummary {
@@ -31,7 +36,9 @@ struct ToolExecutor {
             for c in t.clips {
                 clips.append(.init(id: c.id.short, name: c.name, asset: c.assetID.short, track: t.name,
                                    start: r(c.start), end: r(c.end), duration: r(c.duration), sourceIn: r(c.sourceIn),
-                                   speed: c.speed, volume: c.volume, opacity: c.opacity))
+                                   speed: c.speed, volume: c.volume, opacity: c.opacity,
+                                   transform: c.transform.isIdentity ? nil : c.transform, color: c.color.isIdentity ? nil : c.color,
+                                   fadeIn: c.fadeIn > 0 ? c.fadeIn : nil, fadeOut: c.fadeOut > 0 ? c.fadeOut : nil, transition: c.transitionIn))
             }
         }
         return TimelineSummary(
@@ -40,7 +47,8 @@ struct ToolExecutor {
             tracks: p.tracks.map { .init(id: $0.id.short, name: $0.name, kind: $0.kind.rawValue, clipCount: $0.clips.count, muted: $0.isMuted, hidden: $0.isHidden) },
             clips: clips.sorted { ($0.track, $0.start) < ($1.track, $1.start) },
             texts: p.texts.map { .init(id: $0.id.short, text: $0.text, start: r($0.start), end: r($0.end), preset: $0.preset, caption: $0.group?.short) },
-            historyCount: p.history.count)
+            markers: p.markers.map { .init(id: $0.id.short, time: r($0.time), name: $0.name, color: $0.colorHex) },
+            historyCount: p.history.count, playhead: UIRegistry.shared.playheads[document.id]?().map(r))
     }
 
     struct AssetInfo: Codable { var id: String, name: String, kind: String, duration: Double, width: Int?, height: Int?, path: String }
@@ -127,7 +135,7 @@ struct ToolExecutor {
     func setClipProperties(_ clip: String, speed: Double? = nil, volume: Double? = nil, opacity: Double? = nil, name: String? = nil) throws {
         let id = try resolveClip(clip)
         if let speed, speed <= 0 { throw EditError.invalid("speed must be > 0") }
-        try document.apply("Edit clip properties", origin: origin) { p in
+        try document.apply("Edit clip properties", origin: origin, coalesce: coalesce) { p in
             try p.updateClip(id) { c in
                 if let speed { let src = c.duration * c.speed; c.speed = speed; c.duration = src / speed }
                 if let volume { c.volume = max(0, min(2, volume)) }
@@ -387,15 +395,102 @@ struct ToolExecutor {
         gen.appliesPreferredTrackTransform = true
         gen.requestedTimeToleranceBefore = .zero; gen.requestedTimeToleranceAfter = CMTime(value: 1, timescale: 30)
         let t = CMTime(seconds: min(max(0, seconds), max(0, out.duration.seconds - 0.05)), preferredTimescale: CompositionBuilder.timescale)
-        var base: CGImage? = try? await gen.image(at: t).image
-        if base == nil {  // no video at that time: black frame
-            let ctx = CGContext(data: nil, width: Int(out.renderSize.width), height: Int(out.renderSize.height), bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue)!
-            ctx.setFillColor(CGColor(gray: 0, alpha: 1)); ctx.fill(CGRect(origin: .zero, size: out.renderSize))
-            base = ctx.makeImage()
+        let raw = try await gen.image(at: t).image   // the compositor draws titles and stills too
+        let frame = raw.copy(colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!) ?? raw   // the pixels are sRGB already; retag, don't convert
+        let scale = min(1, CGFloat(maxWidth) / out.renderSize.width)
+        let outSize = NSSize(width: (out.renderSize.width * scale).rounded(), height: (out.renderSize.height * scale).rounded())
+        let image = NSImage(size: outSize)
+        image.lockFocus(); NSGraphicsContext.current?.cgContext.draw(frame, in: CGRect(origin: .zero, size: outSize)); image.unlockFocus()
+        guard let tiff = image.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff), let png = rep.representation(using: .png, properties: [:]) else { throw EditError.invalid("could not encode frame") }
+        return png
+    }
+
+    // MARK: Look: transform, color, fades, transitions
+
+    func setClipTransform(_ clip: String, scale: Double?, x: Double?, y: Double?, rotation: Double?, cropLeft: Double?, cropRight: Double?, cropTop: Double?, cropBottom: Double?, reset: Bool) throws {
+        let id = try resolveClip(clip)
+        try document.apply("Transform clip", origin: origin, coalesce: coalesce) { p in
+            try p.updateClip(id) { c in
+                if reset { c.transform = .identity }
+                if let scale { c.transform.scale = max(0.05, min(10, scale)) }
+                if let x { c.transform.x = max(-2, min(2, x)) }
+                if let y { c.transform.y = max(-2, min(2, y)) }
+                if let rotation { c.transform.rotation = rotation.truncatingRemainder(dividingBy: 360) }
+                if let cropLeft { c.transform.cropLeft = max(0, min(0.95, cropLeft)) }
+                if let cropRight { c.transform.cropRight = max(0, min(0.95, cropRight)) }
+                if let cropTop { c.transform.cropTop = max(0, min(0.95, cropTop)) }
+                if let cropBottom { c.transform.cropBottom = max(0, min(0.95, cropBottom)) }
+            }
         }
-        guard let base else { throw EditError.invalid("could not render frame") }
-        let img = OverlayLayerBuilder.composite(base: base, project: project, size: out.renderSize, at: seconds, maxWidth: maxWidth)
-        return img
+    }
+
+    func setClipColor(_ clip: String, exposure: Double?, contrast: Double?, saturation: Double?, temperature: Double?, tint: Double?, reset: Bool) throws {
+        let id = try resolveClip(clip)
+        try document.apply("Color clip", origin: origin, coalesce: coalesce) { p in
+            try p.updateClip(id) { c in
+                if reset { c.color = .identity }
+                if let exposure { c.color.exposure = max(-4, min(4, exposure)) }
+                if let contrast { c.color.contrast = max(0.25, min(3, contrast)) }
+                if let saturation { c.color.saturation = max(0, min(3, saturation)) }
+                if let temperature { c.color.temperature = max(-100, min(100, temperature)) }
+                if let tint { c.color.tint = max(-100, min(100, tint)) }
+            }
+        }
+    }
+
+    func setClipFades(_ clip: String, fadeIn: Double?, fadeOut: Double?) throws {
+        let id = try resolveClip(clip)
+        try document.apply("Fade clip", origin: origin, coalesce: coalesce) { p in
+            try p.updateClip(id) { c in
+                if let fadeIn { c.fadeIn = max(0, min(c.duration, fadeIn)) }
+                if let fadeOut { c.fadeOut = max(0, min(c.duration, fadeOut)) }
+            }
+        }
+    }
+
+    struct TransitionResult: Codable { var clip: String, kind: String?, duration: Double, note: String? }
+    /// A transition into `clip` from the clip ending where it starts. `kind` "none" removes it. The duration is limited
+    /// by the clip's length and by how much media the outgoing clip has past its out point.
+    func setTransition(_ clip: String, kind: String?, duration: Double?) throws -> TransitionResult {
+        let id = try resolveClip(clip)
+        guard let found = project.clip(id) else { throw EditError.notFound("clip \(clip)") }
+        if kind?.lowercased() == "none" {
+            try document.apply("Remove transition", origin: origin) { p in try p.updateClip(id) { $0.transitionIn = nil } }
+            return TransitionResult(clip: id.short, kind: nil, duration: 0, note: nil)
+        }
+        let k: Transition.Kind
+        if let kind {
+            let key = kind.lowercased().replacingOccurrences(of: " ", with: "").replacingOccurrences(of: "_", with: "").replacingOccurrences(of: "-", with: "")
+            guard let m = Transition.Kind.allCases.first(where: { $0.rawValue.lowercased() == key }) else { throw EditError.invalid("kind must be one of \(Transition.Kind.allCases.map(\.rawValue).joined(separator: ", ")) or none") }
+            k = m
+        } else { k = found.clip.transitionIn?.kind ?? .crossDissolve }
+        var d = max(0.1, duration ?? found.clip.transitionIn?.duration ?? 0.5)
+        var note: String? = nil
+        let prev = project.clipBefore(found.clip, on: found.track)
+        if prev == nil { note = "No clip ends where this one starts, so it transitions from black." }
+        if let prev, let pa = project.asset(prev.assetID), pa.kind != .image {
+            let tail = max(0, (pa.duration - prev.sourceOut) / prev.speed)
+            if tail < d { d = max(0.1, (tail * 100).rounded(.down) / 100); note = "Shortened to \(d) s: the outgoing clip \(prev.name) has only \(String(format: "%.2f", tail)) s of media past its out point." }
+            if tail < 0.1 { note = "The outgoing clip \(prev.name) has no media past its out point; the transition will play over black. Trim its end earlier to give it a tail." }
+        }
+        d = min(d, found.clip.duration)
+        try document.apply("Add transition", origin: origin) { p in try p.updateClip(id) { $0.transitionIn = Transition(kind: k, duration: d) } }
+        return TransitionResult(clip: id.short, kind: k.rawValue, duration: d, note: note)
+    }
+
+    // MARK: Markers
+
+    struct MarkerInfo: Codable { var id: String, time: Double, name: String, color: String }
+    func addMarker(at time: Double, name: String?, colorHex: String?) -> MarkerInfo {
+        var m = Marker(time: max(0, time), name: name ?? "")
+        if let colorHex { m.colorHex = colorHex }
+        document.apply("Add marker", origin: origin) { p in p.markers.append(m); p.markers.sort { $0.time < $1.time } }
+        return MarkerInfo(id: m.id.short, time: r(m.time), name: m.name, color: m.colorHex)
+    }
+    func removeMarker(_ text: String) throws {
+        let key = text.lowercased()
+        guard let m = project.markers.first(where: { $0.id.uuidString.lowercased().hasPrefix(key) || $0.id.short.lowercased() == key }) else { throw EditError.notFound("marker \(text)") }
+        document.apply("Remove marker", origin: origin) { p in p.markers.removeAll { $0.id == m.id } }
     }
 
     // MARK: Settings

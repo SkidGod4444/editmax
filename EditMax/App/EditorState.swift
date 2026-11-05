@@ -11,6 +11,9 @@ final class EditorState: ObservableObject {
     @Published var inspectorTab: InspectorTab = .inspector
     @Published var exportStatus: String?
     @Published var isExporting = false
+    /// Range marked with I and O; "Delete range" ripples it out of every track.
+    @Published var inPoint: Double?
+    @Published var outPoint: Double?
     enum InspectorTab: String, CaseIterable { case inspector = "Inspector", chat = "Chat", agents = "Agents", history = "History" }
     @Published var chat: ChatSession?
 }

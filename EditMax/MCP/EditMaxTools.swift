@@ -88,11 +88,30 @@ enum EditMaxTools {
         Tool(name: "ui_drag", description: "Drag with the mouse inside the EditMax window, from one element (or point) to another: move or trim a bar, drop a media row onto a lane, reorder track headers, scrub the ruler. Events are posted to EditMax's own window only. Check the result with inspect_timeline or ui_screenshot.",
              inputSchema: schema(["from": .object(["description": .string("Element id from ui_layout, or {x, y} in window points")]), "to": .object(["description": .string("Element id or {x, y}")]),
                                   "from_dx": num("Offset from the source centre, points (e.g. -40 to grab near a clip's left part)"), "from_dy": num("Offset, points"), "to_dx": num("Offset from the target centre"), "to_dy": num("Offset"),
-                                  "steps": int("Intermediate mouse moves (default 12)"), "hold_ms": int("Pause after mouse-down before moving (default 80)")], required: ["from", "to"])),
-        Tool(name: "ui_click", description: "Click an element (or point) in the EditMax window: buttons, a bar to select it, a header toggle. count 2 = double-click (e.g. a media row appends it).",
-             inputSchema: schema(["target": .object(["description": .string("Element id from ui_layout, or {x, y}")]), "dx": num("Offset, points"), "dy": num("Offset, points"), "count": int("Clicks (default 1)")], required: ["target"])),
+                                  "steps": int("Intermediate mouse moves (default 12)"), "modifiers": strs("shift, command, option, control (option = no snapping)"), "hold_ms": int("Pause after mouse-down before moving (default 80)")], required: ["from", "to"])),
+        Tool(name: "ui_key", description: "Press a key in the EditMax window, as the user would: space (play/pause), j/k/l (shuttle), left/right (frame step, shift = 10), home/end, i/o/x (in, out, clear), m (marker), s (split), delete, or with modifiers such as [\"command\"] for ⌘T (transition), ⌘= / ⌘- (zoom), ⌘Z.",
+             inputSchema: schema(["key": str("One character, or space, left, right, up, down, home, end, delete, forwarddelete, return, escape, tab"), "modifiers": strs("shift, command, option, control")], required: ["key"])),
+        Tool(name: "ui_click", description: "Click an element (or point) in the EditMax window: buttons, a bar to select it, a header toggle. count 2 = double-click (e.g. a media row appends it). modifiers [\"shift\"] adds a bar to the selection.",
+             inputSchema: schema(["target": .object(["description": .string("Element id from ui_layout, or {x, y}")]), "dx": num("Offset, points"), "dy": num("Offset, points"), "count": int("Clicks (default 1)"), "modifiers": strs("shift, command, option, control")], required: ["target"])),
+        Tool(name: "ui_scroll", description: "Scroll the scrollable area under an element or point (the inspector, the media list, the timeline) by dy points; positive = down. Returns the new offset and how far it can go.",
+             inputSchema: schema(["target": .object(["description": .string("Element id from ui_layout, or {x, y}")]), "dy": num("Points to scroll (positive = down)"), "dx": num("Points to scroll right")], required: ["target"])),
         Tool(name: "ui_screenshot", description: "The EditMax window as it looks now (this window's pixels only), as a PNG image.",
              inputSchema: schema(["max_width": int("Image width in pixels (default 1400)")]), annotations: .init(readOnlyHint: true)),
+        Tool(name: "set_clip_transform", description: "Position a clip's picture in the frame: scale (1 = fit), x/y offset as a fraction of the frame (0.5 = half a frame right/down), rotation in clockwise degrees, crops as fractions of the picture cut from each edge. reset=true clears everything first.",
+             inputSchema: schema(["clip": str("Clip id prefix"), "scale": num("0.05 to 10"), "x": num("-2 to 2"), "y": num("-2 to 2"), "rotation": num("Degrees"),
+                                  "crop_left": num("0 to 0.95"), "crop_right": num("0 to 0.95"), "crop_top": num("0 to 0.95"), "crop_bottom": num("0 to 0.95"),
+                                  "reset": .object(["type": "boolean", "description": "Clear the transform first"]), "project": projectArg], required: ["clip"])),
+        Tool(name: "set_clip_color", description: "Color-correct a clip: exposure in stops (-4 to 4), contrast and saturation as multipliers (1 = untouched), temperature (-100 cool to 100 warm), tint (-100 green to 100 magenta). reset=true clears everything first.",
+             inputSchema: schema(["clip": str("Clip id prefix"), "exposure": num("Stops"), "contrast": num("0.25 to 3"), "saturation": num("0 to 3"), "temperature": num("-100 to 100"), "tint": num("-100 to 100"),
+                                  "reset": .object(["type": "boolean", "description": "Clear the correction first"]), "project": projectArg], required: ["clip"])),
+        Tool(name: "set_clip_fades", description: "Fade a clip in from black and silence and/or out to them, in seconds.",
+             inputSchema: schema(["clip": str("Clip id prefix"), "fade_in": num("Seconds"), "fade_out": num("Seconds"), "project": projectArg], required: ["clip"])),
+        Tool(name: "set_transition", description: "Put a transition on the start of a clip, from the clip that ends where it starts (or from black): crossDissolve, dipToBlack, wipeLeft, wipeRight, or none to remove. It takes the first `duration` seconds of the clip; the outgoing clip needs that much media past its out point.",
+             inputSchema: schema(["clip": str("Incoming clip id prefix"), "kind": str("crossDissolve | dipToBlack | wipeLeft | wipeRight | none"), "duration": num("Seconds, default 0.5"), "project": projectArg], required: ["clip"])),
+        Tool(name: "add_marker", description: "Add a named marker at a timeline time.",
+             inputSchema: schema(["at": num("Seconds"), "name": str("Label"), "color": str("Hex color like #3B82F6"), "project": projectArg], required: ["at"])),
+        Tool(name: "remove_marker", description: "Remove a marker by id.",
+             inputSchema: schema(["marker": str("Marker id prefix"), "project": projectArg], required: ["marker"]), annotations: .init(destructiveHint: true)),
         Tool(name: "set_project_settings", description: "Change output resolution, frame rate or project name.",
              inputSchema: schema(["width": int("Pixels"), "height": int("Pixels"), "fps": num("Frames per second"), "name": str("Project name"), "project": projectArg])),
     ]
@@ -140,6 +159,7 @@ enum EditMaxTools {
         let d = { (k: String) -> Double? in a[k]?.doubleValue ?? a[k]?.intValue.map(Double.init) }
         let i = { (k: String) -> Int? in a[k]?.intValue ?? a[k]?.doubleValue.map { Int($0) } }
         let list = { (k: String) -> [String] in a[k]?.arrayValue?.compactMap(\.stringValue) ?? [] }
+        let b = { (k: String) -> Bool in a[k]?.boolValue ?? false }
         func req(_ k: String) throws -> String { guard let v = s(k), !v.isEmpty else { throw MCPError.invalidParams("'\(k)' is required") }; return v }
         func reqNum(_ k: String) throws -> Double { guard let v = d(k) else { throw MCPError.invalidParams("'\(k)' is required") }; return v }
 
@@ -209,6 +229,7 @@ enum EditMaxTools {
         case "ui_drag":
             let from = try UIDriver.resolve(a["from"], dx: d("from_dx") ?? 0, dy: d("from_dy") ?? 0)
             let to = try UIDriver.resolve(a["to"], dx: d("to_dx") ?? 0, dy: d("to_dy") ?? 0)
+            UIDriver.modifiers = UIDriver.flags(list("modifiers")); defer { UIDriver.modifiers = [] }
             let how = try await UIDriver.drag(from: from, fromID: s("from"), to: to, steps: i("steps") ?? 12, holdMs: i("hold_ms") ?? 80)
             let path = "from (\(Int(from.x)), \(Int(from.y))) to (\(Int(to.x)), \(Int(to.y)))"
             switch how {
@@ -217,8 +238,18 @@ enum EditMaxTools {
             }
         case "ui_click":
             let p = try UIDriver.resolve(a["target"], dx: d("dx") ?? 0, dy: d("dy") ?? 0)
-            try await UIDriver.click(at: p, count: i("count") ?? 1)
-            return message("Clicked (\(Int(p.x)), \(Int(p.y)))")
+            UIDriver.modifiers = UIDriver.flags(list("modifiers")); defer { UIDriver.modifiers = [] }
+            switch try await UIDriver.click(at: p, id: s("target"), count: i("count") ?? 1) {
+            case .events: return message("Clicked (\(Int(p.x)), \(Int(p.y)))")
+            case .handler(let id): return message("Clicked \(id) by calling its own tap code: macOS would not make EditMax the active app, which SwiftUI gestures need.")
+            }
+        case "ui_key":
+            let how = try await UIDriver.key(try req("key"), modifiers: list("modifiers"))
+            return message("Pressed \(try req("key"))" + (how == "events" ? "" : " (through the editor's key \(how): EditMax is not the active app)"))
+        case "ui_scroll":
+            let p = try UIDriver.resolve(a["target"], dx: 0, dy: 0)
+            let r = try await UIDriver.scroll(at: p, dx: d("dx") ?? 0, dy: d("dy") ?? 0)
+            return message("Scrolled to (\(Int(r.x)), \(Int(r.y))) of (\(Int(r.maxX)), \(Int(r.maxY)))")
         case "ui_screenshot":
             let shot = try await UIDriver.screenshot(maxWidth: i("max_width") ?? 1400)
             return Payload(text: "Window (\(shot.png.count) bytes PNG, \(shot.method))", value: nil, image: shot.png)
@@ -228,6 +259,18 @@ enum EditMaxTools {
             return try payload(try x.moveTrack(try req("track"), toRow: Int(try reqNum("row"))))
         case "set_project_settings":
             try x.setProjectSettings(width: i("width"), height: i("height"), fps: d("fps"), name: s("name")); return message("Settings updated")
+        case "set_clip_transform":
+            try x.setClipTransform(try req("clip"), scale: d("scale"), x: d("x"), y: d("y"), rotation: d("rotation"), cropLeft: d("crop_left"), cropRight: d("crop_right"), cropTop: d("crop_top"), cropBottom: d("crop_bottom"), reset: b("reset")); return message("Transform updated")
+        case "set_clip_color":
+            try x.setClipColor(try req("clip"), exposure: d("exposure"), contrast: d("contrast"), saturation: d("saturation"), temperature: d("temperature"), tint: d("tint"), reset: b("reset")); return message("Color updated")
+        case "set_clip_fades":
+            try x.setClipFades(try req("clip"), fadeIn: d("fade_in"), fadeOut: d("fade_out")); return message("Fades updated")
+        case "set_transition":
+            return try payload(try x.setTransition(try req("clip"), kind: s("kind"), duration: d("duration")))
+        case "add_marker":
+            return try payload(x.addMarker(at: try reqNum("at"), name: s("name"), colorHex: s("color")))
+        case "remove_marker":
+            try x.removeMarker(try req("marker")); return message("Marker removed")
         default: throw MCPError.methodNotFound("Unknown tool \(name)")
         }
     }

@@ -21,10 +21,19 @@ Working:
 - Document model (`.editmax` JSON), multi-window, media panel with import; drag media (or Finder files) onto a timeline lane to place a clip at that time, double-click to append
 - Timeline: video/audio tracks, clip move/split/trim/delete, speed, volume, opacity, close gaps, text overlays
 - Undo/redo (⌘Z, ⇧⌘Z, toolbar arrows) over every edit, the agent's included; the History tab stays the full log with restore points
+- Picture: EditMax's own compositor (`EditMax/Engine/Compositor.swift`, Core Image on the GPU) draws every frame of the preview, the export
+  and `capture_frame`, so what plays is what exports. Per clip: transform (scale, position, rotation, crop), color (exposure, contrast,
+  saturation, temperature, tint), fades in/out (picture and sound), transitions into a clip (cross dissolve, dip to black, wipes; the
+  outgoing clip plays on underneath, so it needs media past its out point), stills on video tracks, titles. Each project track has A/B
+  composition tracks so transitions can overlap. No color management: an ungraded frame exports with the source's pixel values.
+- Timeline: snapping to clip and text edges, markers, in/out points and the playhead (⌥ drags free); ⇧/⌘-click multi-select with group
+  move; markers (M) on the ruler; in/out points (I, O, X) with "Delete range" (ripples every track); transition and fade marks on clips
+- Keys: Space, J/K/L shuttle (repeat to double, up to 8×), ←/→ frame (⇧ = 10), Home/End, S split, ⌫ delete, M, I/O/X, ⌘T transition,
+  ⌘= / ⌘- zoom, ⌘Z / ⇧⌘Z. Letter keys never fire while a text field has the focus.
 - Grouped inspectors: a clip shows its thumbnail, name, split/delete, timing and reset-able sliders; a text shows text, style, size, a color picker and position; the project inspector adds titles at the playhead. Right-click menus on media rows (add, reveal, remove), track headers (mute, hide, delete) and bars (split, show, style, delete); empty-state hints in the preview and timeline
 - Live preview with AVPlayer + Core Animation overlays; frame stepping
 - Export to H.264/AAC MP4 (`File > Export Video…`, ⌘E, or the `export_video` tool), verified with ffprobe
-- MCP server on `http://127.0.0.1:19790/mcp` (port and token in `~/Library/Application Support/EditMax/mcp.json`), 32 tools
+- MCP server on `http://127.0.0.1:19790/mcp` (port and token in `~/Library/Application Support/EditMax/mcp.json`), 40 tools
 - Cleanup: remove silence (from the waveform) and filler words (from the transcript) with ripple deletes across every track
 - Captions: on-device transcription with word timings (Apple SpeechAnalyzer on macOS 26+; SFSpeechRecognizer on macOS 15–25, on-device
   where the Mac has the model, else Apple's servers), six text presets, one click or one tool call
@@ -42,7 +51,7 @@ Working:
 - codemax auto-update: the latest GitHub release is installed on its own after a health check, rolled back when it breaks
 - Debug logs (`~/Library/Application Support/EditMax/logs/`) and “Export diagnostics…” in the Agents tab
 
-Not yet built: transitions, color grading, keyframes, project templates,
+Not yet built: keyframes (animated transform/color), speed ramps, LUTs, audio ducking, multicam, project templates,
 asset copying into a project bundle (assets are referenced by path + security bookmark).
 
 ## Build
@@ -80,7 +89,9 @@ toolbar and inspector buttons, the ruler); `ui_drag` and `ui_click` post mouse e
 app's event queue (`NSApp.postEvent`, so nothing can reach another app and the real cursor stays put; SwiftUI gestures need the active app, so when
 EditMax is behind another app it is activated for that one gesture, keystrokes arriving meanwhile are dropped rather than
 applied, and the previous app gets the focus straight back; macOS refuses that activation while another app is being used, and then
-`ui_drag` applies the move or trim through the bar's own code and says so in its result); `ui_screenshot`
+`ui_drag` applies the move or trim through the bar's own code, `ui_click` calls the bar's or media row's own tap code, and
+`ui_key` hands the key to the editor's key handler, each saying so in its result; ⇧/⌘/⌥ go in `modifiers`); `ui_key` presses
+Space, J/K/L, arrows, I/O/M/S/X, ⌫ and ⌘ chords; `ui_scroll` scrolls the inspector or a list; `ui_screenshot`
 returns the window's own pixels as a PNG through ScreenCaptureKit, filtered to that one window (never the screen around
 it; macOS asks for the Screen Recording permission once; without it the tool falls back to rendering the window's layer
 tree, which misses some inspector controls, and says so). Verified: moving and trimming bars, dropping a media row on a lane, reordering

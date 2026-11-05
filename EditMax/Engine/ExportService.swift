@@ -9,13 +9,7 @@ enum ExportService {
 
     static func export(_ project: Project, to url: URL, preset: Preset = .high, progress: ((Double) -> Void)? = nil) async throws -> Result {
         guard project.duration > 0 else { throw EditError.invalid("timeline is empty") }
-        let out = try await CompositionBuilder.build(project)
-        // Text/image overlays: render through Core Animation.
-        let videoLayer = CALayer(); videoLayer.frame = CGRect(origin: .zero, size: out.renderSize)
-        let parent = CALayer(); parent.frame = videoLayer.frame
-        parent.addSublayer(videoLayer)
-        parent.addSublayer(out.makeOverlay())
-        out.videoComposition.animationTool = AVVideoCompositionCoreAnimationTool(postProcessingAsVideoLayer: videoLayer, in: parent)
+        let out = try await CompositionBuilder.build(project)   // titles, stills, color and transitions all come from the compositor
 
         let presetName: String = {
             switch preset {

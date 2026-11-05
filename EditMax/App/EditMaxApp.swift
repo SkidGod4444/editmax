@@ -52,6 +52,8 @@ struct EditorRootView: View {
         .environmentObject(state)
         .environmentObject(player)
         .focusedSceneObject(document)
+        .background(KeyMonitor { e in EditorActions(document: document, state: state, player: player).handle(e) })
+        .onAppear { UIRegistry.shared.playheads[document.id] = { [weak player] in player?.currentTime } }
         .frame(minWidth: 1000, minHeight: 640)
         .onAppear { document.fileURL = fileURL; DocumentRegistry.shared.register(document); player.bind(to: document); if state.chat == nil { state.chat = ChatSession(document: document) }
             // Debug affordances (used by automated checks): EDITMAX_INSPECTOR_TAB=chat|agents|history opens that tab;

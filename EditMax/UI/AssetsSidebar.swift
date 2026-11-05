@@ -47,6 +47,7 @@ struct AssetsSidebar: View {
                                 .padding(6).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
                         }
                         .onTapGesture(count: 2) { add(asset) }
+                        .uiTap("media.\(asset.name)", count: 2) { add(asset) }
                         .onHover { hovered = $0 ? asset.id : (hovered == asset.id ? nil : hovered) }
                         .help("Drag onto the timeline, or double-click to append")
                         .pointer()

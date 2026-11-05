@@ -16,6 +16,17 @@ final class UIRegistry {
     func set(_ id: String, _ frame: CGRect) { frames[id] = frame }
     func remove(_ id: String) { frames.removeValue(forKey: id) }
     func frame(_ id: String) -> CGRect? { frames[id] }
+    /// Views that react to a click through a SwiftUI gesture (bars select on tap, media rows append on double-click),
+    /// keyed by id then click count; and the window's key handler. Used like `dragHandlers`.
+    private(set) var tapHandlers: [String: [Int: () -> Void]] = [:]
+    var keyHandler: ((NSEvent) -> Bool)?
+    /// The player time of each open document, for inspect_timeline.
+    var playheads: [UUID: () -> Double?] = [:]
+    /// Modifier keys the driver pretends are held while it calls a handler directly (⇧ for multi-select, ⌥ for free drags).
+    var modifiers: NSEvent.ModifierFlags?
+    var currentModifiers: NSEvent.ModifierFlags { modifiers ?? NSEvent.modifierFlags }
+    func setTap(_ id: String, count: Int, _ handler: @escaping () -> Void) { tapHandlers[id, default: [:]][count] = handler }
+    func removeTap(_ id: String) { tapHandlers.removeValue(forKey: id) }
     func setDrag(_ id: String, _ handler: @escaping (CGFloat) -> Void) { dragHandlers[id] = handler }
     func removeDrag(_ id: String) { dragHandlers.removeValue(forKey: id) }
     /// The handler for the element named `id`, else the smallest registered frame containing `point` (a trim handle
@@ -27,6 +38,19 @@ final class UIRegistry {
             return (id, h, f.width * f.height)
         }
         return hits.min { $0.2 < $1.2 }.map { ($0.0, $0.1) }
+    }
+}
+
+private struct UITapModifier: ViewModifier {
+    let id: String
+    let count: Int
+    let key: String
+    let handler: () -> Void
+    func body(content: Content) -> some View {
+        content
+            .onAppear { UIRegistry.shared.setTap(id, count: count, handler) }
+            .onChange(of: key) { _, _ in UIRegistry.shared.setTap(id, count: count, handler) }
+            .onDisappear { UIRegistry.shared.removeTap(id) }
     }
 }
 
@@ -65,6 +89,8 @@ extension View {
     func uiFrame(_ id: String) -> some View { modifier(UIFrameModifier(id: id)) }
     /// Lets the MCP UI driver apply a horizontal drag of `dx` points to this view without a mouse gesture.
     func uiDrag(_ id: String, key: String, _ handler: @escaping (CGFloat) -> Void) -> some View { modifier(UIDragModifier(id: id, key: key, handler: handler)) }
+    /// Lets the MCP UI driver click this view (a tap gesture) without a mouse event. `key` re-registers the closure when it changes.
+    func uiTap(_ id: String, count: Int = 1, key: String = "", _ handler: @escaping () -> Void) -> some View { modifier(UITapModifier(id: id, count: count, key: key, handler: handler)) }
 }
 
 /// Posts mouse events to EditMax's own window through the app's event queue. They never leave the process, so they
@@ -159,6 +185,7 @@ enum UIDriver {
         acceptFirstMouse(in: w)
         return try await withActiveWindow(w) { active in
             if !active, let (id, handler) = UIRegistry.shared.dragHandler(id: fromID, at: from) {
+                UIRegistry.shared.modifiers = modifiers; defer { UIRegistry.shared.modifiers = nil }   // ⌥ = no snapping on this path too
                 handler(to.x - from.x)
                 try await Task.sleep(for: .milliseconds(120))
                 return .handler(id)
@@ -184,10 +211,34 @@ enum UIDriver {
         return n
     }
 
-    static func click(at p: CGPoint, count: Int) async throws {
+    /// Scrolls the nearest NSScrollView under `p` (registry coordinates) without any event, so it works while another app is active.
+    static func scroll(at p: CGPoint, dx: CGFloat, dy: CGFloat) async throws -> (x: CGFloat, y: CGFloat, maxX: CGFloat, maxY: CGFloat) {
+        guard let w = window, let content = w.contentView else { throw EditError.invalid("no window") }
+        let loc = NSPoint(x: p.x, y: content.bounds.height - p.y)
+        var v: NSView? = content.hitTest(loc) ?? content
+        while let cur = v, !(cur is NSScrollView) { v = cur.superview }
+        guard let sv = v as? NSScrollView else { throw EditError.invalid("nothing scrollable at (\(Int(p.x)), \(Int(p.y)))") }
+        let clip = sv.contentView, doc = sv.documentView?.frame ?? .zero
+        let maxX = max(0, doc.width - clip.bounds.width), maxY = max(0, doc.height - clip.bounds.height)
+        // AppKit scroll views here are flipped (SwiftUI's are), so +y is down in both the request and the bounds origin.
+        let o = NSPoint(x: min(maxX, max(0, clip.bounds.origin.x + dx)), y: min(maxY, max(0, clip.bounds.origin.y + dy)))
+        clip.scroll(to: o); sv.reflectScrolledClipView(clip)
+        try await Task.sleep(for: .milliseconds(250))
+        return (o.x, o.y, maxX, maxY)
+    }
+
+    enum ClickMethod { case events, handler(String) }
+
+    static func click(at p: CGPoint, id: String?, count: Int) async throws -> ClickMethod {
         guard let w = window else { throw EditError.invalid("no window") }
         acceptFirstMouse(in: w)
-        try await withActiveWindow(w) { _ in
+        return try await withActiveWindow(w) { active in
+            if !active, let id, let h = UIRegistry.shared.tapHandlers[id]?[count] {
+                UIRegistry.shared.modifiers = modifiers; defer { UIRegistry.shared.modifiers = nil }
+                h()
+                try await Task.sleep(for: .milliseconds(120))
+                return .handler(id)
+            }
             for c in 1...max(1, count) {
                 post(.leftMouseDown, at: p, in: w, clickCount: c)
                 try await Task.sleep(for: .milliseconds(30))
@@ -195,6 +246,7 @@ enum UIDriver {
                 try await Task.sleep(for: .milliseconds(60))
             }
             try await Task.sleep(for: .milliseconds(120))
+            return .events
         }
     }
 
@@ -244,12 +296,60 @@ enum UIDriver {
     }
 
     private static var eventNumber = 100_000
+    /// Modifier keys held during posted mouse events (⇧-click adds to the selection, ⌥-drag skips snapping).
+    static var modifiers: NSEvent.ModifierFlags = []
+    static func flags(_ names: [String]) -> NSEvent.ModifierFlags {
+        var f: NSEvent.ModifierFlags = []
+        for n in names.map({ $0.lowercased() }) {
+            switch n {
+            case "shift", "⇧": f.insert(.shift)
+            case "command", "cmd", "⌘": f.insert(.command)
+            case "option", "alt", "⌥": f.insert(.option)
+            case "control", "ctrl", "⌃": f.insert(.control)
+            default: break
+            }
+        }
+        return f
+    }
+
+    /// Posts a key press (down and up) to the window. `key` is a character ("j", "m") or a name: space, left, right,
+    /// up, down, home, end, delete, forwarddelete, return, escape, tab.
+    static func key(_ key: String, modifiers names: [String]) async throws -> String {
+        guard let w = window else { throw EditError.invalid("no window") }
+        let named: [String: (UInt16, String)] = ["space": (49, " "), "left": (123, "\u{F702}"), "right": (124, "\u{F703}"), "up": (126, "\u{F700}"), "down": (125, "\u{F701}"),
+                                                 "home": (115, "\u{F729}"), "end": (119, "\u{F72B}"), "delete": (51, "\u{7F}"), "backspace": (51, "\u{7F}"), "forwarddelete": (117, "\u{F728}"),
+                                                 "return": (36, "\r"), "enter": (36, "\r"), "escape": (53, "\u{1B}"), "tab": (48, "\t")]
+        let (code, chars): (UInt16, String)
+        if let n = named[key.lowercased()] { (code, chars) = n }
+        else if key.count == 1 { (code, chars) = (0, key) }
+        else { throw EditError.invalid("key must be one character or one of \(named.keys.sorted().joined(separator: ", "))") }
+        let f = flags(names)
+        let shown = f.contains(.shift) && key.count == 1 ? key.uppercased() : chars
+        return try await withActiveWindow(w) { active in
+            let down = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: f, timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: w.windowNumber, context: nil,
+                                        characters: shown, charactersIgnoringModifiers: chars, isARepeat: false, keyCode: code)
+            // Not the active app: hand the key to the editor's own handler (the one behind the keys), or to the menu for ⌘ chords.
+            if !active, let down {
+                if let h = UIRegistry.shared.keyHandler, h(down) { try await Task.sleep(for: .milliseconds(120)); return "handler" }
+                if f.contains(.command), NSApp.mainMenu?.performKeyEquivalent(with: down) == true { try await Task.sleep(for: .milliseconds(120)); return "menu" }
+            }
+            for type in [NSEvent.EventType.keyDown, .keyUp] {
+                guard let e = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: f, timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: w.windowNumber, context: nil,
+                                               characters: shown, charactersIgnoringModifiers: chars, isARepeat: false, keyCode: code) else { continue }
+                NSApp.postEvent(e, atStart: false)
+                try await Task.sleep(for: .milliseconds(30))
+            }
+            try await Task.sleep(for: .milliseconds(120))
+            return "events"
+        }
+    }
+
     private static func post(_ type: NSEvent.EventType, at p: CGPoint, in w: NSWindow, clickCount: Int = 1) {
         guard let content = w.contentView else { return }
         // Registry frames have a top-left origin; NSEvent wants the window's bottom-left origin.
         let loc = NSPoint(x: p.x, y: content.bounds.height - p.y)
         eventNumber += 1
-        guard let e = NSEvent.mouseEvent(with: type, location: loc, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+        guard let e = NSEvent.mouseEvent(with: type, location: loc, modifierFlags: modifiers, timestamp: ProcessInfo.processInfo.systemUptime,
                                          windowNumber: w.windowNumber, context: nil, eventNumber: eventNumber, clickCount: clickCount, pressure: type == .leftMouseUp ? 0 : 1) else { return }
         NSApp.postEvent(e, atStart: false)
     }

@@ -24,6 +24,46 @@ struct Asset: Codable, Identifiable, Equatable {
 
 enum TrackKind: String, Codable { case video, audio }
 
+/// Where a clip's picture sits in the frame. Position is a fraction of the frame (0.5 = half a frame to the right/down),
+/// rotation is clockwise degrees, crops are fractions of the clip's own picture cut from each edge.
+struct ClipTransform: Codable, Equatable {
+    var scale: Double = 1
+    var x: Double = 0
+    var y: Double = 0
+    var rotation: Double = 0
+    var cropLeft: Double = 0
+    var cropRight: Double = 0
+    var cropTop: Double = 0
+    var cropBottom: Double = 0
+    var isIdentity: Bool { self == ClipTransform() }
+    static let identity = ClipTransform()
+}
+
+/// Primary color correction. Exposure in stops, contrast and saturation as multipliers (1 = untouched),
+/// temperature and tint from -100 (cool / green) to 100 (warm / magenta).
+struct ClipColor: Codable, Equatable {
+    var exposure: Double = 0
+    var contrast: Double = 1
+    var saturation: Double = 1
+    var temperature: Double = 0
+    var tint: Double = 0
+    var isIdentity: Bool { self == ClipColor() }
+    static let identity = ClipColor()
+}
+
+/// A transition into a clip from the clip that ends where it starts. It takes the first `duration` seconds of the
+/// incoming clip; the outgoing clip keeps playing underneath, using media past its out point.
+struct Transition: Codable, Equatable {
+    enum Kind: String, Codable, CaseIterable {
+        case crossDissolve, dipToBlack, wipeLeft, wipeRight
+        var title: String {
+            switch self { case .crossDissolve: return "Cross dissolve"; case .dipToBlack: return "Dip to black"; case .wipeLeft: return "Wipe left"; case .wipeRight: return "Wipe right" }
+        }
+    }
+    var kind: Kind = .crossDissolve
+    var duration: Double = 0.5
+}
+
 struct Clip: Codable, Identifiable, Equatable {
     var id: UUID = UUID()
     var assetID: UUID
@@ -34,8 +74,45 @@ struct Clip: Codable, Identifiable, Equatable {
     var speed: Double = 1
     var volume: Double = 1
     var opacity: Double = 1
+    var transform = ClipTransform()
+    var color = ClipColor()
+    var fadeIn: Double = 0     // seconds; picture from black and sound from silence
+    var fadeOut: Double = 0
+    var transitionIn: Transition? = nil
     var end: Double { start + duration }
     var sourceOut: Double { sourceIn + duration * speed }
+
+    init(id: UUID = UUID(), assetID: UUID, name: String, start: Double, duration: Double, sourceIn: Double = 0, speed: Double = 1, volume: Double = 1, opacity: Double = 1) {
+        self.id = id; self.assetID = assetID; self.name = name; self.start = start; self.duration = duration
+        self.sourceIn = sourceIn; self.speed = speed; self.volume = volume; self.opacity = opacity
+    }
+
+    // Older project files lack the newer keys; every one of them has a default.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        assetID = try c.decode(UUID.self, forKey: .assetID)
+        name = try c.decode(String.self, forKey: .name)
+        start = try c.decode(Double.self, forKey: .start)
+        duration = try c.decode(Double.self, forKey: .duration)
+        sourceIn = try c.decodeIfPresent(Double.self, forKey: .sourceIn) ?? 0
+        speed = try c.decodeIfPresent(Double.self, forKey: .speed) ?? 1
+        volume = try c.decodeIfPresent(Double.self, forKey: .volume) ?? 1
+        opacity = try c.decodeIfPresent(Double.self, forKey: .opacity) ?? 1
+        transform = try c.decodeIfPresent(ClipTransform.self, forKey: .transform) ?? ClipTransform()
+        color = try c.decodeIfPresent(ClipColor.self, forKey: .color) ?? ClipColor()
+        fadeIn = try c.decodeIfPresent(Double.self, forKey: .fadeIn) ?? 0
+        fadeOut = try c.decodeIfPresent(Double.self, forKey: .fadeOut) ?? 0
+        transitionIn = try c.decodeIfPresent(Transition.self, forKey: .transitionIn)
+    }
+}
+
+/// A named point on the timeline.
+struct Marker: Codable, Identifiable, Equatable {
+    var id: UUID = UUID()
+    var time: Double
+    var name: String = ""
+    var colorHex: String = "#3B82F6"
 }
 
 struct Track: Codable, Identifiable, Equatable {
@@ -95,8 +172,24 @@ struct Project: Codable, Equatable {
     /// Row of the Text lane in the timeline (0 = top); nil = below the tracks. Display only: text always draws over the picture.
     var textLaneRow: Int? = nil
     var texts: [TextOverlay] = []
+    var markers: [Marker] = []
     var transcripts: [String: Transcript]? = nil   // keyed by asset id; a cache, left out of history snapshots
     var history: [HistoryEntry] = []
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? "Untitled"
+        settings = try c.decodeIfPresent(ProjectSettings.self, forKey: .settings) ?? ProjectSettings()
+        assets = try c.decodeIfPresent([Asset].self, forKey: .assets) ?? []
+        tracks = try c.decodeIfPresent([Track].self, forKey: .tracks) ?? [Track(name: "V1", kind: .video), Track(name: "A1", kind: .audio)]
+        textLaneRow = try c.decodeIfPresent(Int.self, forKey: .textLaneRow)
+        texts = try c.decodeIfPresent([TextOverlay].self, forKey: .texts) ?? []
+        markers = try c.decodeIfPresent([Marker].self, forKey: .markers) ?? []
+        transcripts = try c.decodeIfPresent([String: Transcript].self, forKey: .transcripts)
+        history = try c.decodeIfPresent([HistoryEntry].self, forKey: .history) ?? []
+    }
 
     var duration: Double {
         let clipEnd = tracks.flatMap(\.clips).map(\.end).max() ?? 0
@@ -289,6 +382,22 @@ extension Project {
             removed += before - tracks[ti].clips.count
         }
         return removed
+    }
+
+    /// Moves several clips by the same amount, stopping at 0 as a group so their spacing is kept.
+    mutating func moveClips(_ ids: Set<UUID>, by delta: Double) {
+        let starts = allClips.filter { ids.contains($0.id) }.map(\.start)
+        guard let minStart = starts.min() else { return }
+        let d = max(delta, -minStart)
+        for ti in tracks.indices {
+            for ci in tracks[ti].clips.indices where ids.contains(tracks[ti].clips[ci].id) { tracks[ti].clips[ci].start += d }
+            tracks[ti].clips.sort { $0.start < $1.start }
+        }
+    }
+
+    /// The clip that ends where `clip` starts on the same track (the one a transition into `clip` plays over).
+    func clipBefore(_ clip: Clip, on track: Track) -> Clip? {
+        track.clips.first { $0.id != clip.id && abs($0.end - clip.start) < 0.02 }
     }
 
     mutating func updateClip(_ id: UUID, _ body: (inout Clip) -> Void) throws {

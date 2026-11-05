@@ -53,20 +53,27 @@ final class EditMaxDocument: ReferenceFileDocument, ObservableObject {
     var undoLabel: String? { undoStack.last?.label }
     var redoLabel: String? { redoStack.last?.label }
 
+    private var lastApply: (label: String, at: Date)?
+
     /// Apply a change. A snapshot of the pre-change state is stored with `label` so it can be restored.
-    func apply(_ label: String, origin: EditOrigin, _ body: (inout Project) throws -> Void) rethrows {
+    /// `coalesce` folds a run of same-labeled edits within 1.5 s (a slider drag) into one undo step and one History entry.
+    func apply(_ label: String, origin: EditOrigin, coalesce: Bool = false, _ body: (inout Project) throws -> Void) rethrows {
         let before = project.withoutHistory
-        try commit(label, origin: origin, body)
-        undoStack.append((label, before))
-        if undoStack.count > Self.maxUndo { undoStack.removeFirst(undoStack.count - Self.maxUndo) }
+        let merge = coalesce && lastApply?.label == label && undoStack.last?.label == label && Date().timeIntervalSince(lastApply!.at) < 1.5
+        try commit(label, origin: origin, record: !merge, body)
+        if !merge {
+            undoStack.append((label, before))
+            if undoStack.count > Self.maxUndo { undoStack.removeFirst(undoStack.count - Self.maxUndo) }
+        }
         redoStack.removeAll()
+        lastApply = (label, Date())
     }
 
-    private func commit(_ label: String, origin: EditOrigin, _ body: (inout Project) throws -> Void) rethrows {
+    private func commit(_ label: String, origin: EditOrigin, record: Bool = true, _ body: (inout Project) throws -> Void) rethrows {
         let before = project.withoutHistory
         var next = project
         try body(&next)
-        if let data = try? Self.encoder.encode(before) {
+        if record, let data = try? Self.encoder.encode(before) {
             next.history.append(HistoryEntry(label: label, origin: origin, project: data))
             if next.history.count > Self.maxHistory { next.history.removeFirst(next.history.count - Self.maxHistory) }
         }

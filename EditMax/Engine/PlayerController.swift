@@ -9,9 +9,9 @@ final class PlayerController: ObservableObject {
     let player = AVPlayer()
     @Published private(set) var currentTime: Double = 0
     @Published private(set) var isPlaying = false
+    /// Playback rate: 1 = play, 0 = paused, -1/-2/-4/-8 and 2/4/8 = J/L shuttle.
+    @Published private(set) var rate: Float = 0
     @Published private(set) var renderSize = CGSize(width: 1920, height: 1080)
-    @Published private(set) var overlayLayer: CALayer?
-    @Published private(set) var syncLayer: AVSynchronizedLayer?
     @Published private(set) var buildError: String?
     @Published private(set) var lastOutput: CompositionBuilder.Output?
 
@@ -23,7 +23,8 @@ final class PlayerController: ObservableObject {
         timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(value: 1, timescale: 30), queue: .main) { [weak self] t in
             guard let self else { return }
             self.currentTime = t.seconds.isFinite ? t.seconds : 0
-            if self.player.timeControlStatus != .playing, self.isPlaying { self.isPlaying = false }
+            if self.player.timeControlStatus != .playing, self.isPlaying { self.isPlaying = false; self.rate = 0 }
+            if self.rate < 0, self.currentTime <= 0.001 { self.pause() }
         }
         player.actionAtItemEnd = .pause
     }
@@ -56,11 +57,6 @@ final class PlayerController: ObservableObject {
                 item.audioMix = out.audioMix
                 let keep = player.currentTime()
                 player.replaceCurrentItem(with: item)
-                let overlay = out.makeOverlay()
-                let sync = AVSynchronizedLayer(playerItem: item)
-                sync.frame = CGRect(origin: .zero, size: out.renderSize)
-                sync.addSublayer(overlay)
-                overlayLayer = overlay; syncLayer = sync
                 renderSize = out.renderSize
                 lastOutput = out
                 buildError = nil
@@ -74,9 +70,17 @@ final class PlayerController: ObservableObject {
     func togglePlay() { isPlaying ? pause() : play() }
     func play() {
         if let item = player.currentItem, item.currentTime() >= item.duration - CMTime(value: 1, timescale: 30) { seek(to: 0) }
-        player.play(); isPlaying = true
+        player.play(); isPlaying = true; rate = 1
     }
-    func pause() { player.pause(); isPlaying = false }
+    func pause() { player.pause(); isPlaying = false; rate = 0 }
+    /// J/L shuttle: first press plays at 1× in that direction, each further press doubles up to 8×.
+    func shuttle(backward: Bool) {
+        let dir: Float = backward ? -1 : 1
+        let speed: Float = rate * dir > 0 ? min(8, abs(rate) * 2) : 1
+        if backward, let item = player.currentItem, !item.canPlayReverse { return }
+        if !backward, let item = player.currentItem, item.currentTime() >= item.duration - CMTime(value: 1, timescale: 30) { seek(to: 0) }
+        player.rate = dir * speed; rate = dir * speed; isPlaying = true
+    }
     func seek(to seconds: Double) {
         let t = CMTime(seconds: max(0, seconds), preferredTimescale: CompositionBuilder.timescale)
         player.seek(to: t, toleranceBefore: .zero, toleranceAfter: .zero)

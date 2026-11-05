@@ -13,6 +13,7 @@ struct TimelineView: View {
     @State private var dropError: String?
     @State private var trackDropTarget: UUID?   // header row a dragged track hovers over
     @State private var hoveredHeader: UUID?
+    private var actions: EditorActions { EditorActions(document: document, state: state, player: player) }
 
     private let headerWidth: CGFloat = 132
     private let rowHeight: CGFloat = 66
@@ -53,7 +54,7 @@ struct TimelineView: View {
         HStack(spacing: 10) {
             HStack(spacing: 2) {
                 Button { player.step(frames: -1, fps: document.project.settings.fps) } label: { Image(systemName: "backward.frame") }.help("Previous frame").pointer()
-                Button { player.togglePlay() } label: { Image(systemName: player.isPlaying ? "pause.fill" : "play.fill").frame(width: 18) }.keyboardShortcut(.space, modifiers: []).help("Play or pause (space)").pointer().uiFrame("toolbar.play")
+                Button { player.togglePlay() } label: { Image(systemName: player.isPlaying ? "pause.fill" : "play.fill").frame(width: 18) }.help("Play or pause (space)").pointer().uiFrame("toolbar.play")
                 Button { player.step(frames: 1, fps: document.project.settings.fps) } label: { Image(systemName: "forward.frame") }.help("Next frame").pointer()
             }
             .font(.system(size: 12))
@@ -70,9 +71,13 @@ struct TimelineView: View {
             .font(.system(size: 12))
             Divider().frame(height: 14)
             HStack(spacing: 4) {
-                Button("Split", systemImage: "scissors") { splitAtPlayhead() }.keyboardShortcut("s", modifiers: []).disabled(state.selectedClipIDs.isEmpty).help("Split the selected clip at the playhead (S)").pointer().uiFrame("toolbar.split")
-                Button("Delete", systemImage: "trash") { deleteSelection() }.keyboardShortcut(.delete, modifiers: []).disabled(state.selectedClipIDs.isEmpty && state.selectedTextID == nil).help("Delete the selection (⌫)").pointer().uiFrame("toolbar.delete")
-                Button("Close gaps", systemImage: "arrow.left.and.line.vertical.and.arrow.right") { closeGaps() }.help("Remove the empty space between clips").pointer().uiFrame("toolbar.closeGaps")
+                Button("Split", systemImage: "scissors") { actions.splitAtPlayhead() }.disabled(state.selectedClipIDs.isEmpty).help("Split the selected clip at the playhead (S)").pointer().uiFrame("toolbar.split")
+                Button("Delete", systemImage: "trash") { actions.deleteSelection() }.disabled(state.selectedClipIDs.isEmpty && state.selectedTextID == nil).help("Delete the selection (⌫)").pointer().uiFrame("toolbar.delete")
+                Button("Close gaps", systemImage: "arrow.left.and.line.vertical.and.arrow.right") { actions.closeGaps() }.help("Remove the empty space between clips").pointer().uiFrame("toolbar.closeGaps")
+                Divider().frame(height: 14)
+                Button("Transition", systemImage: "square.on.square.dashed") { actions.addTransition() }.disabled(state.selectedClipIDs.isEmpty).help("Cross dissolve into the selected clip from the one before it (⌘T)").pointer().uiFrame("toolbar.transition")
+                Button("Marker", systemImage: "flag") { actions.addMarker() }.help("Add a marker at the playhead (M)").pointer().uiFrame("toolbar.marker")
+                Button("Delete range", systemImage: "scissors.badge.ellipsis") { actions.deleteRange() }.disabled(!actions.hasRange).help("Ripple out everything between the in and out points (I and O set them, X clears)").pointer().uiFrame("toolbar.deleteRange")
             }
             .font(.system(size: 11))
             Spacer()
@@ -338,10 +343,36 @@ struct TimelineView: View {
                 if isMajor { ctx.draw(Text(Timecode.string(t)).font(.system(size: 9, weight: .medium, design: .rounded)).foregroundColor(.secondary), at: CGPoint(x: x + 4, y: 7), anchor: .leading) }
                 i += 1
             }
+            if let i = state.inPoint, let o = state.outPoint, o > i {
+                ctx.fill(Path(CGRect(x: CGFloat(i) * pps, y: 0, width: CGFloat(o - i) * pps, height: size.height)), with: .color(.yellow.opacity(0.18)))
+                for e in [i, o] { ctx.stroke(Path { $0.move(to: CGPoint(x: CGFloat(e) * pps, y: 0)); $0.addLine(to: CGPoint(x: CGFloat(e) * pps, y: size.height)) }, with: .color(.yellow), lineWidth: 1) }
+            } else if let i = state.inPoint ?? state.outPoint {
+                ctx.stroke(Path { $0.move(to: CGPoint(x: CGFloat(i) * pps, y: 0)); $0.addLine(to: CGPoint(x: CGFloat(i) * pps, y: size.height)) }, with: .color(.yellow), lineWidth: 1)
+            }
+            for m in document.project.markers {
+                let x = CGFloat(m.time) * pps
+                let flag = Path { p in p.move(to: CGPoint(x: x, y: 2)); p.addLine(to: CGPoint(x: x + 7, y: 2)); p.addLine(to: CGPoint(x: x + 7, y: 8)); p.addLine(to: CGPoint(x: x, y: 8)); p.addLine(to: CGPoint(x: x, y: size.height)) }
+                ctx.fill(Path(CGRect(x: x, y: 2, width: 7, height: 6)), with: .color(Color(hex: m.colorHex)))
+                ctx.stroke(flag, with: .color(Color(hex: m.colorHex)), lineWidth: 1)
+                if !m.name.isEmpty { ctx.draw(Text(m.name).font(.system(size: 8)).foregroundColor(.primary.opacity(0.8)), at: CGPoint(x: x + 10, y: 5), anchor: .leading) }
+            }
             ctx.stroke(Path { $0.move(to: CGPoint(x: 0, y: size.height - 0.5)); $0.addLine(to: CGPoint(x: size.width, y: size.height - 0.5)) }, with: .color(.primary.opacity(0.15)))
         }
         .contentShape(Rectangle())
         .gesture(DragGesture(minimumDistance: 0).onChanged { v in seek(x: v.location.x) })
+        .contextMenu {
+            Button("Add marker here", systemImage: "flag") { actions.addMarker() }
+            Button("Set in point", systemImage: "arrow.right.to.line") { actions.setIn() }
+            Button("Set out point", systemImage: "arrow.left.to.line") { actions.setOut() }
+            if actions.hasRange { Button("Delete range", systemImage: "scissors.badge.ellipsis", role: .destructive) { actions.deleteRange() } }
+            if state.inPoint != nil || state.outPoint != nil { Button("Clear in/out", systemImage: "xmark") { actions.clearInOut() } }
+            if !document.project.markers.isEmpty {
+                Divider()
+                ForEach(document.project.markers) { m in
+                    Button("Remove marker \(m.name.isEmpty ? Timecode.string(m.time) : m.name)", systemImage: "flag.slash") { document.apply("Remove marker", origin: .user) { p in p.markers.removeAll { $0.id == m.id } } }
+                }
+            }
+        }
         .uiFrame("ruler")
     }
 
@@ -353,18 +384,28 @@ struct TimelineView: View {
                            minStart: clip.start - clip.sourceIn / clip.speed,
                            maxEnd: clip.start + ((asset?.duration ?? clip.end) - clip.sourceIn) / clip.speed,
                            help: "\(clip.name)  \(Timecode.string(clip.start)) → \(Timecode.string(clip.end))",
-                           onSelect: { select(clip.id) },
-                           onMove: { try? x.moveClip(clip.id.uuidString, to: $0) },
+                           snaps: snapTimes(excluding: clip.id),
+                           onSelect: { drag in select(clip.id, keepGroup: drag) },
+                           onMove: { newStart in
+                               let group = state.selectedClipIDs
+                               if group.count > 1, group.contains(clip.id) {
+                                   document.apply("Move \(group.count) clips", origin: .user) { p in p.moveClips(group, by: newStart - clip.start) }
+                               } else { try? x.moveClip(clip.id.uuidString, to: newStart) }
+                           },
                            onTrimStart: { try? x.trimClip(clip.id.uuidString, start: $0, end: nil) },
                            onTrimEnd: { try? x.trimClip(clip.id.uuidString, start: nil, end: $0) }) {
-            ClipBody(clip: clip, kind: track.kind, selected: selected, height: rowHeight - 10,
+            ClipBody(clip: clip, kind: track.kind, selected: selected, height: rowHeight - 10, pps: pps,
                      peaks: waveforms.peaks[clip.assetID] ?? [], strip: thumbnails.strips[clip.assetID])
                 .equatable()
                 .onAppear { if let asset { waveforms.request(asset); thumbnails.request(asset) } }
                 .contextMenu {
-            Button("Split at playhead", systemImage: "scissors") { select(clip.id); try? x.splitClip(clip.id.uuidString, at: player.currentTime) }
+            Button("Split at playhead", systemImage: "scissors") { select(clip.id, keepGroup: false); try? x.splitClip(clip.id.uuidString, at: player.currentTime) }
                 .disabled(player.currentTime <= clip.start + 0.01 || player.currentTime >= clip.end - 0.01)
             Button("Go to start", systemImage: "arrow.left.to.line") { player.pause(); player.seek(to: clip.start) }
+            Menu("Transition in") {
+                ForEach(Transition.Kind.allCases, id: \.self) { k in Button(k.title) { _ = try? x.setTransition(clip.id.uuidString, kind: k.rawValue, duration: nil) } }
+                if clip.transitionIn != nil { Divider(); Button("Remove") { _ = try? x.setTransition(clip.id.uuidString, kind: "none", duration: nil) } }
+            }
             Divider()
             Button("Delete", systemImage: "trash", role: .destructive) { state.selectedClipIDs.remove(clip.id); try? x.removeClips([clip.id.uuidString]) }
                 }
@@ -377,8 +418,8 @@ struct TimelineView: View {
             document.apply(label, origin: .user) { p in if let i = p.texts.firstIndex(where: { $0.id == t.id }) { body(&p.texts[i]) } }
         }
         return TimelineBar(id: t.id, uiID: "text.\(t.id.short)", start: t.start, duration: t.duration, pps: pps, height: 30, minStart: 0, maxEnd: .infinity,
-                           help: "\(t.text)  \(Timecode.string(t.start)) → \(Timecode.string(t.end))",
-                           onSelect: { state.selectedTextID = t.id; state.selectedClipIDs = [] },
+                           help: "\(t.text)  \(Timecode.string(t.start)) → \(Timecode.string(t.end))", snaps: snapTimes(excluding: t.id),
+                           onSelect: { _ in state.selectedTextID = t.id; state.selectedClipIDs = [] },
                            onMove: { s in edit("Move text to \(s)s") { $0.start = s } },
                            onTrimStart: { s in edit("Trim text") { $0.duration = t.end - s; $0.start = s } },
                            onTrimEnd: { e in edit("Trim text") { $0.duration = e - t.start } }) {
@@ -412,22 +453,22 @@ struct TimelineView: View {
 
     // MARK: actions
     private func seek(x: CGFloat) { player.pause(); player.seek(to: Double(max(0, x) / pps)) }
-    private func select(_ id: UUID) {
-        if NSEvent.modifierFlags.contains(.shift) { state.selectedClipIDs.formSymmetricDifference([id]) } else { state.selectedClipIDs = [id] }
+    /// ⇧/⌘ toggle membership; dragging a clip that is already selected keeps the group (so a group moves together).
+    private func select(_ id: UUID, keepGroup: Bool) {
+        let mods = UIRegistry.shared.currentModifiers
+        if mods.contains(.shift) || mods.contains(.command) { state.selectedClipIDs.formSymmetricDifference([id]) }
+        else if !(keepGroup && state.selectedClipIDs.contains(id)) { state.selectedClipIDs = [id] }
         state.selectedTextID = nil
     }
-    private func splitAtPlayhead() {
-        let x = ToolExecutor(document: document, origin: .user)
-        for id in state.selectedClipIDs { try? x.splitClip(id.uuidString, at: player.currentTime) }
-    }
-    private func deleteSelection() {
-        let x = ToolExecutor(document: document, origin: .user)
-        if !state.selectedClipIDs.isEmpty { try? x.removeClips(state.selectedClipIDs.map(\.uuidString)); state.selectedClipIDs = [] }
-        if let t = state.selectedTextID { try? x.removeTexts([t.uuidString]); state.selectedTextID = nil }
-    }
-    private func closeGaps() {
-        let x = ToolExecutor(document: document, origin: .user)
-        for t in document.project.tracks { try? x.rippleTrack(t.id.uuidString) }
+    /// Edges a dragged bar snaps to: every other clip and text edge, the markers, the in/out points, the playhead and 0.
+    private func snapTimes(excluding id: UUID) -> [Double] {
+        var t: [Double] = [0, player.currentTime]
+        for c in document.project.allClips where c.id != id { t.append(c.start); t.append(c.end) }
+        for x in document.project.texts where x.id != id { t.append(x.start); t.append(x.end) }
+        t.append(contentsOf: document.project.markers.map(\.time))
+        if let i = state.inPoint { t.append(i) }
+        if let o = state.outPoint { t.append(o) }
+        return t
     }
     private func toggleHidden(_ track: Track) {
         document.apply(track.isHidden ? "Show \(track.name)" : "Hide \(track.name)", origin: .user) { p in
@@ -448,12 +489,34 @@ private struct ClipBody: View, Equatable {
     let kind: TrackKind
     let selected: Bool
     let height: CGFloat
+    let pps: CGFloat
     let peaks: [Float]
     let strip: ThumbnailStore.Strip?
 
     static func == (a: ClipBody, b: ClipBody) -> Bool {
-        a.clip == b.clip && a.kind == b.kind && a.selected == b.selected && a.height == b.height
+        a.clip == b.clip && a.kind == b.kind && a.selected == b.selected && a.height == b.height && a.pps == b.pps
             && a.peaks.count == b.peaks.count && a.strip?.frames.count == b.strip?.frames.count
+    }
+
+    /// Transition wedge at the head, fade ramps at both ends, as other editors draw them.
+    private var marks: some View {
+        Canvas { ctx, size in
+            if let tr = clip.transitionIn {
+                let w = min(size.width, CGFloat(tr.duration) * pps)
+                ctx.fill(Path(CGRect(x: 0, y: 0, width: w, height: size.height)), with: .color(.white.opacity(0.22)))
+                ctx.stroke(Path { $0.move(to: CGPoint(x: 0, y: size.height)); $0.addLine(to: CGPoint(x: w, y: 0)) }, with: .color(.white.opacity(0.9)), lineWidth: 1)
+                ctx.stroke(Path { $0.move(to: CGPoint(x: w, y: 0)); $0.addLine(to: CGPoint(x: w, y: size.height)) }, with: .color(.white.opacity(0.6)), lineWidth: 1)
+            }
+            if clip.fadeIn > 0 {
+                let w = min(size.width, CGFloat(clip.fadeIn) * pps)
+                ctx.fill(Path { $0.move(to: CGPoint(x: 0, y: size.height)); $0.addLine(to: CGPoint(x: w, y: 0)); $0.addLine(to: CGPoint(x: 0, y: 0)); $0.closeSubpath() }, with: .color(.black.opacity(0.45)))
+            }
+            if clip.fadeOut > 0 {
+                let w = min(size.width, CGFloat(clip.fadeOut) * pps)
+                ctx.fill(Path { $0.move(to: CGPoint(x: size.width, y: size.height)); $0.addLine(to: CGPoint(x: size.width - w, y: 0)); $0.addLine(to: CGPoint(x: size.width, y: 0)); $0.closeSubpath() }, with: .color(.black.opacity(0.45)))
+            }
+        }
+        .allowsHitTesting(false)
     }
 
     var body: some View {
@@ -484,6 +547,7 @@ private struct ClipBody: View, Equatable {
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 6))
             }
+            .overlay { if clip.transitionIn != nil || clip.fadeIn > 0 || clip.fadeOut > 0 { marks.clipShape(RoundedRectangle(cornerRadius: 6)) } }
             .overlay(RoundedRectangle(cornerRadius: 6).stroke(selected ? Color.white : Color.white.opacity(0.12), lineWidth: selected ? 1.5 : 0.5))
             .overlay(alignment: .topLeading) {
                 Text(clip.name).font(.caption2.weight(.medium)).lineLimit(1).foregroundStyle(.white)
@@ -523,7 +587,8 @@ private struct TimelineBar<Content: View>: View {
     let minStart: Double      // earliest start the leading edge may reach
     let maxEnd: Double        // latest end the trailing edge may reach
     let help: String
-    let onSelect: () -> Void
+    var snaps: [Double] = []
+    let onSelect: (_ dragging: Bool) -> Void
     let onMove: (Double) -> Void
     let onTrimStart: (Double) -> Void
     let onTrimEnd: (Double) -> Void
@@ -547,14 +612,36 @@ private struct TimelineBar<Content: View>: View {
             .overlay(alignment: .leading) { handle(leading: true).uiFrame(uiID + ".left") }
             .overlay(alignment: .trailing) { handle(leading: false).uiFrame(uiID + ".right") }
             .offset(x: CGFloat(start) * pps + trimL + max(-CGFloat(start) * pps, moveDX))
-            .onTapGesture { onSelect() }
+            .onTapGesture { onSelect(false) }
+            .uiTap(uiID, key: dragKey) { onSelect(false) }
             .gesture(DragGesture(minimumDistance: 3)
-                .onChanged { v in if moveDX == 0 { onSelect() }; moveDX = v.translation.width }
-                .onEnded { v in moveDX = 0; commitMove(v.translation.width) })
-            .uiDrag(uiID, key: dragKey) { dx in onSelect(); commitMove(dx) }
-            .uiDrag(uiID + ".left", key: dragKey) { dx in commitTrim(leading: true, dx: dx) }
-            .uiDrag(uiID + ".right", key: dragKey) { dx in commitTrim(leading: false, dx: dx) }
+                .onChanged { v in if moveDX == 0 { onSelect(true) }; moveDX = snappedMove(v.translation.width) }
+                .onEnded { v in let dx = snappedMove(v.translation.width); moveDX = 0; commitMove(dx) })
+            .uiDrag(uiID, key: dragKey) { dx in onSelect(true); commitMove(snappedMove(dx)) }
+            .uiDrag(uiID + ".left", key: dragKey) { dx in commitTrim(leading: true, dx: snappedTrim(leading: true, dx)) }
+            .uiDrag(uiID + ".right", key: dragKey) { dx in commitTrim(leading: false, dx: snappedTrim(leading: false, dx)) }
             .help(help).pointer()
+    }
+
+    private var snapPx: CGFloat { 8 }
+    private var snapping: Bool { !UIRegistry.shared.currentModifiers.contains(.option) }   // ⌥ drags free
+
+    /// A move whose leading or trailing edge lands within 8 pt of a snap time sticks to it.
+    private func snappedMove(_ dx: CGFloat) -> CGFloat {
+        guard snapping else { return dx }
+        let cand = start + Double(dx) / Double(pps)
+        for s in snaps {
+            if abs(CGFloat(cand - s) * pps) < snapPx { return CGFloat(s - start) * pps }
+            if abs(CGFloat(cand + duration - s) * pps) < snapPx { return CGFloat(s - duration - start) * pps }
+        }
+        return dx
+    }
+    private func snappedTrim(leading: Bool, _ dx: CGFloat) -> CGFloat {
+        guard snapping else { return dx }
+        let edge = leading ? start : end
+        let cand = edge + Double(dx) / Double(pps)
+        for s in snaps where abs(CGFloat(cand - s) * pps) < snapPx { return CGFloat(s - edge) * pps }
+        return dx
     }
 
     private func commitMove(_ dx: CGFloat) {
@@ -581,7 +668,7 @@ private struct TimelineBar<Content: View>: View {
             .onHover { inside in if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() } }
             // Measured in the window's space: the handle itself moves with the live trim, which would halve its own translation.
             .gesture(DragGesture(minimumDistance: 2, coordinateSpace: .global)
-                .onChanged { v in trim = (leading, v.translation.width) }
-                .onEnded { v in trim = nil; commitTrim(leading: leading, dx: v.translation.width) })
+                .onChanged { v in trim = (leading, snappedTrim(leading: leading, v.translation.width)) }
+                .onEnded { v in let dx = snappedTrim(leading: leading, v.translation.width); trim = nil; commitTrim(leading: leading, dx: dx) })
     }
 }

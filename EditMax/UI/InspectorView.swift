@@ -157,9 +157,10 @@ struct ClipInspector: View {
     let clip: Clip
     let track: Track
     @State private var nameDraft = ""
+    @State private var transitionNote: String?
 
     var body: some View {
-        let x = ToolExecutor(document: document, origin: .user)
+        let x = ToolExecutor(document: document, origin: .user, coalesce: true)   // slider drags make one undo step
         let asset = document.project.asset(clip.assetID)
         Form {
             Section {
@@ -192,12 +193,53 @@ struct ClipInspector: View {
                 LabeledContent("Duration", value: Timecode.string(clip.duration))
                 LabeledContent("Source in", value: Timecode.string(clip.sourceIn))
             }
-            Section("Adjust") {
+            Section("Speed") {
                 slider("Speed", value: clip.speed, range: 0.25...4, format: String(format: "%.2f×", clip.speed), reset: 1) { try? x.setClipProperties(clip.id.uuidString, speed: $0) }
-                slider("Volume", value: clip.volume, range: 0...2, format: "\(Int(clip.volume * 100))%", reset: 1) { try? x.setClipProperties(clip.id.uuidString, volume: $0) }
-                if track.kind == .video {
+            }
+            if track.kind == .video {
+                Section {
+                    let tf = clip.transform
+                    slider("Scale", value: tf.scale, range: 0.1...4, format: "\(Int(tf.scale * 100))%", reset: 1) { try? x.setClipTransform(clip.id.uuidString, scale: $0, x: nil, y: nil, rotation: nil, cropLeft: nil, cropRight: nil, cropTop: nil, cropBottom: nil, reset: false) }
+                    slider("Position X", value: tf.x, range: -1...1, format: "\(Int(tf.x * 100))%", reset: 0) { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: $0, y: nil, rotation: nil, cropLeft: nil, cropRight: nil, cropTop: nil, cropBottom: nil, reset: false) }
+                    slider("Position Y", value: tf.y, range: -1...1, format: "\(Int(tf.y * 100))%", reset: 0) { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: nil, y: $0, rotation: nil, cropLeft: nil, cropRight: nil, cropTop: nil, cropBottom: nil, reset: false) }
+                    slider("Rotation", value: tf.rotation, range: -180...180, format: "\(Int(tf.rotation))°", reset: 0) { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: nil, y: nil, rotation: $0, cropLeft: nil, cropRight: nil, cropTop: nil, cropBottom: nil, reset: false) }
+                    slider("Crop left", value: tf.cropLeft, range: 0...0.9, format: "\(Int(tf.cropLeft * 100))%", reset: 0) { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: nil, y: nil, rotation: nil, cropLeft: $0, cropRight: nil, cropTop: nil, cropBottom: nil, reset: false) }
+                    slider("Crop right", value: tf.cropRight, range: 0...0.9, format: "\(Int(tf.cropRight * 100))%", reset: 0) { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: nil, y: nil, rotation: nil, cropLeft: nil, cropRight: $0, cropTop: nil, cropBottom: nil, reset: false) }
+                    slider("Crop top", value: tf.cropTop, range: 0...0.9, format: "\(Int(tf.cropTop * 100))%", reset: 0) { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: nil, y: nil, rotation: nil, cropLeft: nil, cropRight: nil, cropTop: $0, cropBottom: nil, reset: false) }
+                    slider("Crop bottom", value: tf.cropBottom, range: 0...0.9, format: "\(Int(tf.cropBottom * 100))%", reset: 0) { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: nil, y: nil, rotation: nil, cropLeft: nil, cropRight: nil, cropTop: nil, cropBottom: $0, reset: false) }
                     slider("Opacity", value: clip.opacity, range: 0...1, format: "\(Int(clip.opacity * 100))%", reset: 1) { try? x.setClipProperties(clip.id.uuidString, opacity: $0) }
+                } header: {
+                    HStack { Text("Transform"); Spacer(); if !clip.transform.isIdentity { Button("Reset") { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: nil, y: nil, rotation: nil, cropLeft: nil, cropRight: nil, cropTop: nil, cropBottom: nil, reset: true) }.controlSize(.mini).pointer() } }
                 }
+                Section {
+                    let c = clip.color
+                    slider("Exposure", value: c.exposure, range: -2...2, format: String(format: "%+.1f", c.exposure), reset: 0) { try? x.setClipColor(clip.id.uuidString, exposure: $0, contrast: nil, saturation: nil, temperature: nil, tint: nil, reset: false) }
+                    slider("Contrast", value: c.contrast, range: 0.5...2, format: "\(Int(c.contrast * 100))%", reset: 1) { try? x.setClipColor(clip.id.uuidString, exposure: nil, contrast: $0, saturation: nil, temperature: nil, tint: nil, reset: false) }
+                    slider("Saturation", value: c.saturation, range: 0...2, format: "\(Int(c.saturation * 100))%", reset: 1) { try? x.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: $0, temperature: nil, tint: nil, reset: false) }
+                    slider("Temperature", value: c.temperature, range: -100...100, format: "\(Int(c.temperature))", reset: 0) { try? x.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: nil, temperature: $0, tint: nil, reset: false) }
+                    slider("Tint", value: c.tint, range: -100...100, format: "\(Int(c.tint))", reset: 0) { try? x.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: nil, temperature: nil, tint: $0, reset: false) }
+                } header: {
+                    HStack { Text("Color"); Spacer(); if !clip.color.isIdentity { Button("Reset") { try? x.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: nil, temperature: nil, tint: nil, reset: true) }.controlSize(.mini).pointer() } }
+                }
+            }
+            Section("Audio") {
+                slider("Volume", value: clip.volume, range: 0...2, format: "\(Int(clip.volume * 100))%", reset: 1) { try? x.setClipProperties(clip.id.uuidString, volume: $0) }
+                slider("Fade in", value: clip.fadeIn, range: 0...min(5, clip.duration), format: String(format: "%.1f s", clip.fadeIn), reset: 0) { try? x.setClipFades(clip.id.uuidString, fadeIn: $0, fadeOut: nil) }
+                slider("Fade out", value: clip.fadeOut, range: 0...min(5, clip.duration), format: String(format: "%.1f s", clip.fadeOut), reset: 0) { try? x.setClipFades(clip.id.uuidString, fadeIn: nil, fadeOut: $0) }
+                if track.kind == .video { Text("Fades take the picture to black and the sound to silence.").font(.caption).foregroundStyle(.secondary) }
+            }
+            Section("Transition in") {
+                Picker("Kind", selection: Binding(get: { clip.transitionIn?.kind.rawValue ?? "none" }, set: { v in _ = try? ToolExecutor(document: document, origin: .user).setTransition(clip.id.uuidString, kind: v, duration: nil); transitionNote = nil })) {
+                    Text("None").tag("none")
+                    ForEach(Transition.Kind.allCases, id: \.rawValue) { Text($0.title).tag($0.rawValue) }
+                }.pointer()
+                if let tr = clip.transitionIn {
+                    slider("Duration", value: tr.duration, range: 0.1...min(3, clip.duration), format: String(format: "%.2f s", tr.duration), reset: 0.5) { d in
+                        transitionNote = (try? x.setTransition(clip.id.uuidString, kind: nil, duration: d))?.note
+                    }
+                }
+                Text(transitionNote ?? (document.project.clipBefore(clip, on: track) == nil ? "No clip ends where this one starts, so a transition would come from black." : "Plays over the end of \(document.project.clipBefore(clip, on: track)!.name), which needs that much media past its out point."))
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Section {
                 LabeledContent("Clip id", value: clip.id.short).font(.caption).foregroundStyle(.secondary)
@@ -366,6 +408,27 @@ struct ProjectInspector: View {
                     Button("Add at playhead", systemImage: "plus") { addTitle() }.disabled(newText.trimmingCharacters(in: .whitespaces).isEmpty).pointer()
                     Spacer()
                     Text("Starts at \(Timecode.string(player.currentTime)), 3 s long. Drag the bar to adjust.").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            if !p.markers.isEmpty || state.inPoint != nil || state.outPoint != nil {
+                Section("Markers") {
+                    if let i = state.inPoint, let o = state.outPoint {
+                        HStack {
+                            Text("In \(Timecode.string(i)) → Out \(Timecode.string(o))").font(.caption)
+                            Spacer()
+                            Button("Delete range") { EditorActions(document: document, state: state, player: player).deleteRange() }.controlSize(.small).pointer()
+                            Button("Clear") { state.inPoint = nil; state.outPoint = nil }.controlSize(.small).pointer()
+                        }
+                    }
+                    ForEach(p.markers) { m in
+                        HStack(spacing: 8) {
+                            Circle().fill(Color(hex: m.colorHex)).frame(width: 8, height: 8)
+                            TextField("Name", text: Binding(get: { m.name }, set: { v in document.apply("Rename marker", origin: .user, coalesce: true) { p in if let i = p.markers.firstIndex(where: { $0.id == m.id }) { p.markers[i].name = v } } })).textFieldStyle(.plain).font(.caption)
+                            Text(Timecode.string(m.time)).font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                            Button { player.pause(); player.seek(to: m.time) } label: { Image(systemName: "arrow.right.to.line") }.buttonStyle(.borderless).help("Go to marker").pointer()
+                            Button { document.apply("Remove marker", origin: .user) { p in p.markers.removeAll { $0.id == m.id } } } label: { Image(systemName: "trash") }.buttonStyle(.borderless).help("Remove marker").pointer()
+                        }
+                    }
                 }
             }
             Section("Cleanup") {

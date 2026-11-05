@@ -15,86 +15,156 @@ enum CompositionBuilder {
         let audioMix: AVMutableAudioMix
         let renderSize: CGSize
         let duration: CMTime
-        /// Builds a fresh overlay layer tree sized to `renderSize`. Call once per consumer (layers can't be shared).
-        let makeOverlay: () -> CALayer
     }
 
     static let timescale: CMTimeScale = 600
 
+    /// Builds the AVFoundation composition for a project. Every project track gets two video and two audio composition
+    /// tracks (A/B): consecutive clips alternate between them, which is what lets a transition overlap the clip before it.
     static func build(_ project: Project) async throws -> Output {
         let comp = AVMutableComposition()
         let renderSize = CGSize(width: project.settings.width, height: project.settings.height)
         let total = CMTime(seconds: max(project.duration, 0.1), preferredTimescale: timescale)
-        var layerSources: [(track: AVMutableCompositionTrack, clips: [(Clip, CGSize, CGAffineTransform)])] = []
+        var layerSources: [[LayerSource]] = []    // per visible video track, top row first
         var audioParams: [AVMutableAudioMixInputParameters] = []
         var assetCache: [UUID: AVURLAsset] = [:]
+        var stillCache: [UUID: CIImage] = [:]
+        let t = { (s: Double) in CMTime(seconds: s, preferredTimescale: timescale) }
 
-        for track in project.tracks where !track.isHidden {
-            let compVideo = track.kind == .video ? comp.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) : nil
-            let compAudio = comp.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
-            var placed: [(Clip, CGSize, CGAffineTransform)] = []
-            let params = compAudio.map { AVMutableAudioMixInputParameters(track: $0) }
-            for clip in track.clips.sorted(by: { $0.start < $1.start }) {
-                guard let asset = project.asset(clip.assetID), asset.kind != .image else { continue }
-                let av = assetCache[asset.id] ?? AVURLAsset(url: asset.url)
-                assetCache[asset.id] = av
-                let srcRange = CMTimeRange(start: CMTime(seconds: clip.sourceIn, preferredTimescale: timescale),
-                                           duration: CMTime(seconds: clip.duration * clip.speed, preferredTimescale: timescale))
-                let at = CMTime(seconds: clip.start, preferredTimescale: timescale)
-                let placedRange = CMTimeRange(start: at, duration: srcRange.duration)
-                let targetDur = CMTime(seconds: clip.duration, preferredTimescale: timescale)
-                if let compVideo, let v = try await av.loadTracks(withMediaType: .video).first {
-                    try compVideo.insertTimeRange(srcRange, of: v, at: at)
-                    if clip.speed != 1 { compVideo.scaleTimeRange(placedRange, toDuration: targetDur) }
-                    let size = try await v.load(.naturalSize)
-                    let transform = try await v.load(.preferredTransform)
-                    placed.append((clip, size, transform))
-                }
-                if let compAudio, let a = try await av.loadTracks(withMediaType: .audio).first {
-                    try compAudio.insertTimeRange(srcRange, of: a, at: at)
-                    if clip.speed != 1 { compAudio.scaleTimeRange(placedRange, toDuration: targetDur) }
-                    params?.setVolume(track.isMuted ? 0 : Float(clip.volume), at: at)
-                }
-            }
-            if let compVideo { layerSources.append((compVideo, placed)) }
-            if let params { audioParams.append(params) }
+        // Base track: a tiny black movie under everything, so stills and titles render without any video clip.
+        if let base = comp.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid),
+           let blankTrack = try? await AVURLAsset(url: BlankVideo.url()).loadTracks(withMediaType: .video).first {
+            let one = CMTimeRange(start: .zero, duration: CMTime(value: 1, timescale: 1))
+            try base.insertTimeRange(one, of: blankTrack, at: .zero)
+            base.scaleTimeRange(CMTimeRange(start: .zero, duration: one.duration), toDuration: total)
         }
 
-        // Video composition: one instruction per segment between clip boundaries, top track first.
+        for track in project.tracks where !track.isHidden {
+            let video: [AVMutableCompositionTrack?] = track.kind == .video
+                ? [comp.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid), comp.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid)]
+                : [nil, nil]
+            let audio = [comp.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid), comp.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)]
+            let params = audio.map { $0.map { AVMutableAudioMixInputParameters(track: $0) } }
+            var sources: [LayerSource] = []
+            let clips = track.clips.sorted { $0.start < $1.start }
+            for (i, clip) in clips.enumerated() {
+                guard let asset = project.asset(clip.assetID) else { continue }
+                let slot = i % 2
+                let volume = track.isMuted ? 0 : Float(clip.volume)
+
+                // Transition into this clip: the previous clip is extended under it by `d` seconds.
+                var transitionEnd: Double? = nil, outgoingID: UUID? = nil
+                if let tr = clip.transitionIn, tr.duration > 0.01 {
+                    var d = min(tr.duration, clip.duration)
+                    if i > 0, let prev = Optional(clips[i - 1]), abs(prev.end - clip.start) < 0.02, let prevAsset = project.asset(prev.assetID) {
+                        if prevAsset.kind != .image { d = min(d, max(0, (prevAsset.duration - prev.sourceOut) / prev.speed)) }
+                        if d > 0.01 {
+                            outgoingID = prev.id
+                            let pslot = (i - 1) % 2
+                            let extra = CMTimeRange(start: t(prev.sourceOut), duration: t(d * prev.speed))
+                            let av = assetCache[prevAsset.id] ?? AVURLAsset(url: prevAsset.url)
+                            if prevAsset.kind != .image {
+                                if let v = video[pslot], let vt = try await av.loadTracks(withMediaType: .video).first {
+                                    try v.insertTimeRange(extra, of: vt, at: t(prev.end))
+                                    if prev.speed != 1 { v.scaleTimeRange(CMTimeRange(start: t(prev.end), duration: extra.duration), toDuration: t(d)) }
+                                }
+                                if let a = audio[pslot], let at = try await av.loadTracks(withMediaType: .audio).first {
+                                    try a.insertTimeRange(extra, of: at, at: t(prev.end))
+                                    if prev.speed != 1 { a.scaleTimeRange(CMTimeRange(start: t(prev.end), duration: extra.duration), toDuration: t(d)) }
+                                    params[pslot]?.setVolumeRamp(fromStartVolume: track.isMuted ? 0 : Float(prev.volume), toEndVolume: 0, timeRange: CMTimeRange(start: t(prev.end), duration: t(d)))
+                                }
+                            }
+                            if let si = sources.firstIndex(where: { $0.clip.id == prev.id }) {
+                                let o = sources[si]
+                                sources[si] = LayerSource(trackID: o.trackID, still: o.still, naturalSize: o.naturalSize, preferredTransform: o.preferredTransform, clip: o.clip, effectiveEnd: prev.end + d, transitionEnd: o.transitionEnd, outgoingID: o.outgoingID)
+                            }
+                        }
+                    }
+                    if d > 0.01 { transitionEnd = clip.start + d }
+                }
+
+                if asset.kind == .image {
+                    guard track.kind == .video else { continue }
+                    let still = stillCache[asset.id] ?? StillLoader.load(asset.url)
+                    guard let still else { continue }
+                    stillCache[asset.id] = still
+                    sources.append(LayerSource(trackID: kCMPersistentTrackID_Invalid, still: still, naturalSize: still.extent.size, preferredTransform: .identity, clip: clip, effectiveEnd: clip.end, transitionEnd: transitionEnd, outgoingID: outgoingID))
+                    continue
+                }
+                let av = assetCache[asset.id] ?? AVURLAsset(url: asset.url)
+                assetCache[asset.id] = av
+                let srcRange = CMTimeRange(start: t(clip.sourceIn), duration: t(clip.duration * clip.speed))
+                let at = t(clip.start)
+                let placedRange = CMTimeRange(start: at, duration: srcRange.duration)
+                let targetDur = t(clip.duration)
+                if let v = video[slot], let vt = try await av.loadTracks(withMediaType: .video).first {
+                    try v.insertTimeRange(srcRange, of: vt, at: at)
+                    if clip.speed != 1 { v.scaleTimeRange(placedRange, toDuration: targetDur) }
+                    let size = try await vt.load(.naturalSize)
+                    let pref = try await vt.load(.preferredTransform)
+                    sources.append(LayerSource(trackID: v.trackID, still: nil, naturalSize: size, preferredTransform: pref, clip: clip, effectiveEnd: clip.end, transitionEnd: transitionEnd, outgoingID: outgoingID))
+                }
+                if let a = audio[slot], let atr = try await av.loadTracks(withMediaType: .audio).first, let prm = params[slot] {
+                    try a.insertTimeRange(srcRange, of: atr, at: at)
+                    if clip.speed != 1 { a.scaleTimeRange(placedRange, toDuration: targetDur) }
+                    prm.setVolume(volume, at: at)
+                    // Fades and the transition's crossfade as ramps; the transition ramp wins at the head.
+                    let head = transitionEnd.map { $0 - clip.start } ?? clip.fadeIn
+                    if head > 0.01 { prm.setVolumeRamp(fromStartVolume: 0, toEndVolume: volume, timeRange: CMTimeRange(start: at, duration: t(min(head, clip.duration)))) }
+                    if clip.fadeOut > 0.01 {
+                        let fo = min(clip.fadeOut, clip.duration)
+                        prm.setVolumeRamp(fromStartVolume: volume, toEndVolume: 0, timeRange: CMTimeRange(start: t(clip.end - fo), duration: t(fo)))
+                    }
+                }
+            }
+            if track.kind == .video { layerSources.append(sources) }
+            audioParams.append(contentsOf: params.compactMap { $0 })
+        }
+
+        // Titles, rasterized once per build.
+        let texts: [TextLayer] = project.texts.compactMap { tx in
+            guard let (img, px) = OverlayLayerBuilder.renderText(tx, canvas: renderSize) else { return nil }
+            let ci = CIImage(cgImage: img, options: [.colorSpace: NSNull()])   // rasterized at the screen's backing scale; bring it to render pixels
+            let sx = px.width / max(1, ci.extent.width), sy = px.height / max(1, ci.extent.height)
+            return TextLayer(text: tx, image: ci.transformed(by: CGAffineTransform(scaleX: sx, y: sy)), size: px)
+        }
+
+        // One instruction per segment between edges (clip starts, ends, transition ends, extended tails), on quantized
+        // boundaries: a gap or an empty range makes AVFoundation reject the whole composition ("Operation Stopped").
         let videoComp = AVMutableVideoComposition()
+        videoComp.customVideoCompositorClass = EditMaxCompositor.self
         videoComp.renderSize = renderSize
         videoComp.frameDuration = CMTime(value: 1, timescale: CMTimeScale(max(1, project.settings.fps.rounded())))
-        // Boundaries in composition ticks: clip edges that differ by less than a tick collapse to one, so the instructions
-        // tile [0, total] exactly (a gap or an empty range makes AVFoundation reject the whole composition, "Operation Stopped").
-        let q = { (s: Double) -> Int64 in CMTime(seconds: s, preferredTimescale: timescale).value }
+        let q = { (s: Double) -> Int64 in min(total.value, max(0, CMTime(seconds: s, preferredTimescale: timescale).value)) }
         var boundaries: Set<Int64> = [0, total.value]
-        for (_, clips) in layerSources { for (c, _, _) in clips { boundaries.insert(min(total.value, q(c.start))); boundaries.insert(min(total.value, q(c.end))) } }
-        let times = boundaries.sorted()
-        var instructions: [AVMutableVideoCompositionInstruction] = []
-        for (a, b) in zip(times, times.dropFirst()) where b > a {
-            let inst = AVMutableVideoCompositionInstruction()
-            inst.timeRange = CMTimeRange(start: CMTime(value: a, timescale: timescale), end: CMTime(value: b, timescale: timescale))
-            var layers: [AVMutableVideoCompositionLayerInstruction] = []
-            for (compTrack, clips) in layerSources {  // first project track (top row of the timeline) covers the rows below, as in other editors
-                guard let (clip, size, pref) = clips.first(where: { q($0.0.start) <= a && q($0.0.end) >= b }) else { continue }
-                let li = AVMutableVideoCompositionLayerInstruction(assetTrack: compTrack)
-                li.setTransform(fitTransform(naturalSize: size, preferred: pref, into: renderSize), at: .zero)
-                li.setOpacity(Float(clip.opacity), at: .zero)
-                layers.append(li)
+        for sources in layerSources {
+            for src in sources {
+                boundaries.insert(q(src.clip.start)); boundaries.insert(q(src.clip.end)); boundaries.insert(q(src.effectiveEnd))
+                if let te = src.transitionEnd { boundaries.insert(q(te)) }
             }
-            inst.layerInstructions = layers
-            inst.backgroundColor = CGColor(red: 0, green: 0, blue: 0, alpha: 1)
-            instructions.append(inst)
+        }
+        for tx in project.texts { boundaries.insert(q(tx.start)); boundaries.insert(q(tx.end)) }
+        let times = boundaries.sorted()
+        var instructions: [EditMaxInstruction] = []
+        for (a, b) in zip(times, times.dropFirst()) where b > a {
+            let range = CMTimeRange(start: CMTime(value: a, timescale: timescale), end: CMTime(value: b, timescale: timescale))
+            var layers: [TrackLayer] = []
+            var required: [CMPersistentTrackID] = []
+            for sources in layerSources {
+                guard let cur = sources.first(where: { q($0.clip.start) <= a && q($0.clip.end) >= b }) else { continue }
+                var outgoing: LayerSource? = nil
+                if let te = cur.transitionEnd, b <= q(te), let oid = cur.outgoingID { outgoing = sources.first { $0.clip.id == oid } }
+                layers.append(TrackLayer(current: cur, outgoing: outgoing))
+                for s in [cur, outgoing].compactMap({ $0 }) where s.trackID != kCMPersistentTrackID_Invalid { required.append(s.trackID) }
+            }
+            let visibleTexts = texts.filter { q($0.text.start) < b && q($0.text.end) > a }
+            instructions.append(EditMaxInstruction(timeRange: range, layers: layers, texts: visibleTexts, renderSize: renderSize, requiredTrackIDs: required))
         }
         videoComp.instructions = instructions
 
         let mix = AVMutableAudioMix()
         mix.inputParameters = audioParams
-
-        let overlayProject = project.withoutHistory
-        let overlayAssets = assetCache
-        return Output(composition: comp, videoComposition: videoComp, audioMix: mix, renderSize: renderSize, duration: total,
-                      makeOverlay: { OverlayLayerBuilder.make(project: overlayProject, size: renderSize, total: total.seconds, assets: overlayAssets) })
+        return Output(composition: comp, videoComposition: videoComp, audioMix: mix, renderSize: renderSize, duration: total)
     }
 
     /// Aspect-fit a source track into the render size, honouring the source's preferred transform (rotation).
@@ -110,62 +180,6 @@ enum CompositionBuilder {
 }
 
 enum OverlayLayerBuilder {
-    /// Root overlay layer in render pixels, origin top-left (flipped so y=0 is the top for both preview and export).
-    static func make(project: Project, size: CGSize, total: Double, assets: [UUID: AVURLAsset]) -> CALayer {
-        let root = CALayer()
-        root.frame = CGRect(origin: .zero, size: size)
-        root.isGeometryFlipped = true
-        root.masksToBounds = true
-
-        // Image clips on video tracks
-        for track in project.tracks where track.kind == .video && !track.isHidden {
-            for clip in track.clips {
-                guard let asset = project.asset(clip.assetID), asset.kind == .image,
-                      let src = CGImageSourceCreateWithURL(asset.url as CFURL, nil),
-                      let img = CGImageSourceCreateImageAtIndex(src, 0, nil) else { continue }
-                let l = CALayer()
-                l.contents = img
-                l.contentsGravity = .resizeAspect
-                l.frame = root.bounds
-                l.opacity = Float(clip.opacity)
-                l.isGeometryFlipped = true
-                addVisibility(l, start: clip.start, end: clip.end, total: total, peak: Float(clip.opacity))
-                root.addSublayer(l)
-            }
-        }
-        for t in project.texts {
-            // Pre-render text to a bitmap: CATextLayer draws in the live preview but not reliably in
-            // AVVideoCompositionCoreAnimationTool export, while a plain contents layer works in both.
-            guard let (img, px) = renderText(t, canvas: size) else { continue }
-            let l = CALayer()
-            l.contents = img
-            l.contentsGravity = .resize
-            l.isGeometryFlipped = true
-            l.frame = CGRect(x: size.width * t.x - px.width / 2, y: size.height * t.y - px.height / 2, width: px.width, height: px.height)
-            addVisibility(l, start: t.start, end: t.end, total: total, peak: 1)
-            root.addSublayer(l)
-        }
-        return root
-    }
-
-    /// Opacity keyframes: hidden outside [start, end]. Driven by the player clock (AVSynchronizedLayer) or export timeline.
-    private static func addVisibility(_ layer: CALayer, start: Double, end: Double, total: Double, peak: Float) {
-        // Linear keyframes with a 1ms ramp give a step function that every CA renderer (preview, export) honours.
-        let dur = max(total, end + 0.01, 0.1)
-        let eps = 0.001
-        let s0 = max(0, start - eps) / dur, s1 = start / dur, e0 = end / dur, e1 = min(dur, end + eps) / dur
-        let anim = CAKeyframeAnimation(keyPath: "opacity")
-        anim.duration = dur
-        anim.calculationMode = .linear
-        anim.values = [0, 0, peak, peak, 0, 0]
-        anim.keyTimes = [0, NSNumber(value: s0), NSNumber(value: s1), NSNumber(value: e0), NSNumber(value: e1), 1]
-        anim.beginTime = AVCoreAnimationBeginTimeAtZero
-        anim.isRemovedOnCompletion = false
-        anim.fillMode = .both
-        layer.opacity = 0
-        layer.add(anim, forKey: "visibility")
-    }
-
     /// Draws a text overlay at full render resolution in its preset's look (font, case, stroke, background box).
     /// The one place text is rasterized: preview, export and capture_frame all come through here. Returns the CGImage and its size in render pixels.
     static func renderText(_ t: TextOverlay, canvas: CGSize, scale: CGFloat = 1) -> (CGImage, CGSize)? {
@@ -198,34 +212,6 @@ enum OverlayLayerBuilder {
         img.unlockFocus()
         guard let cg = img.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
         return (cg, CGSize(width: width / scale, height: h / scale))
-    }
-
-    /// Offline composite of the overlays visible at `time` onto a base frame, scaled to `maxWidth`. Returns PNG data.
-    static func composite(base: CGImage, project: Project, size: CGSize, at time: Double, maxWidth: Int) -> Data {
-        let scale = min(1, CGFloat(maxWidth) / size.width)
-        let outSize = CGSize(width: (size.width * scale).rounded(), height: (size.height * scale).rounded())
-        let image = NSImage(size: outSize)
-        image.lockFocus()
-        let ctx = NSGraphicsContext.current!.cgContext
-        ctx.draw(base, in: CGRect(origin: .zero, size: outSize))
-        // Image clips
-        for track in project.tracks where track.kind == .video && !track.isHidden {
-            for clip in track.clips where clip.start <= time && time < clip.end {
-                guard let asset = project.asset(clip.assetID), asset.kind == .image, let img = NSImage(contentsOf: asset.url) else { continue }
-                let r = AVMakeRect(aspectRatio: img.size, insideRect: CGRect(origin: .zero, size: outSize))
-                img.draw(in: r, from: .zero, operation: .sourceOver, fraction: CGFloat(clip.opacity))
-            }
-        }
-        for t in project.texts where t.start <= time && time < t.end {
-            guard let (cg, px) = renderText(t, canvas: size, scale: scale) else { continue }
-            let w = px.width * scale, h = px.height * scale
-            // NSImage drawing is bottom-left origin; model y is top-down.
-            let rect = CGRect(x: outSize.width * t.x - w / 2, y: outSize.height * (1 - t.y) - h / 2, width: w, height: h)
-            ctx.draw(cg, in: rect)
-        }
-        image.unlockFocus()
-        guard let tiff = image.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff), let png = rep.representation(using: .png, properties: [:]) else { return Data() }
-        return png
     }
 
     static func cgColor(hex: String) -> CGColor {

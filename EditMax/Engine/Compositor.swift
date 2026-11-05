@@ -172,7 +172,7 @@ enum FrameRenderer {
         if c.temperature != 0 || c.tint != 0 {
             // Core Image moves the picture's neutral from `inputNeutral` to `inputTargetNeutral`: a lower target kelvin warms it.
             out = out.applyingFilter("CITemperatureAndTint", parameters: ["inputNeutral": CIVector(x: 6500, y: 0),
-                                                                           "inputTargetNeutral": CIVector(x: 6500 - c.temperature * 25, y: c.tint)])
+                                                                           "inputTargetNeutral": CIVector(x: 6500 - c.temperature * 25, y: -c.tint)])   // + = magenta, as in every grading panel; CI's tint axis runs the other way
         }
         if c.shadows != 0 || c.midtones != 0 || c.highlights != 0 {
             // A five-point tone curve: the three inner points move by up to ±0.15.

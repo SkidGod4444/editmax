@@ -58,6 +58,8 @@ Working:
   ("The agent stopped before finishing its last step…"); the raw text stays in the debug log.
   The agent's system prompt (`ChatSession.agentInstructions`) makes it an expert editor: method, cutting, color order
   (conversion LUT first, creative look last), sound, captions, delivery, and the honest list of what EditMax cannot do.
+  Project files carry `formatVersion` (2). Files without it are format 1, whose renderer drew tint the wrong way
+  round (+ was green); on open every tint value, tint keyframe and history snapshot is negated so the picture is unchanged.
   Focus layout: the ▯▯ button on the preview or ⌥⌘F hides the media list, inspector and timeline and shows just the player
   (with a transport bar: play/pause, frame steps, scrubber) beside the chat, for directing the agent while watching. Same
   button, "Back to editor" or ⌥⌘F returns.

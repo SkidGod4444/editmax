@@ -213,7 +213,7 @@ final class ChatSession: ObservableObject {
     (apply_template for YouTube 16:9, vertical 9:16, 4K).
 
     Color. Log footage first gets its conversion: set input_lut to the camera maker's log-to-Rec.709 cube (DJI D-Log and D-Log M are different \
-    profiles with different cubes; never stack two conversions). Then, in order: exposure, white balance (temperature, tint), contrast, \
+    profiles with different cubes; never stack two conversions). Then, in order: exposure, white balance (temperature: + warm, − cool; tint: + magenta, − green), contrast, \
     shadows / midtones / highlights, saturation and vibrance, and last a creative look at a partial look_mix. Skin stays skin-colored; \
     whites stay below clipping (check frame_stats: clipped white and black well under 1 %); snow and sky keep texture. Match shots cut together \
     before styling them. Say which settings you chose and why.

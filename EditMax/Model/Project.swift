@@ -452,6 +452,9 @@ struct HistoryEntry: Codable, Identifiable, Equatable {
 }
 
 struct Project: Codable, Equatable {
+    /// File format: 1 = before 2026-11-05 (tint drawn the wrong way round), 2 = current. Missing in old files.
+    static let currentFormat = 2
+    var formatVersion: Int = Project.currentFormat
     var name: String = "Untitled"
     var settings = ProjectSettings()
     var assets: [Asset] = []
@@ -469,6 +472,7 @@ struct Project: Codable, Equatable {
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        formatVersion = try c.decodeIfPresent(Int.self, forKey: .formatVersion) ?? 1   // files before the field was added
         name = try c.decodeIfPresent(String.self, forKey: .name) ?? "Untitled"
         settings = try c.decodeIfPresent(ProjectSettings.self, forKey: .settings) ?? ProjectSettings()
         assets = try c.decodeIfPresent([Asset].self, forKey: .assets) ?? []
@@ -731,4 +735,33 @@ extension Project {
 extension UUID {
     /// First 8 hex chars; `Project.resolve` accepts these as prefixes.
     var short: String { String(uuidString.lowercased().prefix(8)) }
+}
+
+
+extension Project {
+    /// Brings a decoded project up to the current format. Format 1 stored tint with the opposite sign
+    /// (its renderer drew + as green), so every tint value and tint keyframe is negated to keep the picture the same.
+    mutating func migrateToCurrentFormat() {
+        guard formatVersion < Project.currentFormat else { return }
+        if formatVersion < 2 {
+            func flip(_ clips: inout [Clip]) {
+                for i in clips.indices {
+                    clips[i].color.tint = -clips[i].color.tint
+                    if var ks = clips[i].animations[ClipParam.tint.rawValue] {
+                        for k in ks.indices { ks[k].value = -ks[k].value }
+                        clips[i].animations[ClipParam.tint.rawValue] = ks
+                    }
+                }
+            }
+            for t in tracks.indices { flip(&tracks[t].clips) }
+            for q in sequences.indices { sequences[q].project.migrateToCurrentFormat() }
+            for h in history.indices {
+                if var old = try? EditMaxDocument.decoder.decode(Project.self, from: history[h].project), old.formatVersion < 2 {
+                    old.migrateToCurrentFormat()
+                    if let d = try? EditMaxDocument.encoder.encode(old) { history[h].project = d }
+                }
+            }
+        }
+        formatVersion = Project.currentFormat
+    }
 }

@@ -31,6 +31,7 @@ final class EditMaxDocument: ReferenceFileDocument, ObservableObject {
     init(configuration: ReadConfiguration) throws {
         guard let data = configuration.file.regularFileContents else { throw CocoaError(.fileReadCorruptFile) }
         project = try Self.decoder.decode(Project.self, from: data)
+        project.migrateToCurrentFormat()
     }
 
     func snapshot(contentType: UTType) throws -> Project { project }

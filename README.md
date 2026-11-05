@@ -44,6 +44,14 @@ Working:
   (`EditMax/Engine/AudioTap.swift`, only attached when a clip asks for it); automatic ducking of one track under another's
   clips with attack/release (Project inspector → Ducking, `set_ducking`); clip volume is one envelope per clip (keyframes ×
   fades × transition crossfade × ducking) emitted as back-to-back ramps. Audio-only timelines export.
+- Log footage (DJI D-Log, S-Log, V-Log…): `set_clip_color input_lut` (inspector: Look → Input LUT) takes the camera's
+  conversion `.cube` and applies it before every other control at full strength, so exposure and the tone curve work on
+  a Rec.709 image; the creative look still runs last. Sources are decoded to 16-bit half floats
+  (`kCVPixelFormatType_64RGBAHalf`), so 10-bit footage keeps its precision through the LUT: on a 10-bit ramp stretched
+  ×6 the exported staircase matches the ideal (RMS 0.95 vs 0.93, max step 2) where the 8-bit decode had steps of 9.
+  Limits: exports are still 8-bit H.264 (no 10-bit HEVC or HDR delivery yet), proxies are 8-bit so the preview with
+  proxies on can band where the export does not, and untagged 8-bit sources shift by up to 2 levels on saturated colors
+  versus the old BGRA decode (VideoToolbox rounds the two conversions differently).
 - App icon: `EditMax/Resources/AppIcon.svg` is the source (a play triangle cut into three beveled metal strips on a
   dark plate whose shape, corner curve and shadow come from a real macOS app icon's alpha mask, `scripts/icon/plate_mask.raw`,
   so it sits level with Apple's icons; `scripts/icon/build_svg.py` rebuilds the SVG). `scripts/make-icon.sh`

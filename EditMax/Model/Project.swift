@@ -66,6 +66,9 @@ struct ClipColor: Codable, Equatable {
     var highlights: Double = 0
     /// Saturation that favours muted colors, -1 to 1.
     var vibrance: Double = 0
+    /// A technical conversion LUT (`.cube` path) applied before every other control, full strength: log footage
+    /// (D-Log, S-Log, V-Log…) is converted to Rec.709 first, so exposure and the tone curve work on a normal image.
+    var inputLut: String? = nil
     /// A look: a built-in name (`Looks.builtin`) or the path of a `.cube` file, blended by `lutMix`.
     var lut: String? = nil
     var lutMix: Double = 1
@@ -84,6 +87,7 @@ struct ClipColor: Codable, Equatable {
         midtones = try c.decodeIfPresent(Double.self, forKey: .midtones) ?? 0
         highlights = try c.decodeIfPresent(Double.self, forKey: .highlights) ?? 0
         vibrance = try c.decodeIfPresent(Double.self, forKey: .vibrance) ?? 0
+        inputLut = try c.decodeIfPresent(String.self, forKey: .inputLut)
         lut = try c.decodeIfPresent(String.self, forKey: .lut)
         lutMix = try c.decodeIfPresent(Double.self, forKey: .lutMix) ?? 1
     }

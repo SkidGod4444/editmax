@@ -301,6 +301,14 @@ struct ClipInspector: View {
                 Section("Look") {
                     let c = clip.color
                     let plain = ToolExecutor(document: document, origin: .user)
+                    Picker("Input LUT", selection: Binding(get: { c.inputLut ?? "none" }, set: { v in
+                        if v == "file" { pickCube(plain, input: true) } else { try? plain.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: nil, temperature: nil, tint: nil, reset: false, inputLut: v) }
+                    })) {
+                        Text("None (footage is already Rec.709)").tag("none")
+                        if let path = c.inputLut { Text(URL(fileURLWithPath: path).lastPathComponent).tag(path) }
+                        Divider()
+                        Text("Load conversion .cube (D-Log → Rec.709…)…").tag("file")
+                    }.pointer().uiFrame("inspector.inputLut")
                     Picker("Look", selection: Binding(get: { c.lut ?? "none" }, set: { v in
                         if v == "file" { pickCube(plain) } else { try? plain.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: nil, temperature: nil, tint: nil, reset: false, lut: v) }
                     })) {
@@ -313,7 +321,7 @@ struct ClipInspector: View {
                     if c.lut != nil {
                         slider("Mix", param: .lutMix, value: c.lutMix, range: 0...1, format: { "\(Int($0 * 100))%" }, reset: 1) { try? x.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: nil, temperature: nil, tint: nil, reset: false, lutMix: $0) }
                     }
-                    Text("A look is a 3D LUT applied after the color controls. Built-in looks are generated; .cube files from any grading app load as they are.").font(.caption).foregroundStyle(.secondary)
+                    Text("The input LUT runs first, at full strength: it turns log footage (DJI D-Log, S-Log, V-Log) into a normal Rec.709 image, so the controls above behave as expected. A look is a 3D LUT applied after the color controls. Built-in looks are generated; .cube files from any grading app load as they are.").font(.caption).foregroundStyle(.secondary)
                 }
             }
             Section("Audio") {
@@ -355,13 +363,16 @@ struct ClipInspector: View {
         .onChange(of: clip.id) { _, _ in nameDraft = clip.name }
     }
 
-    private func pickCube(_ x: ToolExecutor) {
+    private func pickCube(_ x: ToolExecutor, input: Bool = false) {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [UTType(filenameExtension: "cube") ?? .data]
         panel.allowsMultipleSelection = false
-        panel.message = "Choose a .cube 3D LUT"
+        panel.message = input ? "Choose the camera's conversion .cube (log → Rec.709)" : "Choose a .cube 3D LUT"
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        do { try x.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: nil, temperature: nil, tint: nil, reset: false, lut: url.path) }
+        do {
+            if input { try x.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: nil, temperature: nil, tint: nil, reset: false, inputLut: url.path) }
+            else { try x.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: nil, temperature: nil, tint: nil, reset: false, lut: url.path) }
+        }
         catch { NSAlert(error: error).runModal() }
     }
 

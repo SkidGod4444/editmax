@@ -57,13 +57,21 @@ final class EditMaxInstruction: NSObject, AVVideoCompositionInstructionProtocol 
 /// Draws every frame of the preview, the export and `capture_frame`: picture transforms and crops, color correction,
 /// fades, transitions, stills and titles, all through Core Image on the GPU. One code path, so what plays is what exports.
 final class EditMaxCompositor: NSObject, AVVideoCompositing {
-    /// No color management: pixel values pass through untouched, so a frame that is not graded exports exactly as it
-    /// came in (with management, Core Image lifted shadows by treating decoded video and PNGs as linear).
+    /// No color management: pixel values pass through untouched, so a frame that is not graded exports as it came in,
+    /// within decoder rounding (VideoToolbox's YUV → half-float conversion differs from its YUV → BGRA one by up to 2
+    /// levels on saturated colors; with management, Core Image lifted shadows by treating decoded video and PNGs as linear).
     static let context = CIContext(options: [.cacheIntermediates: false, .name: "EditMax", .workingColorSpace: NSNull(), .outputColorSpace: NSNull()])
     private let queue = DispatchQueue(label: "io.openhorizon.editmax.compositor", qos: .userInteractive)
+    /// Source pixel formats seen so far (logged once each, so the decode path can be checked from the log).
+    nonisolated(unsafe) private static var loggedFormats = Set<OSType>()
     private static let attrs: [String: Any] = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
                                                kCVPixelBufferMetalCompatibilityKey as String: true]
-    var sourcePixelBufferAttributes: [String: Any]? { Self.attrs }
+    /// Sources are decoded to 16-bit half floats, so 10-bit footage (D-Log and other log profiles) keeps its precision
+    /// through the input LUT and the grade instead of being cut to 8 bits first. Output stays BGRA: the export encoder,
+    /// the player and the scopes read 8-bit frames.
+    private static let sourceAttrs: [String: Any] = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_64RGBAHalf,
+                                                     kCVPixelBufferMetalCompatibilityKey as String: true]
+    var sourcePixelBufferAttributes: [String: Any]? { Self.sourceAttrs }
     var requiredPixelBufferAttributesForRenderContext: [String: Any] { Self.attrs }
     func renderContextChanged(_ newRenderContext: AVVideoCompositionRenderContext) {}
     func cancelAllPendingVideoCompositionRequests() {}
@@ -74,7 +82,15 @@ final class EditMaxCompositor: NSObject, AVVideoCompositing {
                 request.finish(with: EditError.invalid("unknown composition instruction")); return
             }
             guard let out = request.renderContext.newPixelBuffer() else { request.finish(with: EditError.invalid("no pixel buffer")); return }
-            let image = FrameRenderer.frame(inst, at: request.compositionTime.seconds) { id in request.sourceFrame(byTrackID: id) }
+            let image = FrameRenderer.frame(inst, at: request.compositionTime.seconds) { id in
+                let f = request.sourceFrame(byTrackID: id)
+                if let f, !Self.loggedFormats.contains(CVPixelBufferGetPixelFormatType(f)) {
+                    Self.loggedFormats.insert(CVPixelBufferGetPixelFormatType(f))
+                    let t = CVPixelBufferGetPixelFormatType(f); let s = String(bytes: [UInt8(t >> 24 & 0xff), UInt8(t >> 16 & 0xff), UInt8(t >> 8 & 0xff), UInt8(t & 0xff)], encoding: .ascii) ?? "?"
+                    DebugLog.event("source-pixel-format", ["fourcc": s, "code": "\(t)"])
+                }
+                return f
+            }
             Self.context.render(image, to: out, bounds: CGRect(origin: .zero, size: inst.renderSize), colorSpace: nil)
             request.finish(withComposedVideoFrame: out)
         }
@@ -140,6 +156,7 @@ enum FrameRenderer {
 
     static func graded(_ img: CIImage, _ c: ClipColor) -> CIImage {
         var out = img
+        if let lut = c.inputLut, !lut.isEmpty { out = Looks.apply(out, key: lut, mix: 1) }   // log → video first, always full
         if c.exposure != 0 { out = out.applyingFilter("CIExposureAdjust", parameters: ["inputEV": c.exposure]) }
         if c.contrast != 1 || c.saturation != 1 {
             out = out.applyingFilter("CIColorControls", parameters: ["inputContrast": c.contrast, "inputSaturation": c.saturation, "inputBrightness": 0])

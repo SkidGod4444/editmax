@@ -448,7 +448,12 @@ struct ToolExecutor {
     }
 
     func setClipColor(_ clip: String, exposure: Double?, contrast: Double?, saturation: Double?, temperature: Double?, tint: Double?, reset: Bool,
-                      shadows: Double? = nil, midtones: Double? = nil, highlights: Double? = nil, vibrance: Double? = nil, lut: String? = nil, lutMix: Double? = nil) throws {
+                      shadows: Double? = nil, midtones: Double? = nil, highlights: Double? = nil, vibrance: Double? = nil, lut: String? = nil, lutMix: Double? = nil,
+                      inputLut: String? = nil) throws {
+        if let inputLut, !inputLut.isEmpty, inputLut.lowercased() != "none" {
+            guard FileManager.default.fileExists(atPath: inputLut) else { throw EditError.notFound("input LUT '\(inputLut)': the path of a .cube conversion LUT (for example DJI's D-Log to Rec.709)") }
+            guard Looks.cube(for: inputLut) != nil else { throw EditError.invalid("could not read the LUT at \(inputLut) (needs LUT_3D_SIZE and N³ rgb lines)") }
+        }
         let id = try resolveClip(clip)
         if let lut, !lut.isEmpty, lut.lowercased() != "none" {
             guard Looks.isBuiltin(lut) || FileManager.default.fileExists(atPath: lut) else { throw EditError.notFound("look '\(lut)': use one of \(Looks.builtin.joined(separator: ", ")) or the path of a .cube file") }
@@ -468,6 +473,7 @@ struct ToolExecutor {
                 if let vibrance { c.color.vibrance = max(-1, min(1, vibrance)) }
                 if let lut { c.color.lut = (lut.isEmpty || lut.lowercased() == "none") ? nil : (Looks.builtin.first { $0.caseInsensitiveCompare(lut) == .orderedSame } ?? lut) }
                 if let lutMix { c.color.lutMix = max(0, min(1, lutMix)) }
+                if let inputLut { c.color.inputLut = inputLut.isEmpty || inputLut.lowercased() == "none" ? nil : inputLut }
             }
         }
     }

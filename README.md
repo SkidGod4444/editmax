@@ -42,9 +42,10 @@ Working:
   (`EditMax/Engine/AudioTap.swift`, only attached when a clip asks for it); automatic ducking of one track under another's
   clips with attack/release (Project inspector → Ducking, `set_ducking`); clip volume is one envelope per clip (keyframes ×
   fades × transition crossfade × ducking) emitted as back-to-back ramps. Audio-only timelines export.
-- App icon: `EditMax/Resources/AppIcon.svg` is the source (a play triangle cut into three metallic strips on a dark
-  plate); render it to a 1024 PNG with headless Chrome, build an iconset with `sips` and `iconutil -c icns` into
-  `EditMax/Resources/AppIcon.icns` (`CFBundleIconFile` in `project.yml`).
+- App icon: `EditMax/Resources/AppIcon.svg` is the source (a play triangle cut into three beveled metal strips on a
+  dark plate whose shape, corner curve and shadow come from a real macOS app icon's alpha mask, `scripts/icon/plate_mask.raw`,
+  so it sits level with Apple's icons; `scripts/icon/build_svg.py` rebuilds the SVG). `scripts/make-icon.sh`
+  renders it with headless Chrome and rebuilds `EditMax/Resources/AppIcon.icns` (`CFBundleIconFile` in `project.yml`).
 - Signing: debug builds are signed with the Apple Development certificate pinned by hash in `project.yml`, so macOS keeps
   the Screen Recording and keychain grants across rebuilds (ad-hoc signing made every build a new app). On another Mac,
   replace the hash with one from `security find-identity -v -p codesigning` or with `"-"` for ad-hoc.

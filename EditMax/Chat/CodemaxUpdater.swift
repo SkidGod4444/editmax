@@ -251,12 +251,25 @@ final class CodemaxUpdater: ObservableObject {
     /// An updated codemax exited with an error (the runner reports it). One that never said ready, or two failures within
     /// ten minutes, put it on the bad list and bring the previous copy back.
     func noteFailure(binary: URL, status exitStatus: Int32, startedOK: Bool, detail: String) {
+        guard binary == Self.installedBinary else { return }
+        recordFailure(weight: startedOK ? 1 : 2, fields: ["status": Int(exitStatus), "startedOK": startedOK, "detail": String(detail.suffix(300))])
+    }
+
+    /// The updated codemax runs but cannot do its job: listing agents, configuring one that is installed, or a turn that
+    /// ended in a protocol error. Counted like a crash (two within ten minutes roll back). Returns true when it rolled back.
+    @discardableResult
+    func noteAgentFailure(_ what: String, detail: String) -> Bool {
+        recordFailure(weight: 1, fields: ["what": what, "detail": String(detail.suffix(300))])
+    }
+
+    @discardableResult
+    private func recordFailure(weight: Int, fields: [String: Any]) -> Bool {
         var s = Self.loadState()
-        guard s.active == "updated", binary == Self.installedBinary, let v = s.updatedVersion else { return }
-        s.failures = s.failures.filter { Date().timeIntervalSince($0) < 600 } + [Date()]
-        if !startedOK { s.failures.append(Date()) }
-        DebugLog.event("update-failure", ["version": v, "status": Int(exitStatus), "startedOK": startedOK, "count": s.failures.count, "detail": String(detail.suffix(300))])
-        guard s.failures.count >= 2 else { Self.saveState(s); return }
+        guard s.active == "updated", let v = s.updatedVersion else { return false }
+        s.failures = s.failures.filter { Date().timeIntervalSince($0) < 600 } + Array(repeating: Date(), count: weight)
+        var f = fields; f["version"] = v; f["count"] = s.failures.count
+        DebugLog.event("update-failure", f)
+        guard s.failures.count >= 2 else { Self.saveState(s); return false }
         let fm = FileManager.default
         let bad = Self.binDirectory.appendingPathComponent("codemax.bad")
         try? fm.removeItem(at: bad)
@@ -277,5 +290,6 @@ final class CodemaxUpdater: ObservableObject {
         DebugLog.event("update-rollback", ["from": v, "to": s.updatedVersion ?? "bundled"])
         self.status.message = "codemax \(v) kept failing and was rolled back to \(restored)."
         refreshStatus()
+        return true
     }
 }

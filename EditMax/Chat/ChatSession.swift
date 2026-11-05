@@ -217,6 +217,8 @@ final class ChatSession: ObservableObject {
             configuredAgent = to; agent = to; currentAssistant = nil
         case .error(let kind, let message):
             currentAssistant = nil
+            // A protocol breakdown or crash in the agent side of an updated codemax counts against the update.
+            if backend == .agent, kind == "protocol" || kind == "crashed" { CodemaxUpdater.shared.noteAgentFailure("turn-\(kind)", detail: message) }
             items.append(Item(kind: .error, text: kind == "quota" ? "Out of quota: \(message)" : kind == "auth" ? (backend == .apiKey ? "Key rejected: \(message)" : "Login needed: \(message)") : message))
         case .notice(let text):
             items.append(Item(kind: .note, text: text))
@@ -250,16 +252,31 @@ final class ChatSession: ObservableObject {
                     self.items.append(Item(kind: .error, text: "\(name) is not installed on this Mac. Install it and press the refresh button, or pick another agent."))
                     return
                 }
-                // A codemax that died (or was closed) starts over with a fresh session.
-                if !self.runner.isRunning { self.configuredAgent = nil }
-                try self.runner.launch()
-                if self.configuredAgent == nil {
-                    let info = try await self.runner.configure(agent: wanted, mcpURL: mcp.url, token: mcp.token, instructions: instructions)
-                    self.configuredAgent = info.agent; self.agentStatus = Self.status(self.runner.version, info, prefix: "codemax")
-                } else if self.configuredAgent != wanted {
-                    let info = try await self.runner.switchAgent(wanted)
-                    self.configuredAgent = info.agent; self.agentStatus = Self.status(self.runner.version, info, prefix: "codemax")
-                    self.items.append(Item(kind: .note, text: "Switched to \(info.name)."))
+                // Starting the agent: an updated codemax that cannot do it counts against that update (two strikes roll
+                // it back), and the start is tried again, with the restored copy after a rollback.
+                var attempt = 0
+                while true {
+                    attempt += 1
+                    do {
+                        // A codemax that died (or was closed) starts over with a fresh session.
+                        if !self.runner.isRunning { self.configuredAgent = nil }
+                        try self.runner.launch()
+                        if self.configuredAgent == nil {
+                            let info = try await self.runner.configure(agent: wanted, mcpURL: mcp.url, token: mcp.token, instructions: instructions)
+                            self.configuredAgent = info.agent; self.agentStatus = Self.status(self.runner.version, info, prefix: "codemax")
+                        } else if self.configuredAgent != wanted {
+                            let info = try await self.runner.switchAgent(wanted)
+                            self.configuredAgent = info.agent; self.agentStatus = Self.status(self.runner.version, info, prefix: "codemax")
+                            self.items.append(Item(kind: .note, text: "Switched to \(info.name)."))
+                        }
+                        break
+                    } catch {
+                        let msg = error.localizedDescription
+                        guard attempt < 3, Self.looksLikeCodemaxFault(msg) else { throw error }
+                        let rolled = CodemaxUpdater.shared.noteAgentFailure("configure", detail: msg)
+                        self.runner.close(); self.configuredAgent = nil
+                        if rolled { self.items.append(Item(kind: .note, text: "The updated codemax could not start \(info.name) (\(msg)); rolled back to the previous copy and trying again.")) }
+                    }
                 }
                 self.currentAssistant = nil
                 let r = try await self.runner.prompt(prompt)
@@ -317,6 +334,12 @@ final class ChatSession: ObservableObject {
                 self.finishOpenTools()
             }
         }
+    }
+
+    /// Not the user's quota, login or a missing agent: those are not codemax's fault and never count against an update.
+    static func looksLikeCodemaxFault(_ message: String) -> Bool {
+        let m = message.lowercased()
+        return !(m.contains("quota") || m.contains("usage limit") || m.contains("rate limit") || m.contains("not installed") || m.contains("log in") || m.contains("login") || m.contains("sign in") || m.contains("unauthori") || m.contains("not found on this mac"))
     }
 
     /// Tool rows whose completion never arrived (cancel, crash, agents that only report the start) stop spinning.

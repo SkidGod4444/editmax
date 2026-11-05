@@ -104,7 +104,7 @@ final class CodemaxRunner {
             let status = proc.terminationStatus
             Self.log("!", "exited \(status)", tag: tag)
             DebugLog.event("\(name)-exit", ["status": Int(status)])
-            Task { @MainActor in self?.didExit(status: status) }
+            Task { @MainActor in self?.didExit(proc, status: status) }
         }
         try p.run()
         process = p; stdin = inPipe.fileHandleForWriting; isRunning = true; stderrTail = ""; binary = bin; version = nil
@@ -137,8 +137,9 @@ final class CodemaxRunner {
         }
     }
 
-    private func didExit(status: Int32) {
-        guard process != nil else { return }   // close() already cleaned up
+    private func didExit(_ proc: Process, status: Int32) {
+        // Only the process this runner is on: an older one closed and replaced by a relaunch is not news.
+        guard let current = process, current === proc else { return }
         isRunning = false; process = nil; stdin = nil
         let msg = stderrTail.trimmingCharacters(in: .whitespacesAndNewlines)
         let err = Failure(message: msg.isEmpty ? "\(kind.binaryName) exited with status \(status)" : String(msg.suffix(600)))

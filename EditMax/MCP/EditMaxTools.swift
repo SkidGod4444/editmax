@@ -53,6 +53,18 @@ enum EditMaxTools {
         Tool(name: "add_captions", description: "Transcribe the speech in a clip (or every clip with audio) and add timed caption lines as text overlays in one edit. Returns the caption group id.",
              inputSchema: schema(["clip": str("Clip id prefix (default: all clips with audio)"), "preset": str("Look: subtitle (default), boxed, bold, outline, minimal, title"),
                                   "max_words": int("Words per line (default from the preset)"), "language": str("Language tag (default: the Mac's language)"), "project": projectArg])),
+        Tool(name: "detect_silence", description: "Find quiet stretches without changing anything: moments where no audible clip has sound (a music bed keeps the pauses under it), or with `clip` one clip's own pauses. Returns timeline ranges in seconds.",
+             inputSchema: schema(["clip": str("Clip id prefix (default: all clips with audio)"), "threshold_db": num("Quiet below this many dB under the loudest peak (default -38)"),
+                                  "min_duration": num("Shortest silence to report, seconds (default 0.6)"), "padding": num("Seconds of silence kept on each side (default 0.15)"), "project": projectArg]),
+             annotations: .init(readOnlyHint: true)),
+        Tool(name: "remove_silence", description: "Cut the quiet stretches out of the timeline (ripple: every track shifts, captions move with the content). Do this before adding captions. Same parameters as detect_silence.",
+             inputSchema: schema(["clip": str("Clip id prefix (default: all clips with audio)"), "threshold_db": num("Default -38"), "min_duration": num("Default 0.6 s"), "padding": num("Default 0.15 s"), "project": projectArg]),
+             annotations: .init(destructiveHint: true)),
+        Tool(name: "remove_words", description: "Cut the moments where filler words are spoken (um, uh, hmm, er… by default), using the transcript's word timings; ripple delete across all tracks. Do this before adding captions.",
+             inputSchema: schema(["clip": str("Clip id prefix (default: all clips with audio)"), "words": strs("Words to cut (default: common fillers)"), "language": str("Language tag for transcription (default: the Mac's language)"), "project": projectArg]),
+             annotations: .init(destructiveHint: true)),
+        Tool(name: "ripple_delete", description: "Remove a time range from every track and close the gap; text overlays inside it go, later ones shift.",
+             inputSchema: schema(["start": num("Timeline start in seconds"), "end": num("Timeline end in seconds"), "project": projectArg], required: ["start", "end"]), annotations: .init(destructiveHint: true)),
         Tool(name: "remove_captions", description: "Delete the captions of one group, or every caption when no group is given. Titles added with add_text stay.",
              inputSchema: schema(["group": str("Caption group id prefix from add_captions or inspect_timeline (optional)"), "project": projectArg]), annotations: .init(destructiveHint: true)),
         Tool(name: "remove_texts", description: "Delete text overlays by id.",
@@ -155,6 +167,14 @@ enum EditMaxTools {
             return try payload(try await x.getTranscript(asset: s("asset"), clip: s("clip"), language: s("language")))
         case "add_captions":
             return try payload(try await x.addCaptions(clip: s("clip"), preset: s("preset"), maxWords: i("max_words"), language: s("language")))
+        case "detect_silence":
+            return try payload(try await x.detectSilence(clip: s("clip"), thresholdDb: d("threshold_db") ?? -38, minDuration: d("min_duration") ?? 0.6, padding: d("padding") ?? 0.15))
+        case "remove_silence":
+            return try payload(try await x.removeSilence(clip: s("clip"), thresholdDb: d("threshold_db") ?? -38, minDuration: d("min_duration") ?? 0.6, padding: d("padding") ?? 0.15))
+        case "remove_words":
+            return try payload(try await x.removeWords(clip: s("clip"), words: list("words").isEmpty ? nil : list("words"), language: s("language")))
+        case "ripple_delete":
+            return try payload(try x.rippleDelete(start: try reqNum("start"), end: try reqNum("end")))
         case "remove_captions":
             return message("Removed \(try x.removeCaptions(group: s("group"))) caption(s)")
         case "remove_texts":

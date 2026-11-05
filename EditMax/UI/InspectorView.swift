@@ -196,6 +196,20 @@ struct TextInspector: View {
 }
 
 extension ProjectInspector {
+    private enum CleanupKind { case silence, fillers }
+    private func cleanup(_ kind: CleanupKind) {
+        cleanupBusy = true; cleanupStatus = kind == .silence ? "Listening for silence…" : "Transcribing…"
+        Task { @MainActor in
+            defer { cleanupBusy = false }
+            do {
+                let x = ToolExecutor(document: document, origin: .user)
+                let r = kind == .silence ? try await x.removeSilence(clip: nil, thresholdDb: -38, minDuration: 0.6, padding: 0.15) : try await x.removeWords(clip: nil, words: nil, language: nil)
+                let what = kind == .silence ? "\(r.ranges.count) silence\(r.ranges.count == 1 ? "" : "s")" : "\(r.words?.count ?? 0) filler word\((r.words?.count ?? 0) == 1 ? "" : "s")"
+                cleanupStatus = r.ranges.isEmpty ? "Nothing to remove." : "Removed \(what), \(String(format: "%.1f", r.removedSeconds)) s. Timeline is now \(Timecode.string(r.duration))."
+            } catch { cleanupStatus = error.localizedDescription }
+        }
+    }
+
     private func addCaptions() {
         captionBusy = true; captionStatus = "Transcribing…"
         Task { @MainActor in
@@ -215,6 +229,8 @@ struct ProjectInspector: View {
     @State private var captionPreset = "subtitle"
     @State private var captionBusy = false
     @State private var captionStatus: String?
+    @State private var cleanupBusy = false
+    @State private var cleanupStatus: String?
     var body: some View {
         let p = document.project
         let captionCount = p.texts.filter(\.isCaption).count
@@ -233,6 +249,14 @@ struct ProjectInspector: View {
                     _ = try? ToolExecutor(document: document, origin: .user).addText(newText, start: 0, duration: 3, fontSize: nil, colorHex: nil, x: nil, y: nil)
                     newText = ""
                 }.pointer()
+            }
+            Section("Cleanup") {
+                HStack {
+                    Button(cleanupBusy ? "Working…" : "Remove silence") { cleanup(.silence) }.disabled(cleanupBusy || p.allClips.isEmpty).pointer()
+                    Button("Remove filler words") { cleanup(.fillers) }.disabled(cleanupBusy || p.allClips.isEmpty).pointer()
+                }
+                Text(cleanupStatus ?? "Cuts moments where nothing is audible (over 0.6 s) or spoken fillers (um, uh, hmm…) from every track and closes the gaps. Do this before captions.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Section("Captions") {
                 Picker("Style", selection: $captionPreset) { ForEach(CaptionPresets.all, id: \.name) { Text($0.title).tag($0.name) } }.pointer()

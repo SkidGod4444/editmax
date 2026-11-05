@@ -37,8 +37,6 @@
 	<string>1</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>15.0</string>
-	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>EditMax turns the speech in your clips into captions. On older Macs without an on-device model, Apple's speech service does the recognition.</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>UTExportedTypeDeclarations</key>

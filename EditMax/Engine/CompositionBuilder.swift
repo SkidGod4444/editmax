@@ -64,16 +64,19 @@ enum CompositionBuilder {
         let videoComp = AVMutableVideoComposition()
         videoComp.renderSize = renderSize
         videoComp.frameDuration = CMTime(value: 1, timescale: CMTimeScale(max(1, project.settings.fps.rounded())))
-        var boundaries: Set<Double> = [0, total.seconds]
-        for (_, clips) in layerSources { for (c, _, _) in clips { boundaries.insert(c.start); boundaries.insert(c.end) } }
+        // Boundaries in composition ticks: clip edges that differ by less than a tick collapse to one, so the instructions
+        // tile [0, total] exactly (a gap or an empty range makes AVFoundation reject the whole composition, "Operation Stopped").
+        let q = { (s: Double) -> Int64 in CMTime(seconds: s, preferredTimescale: timescale).value }
+        var boundaries: Set<Int64> = [0, total.value]
+        for (_, clips) in layerSources { for (c, _, _) in clips { boundaries.insert(min(total.value, q(c.start))); boundaries.insert(min(total.value, q(c.end))) } }
         let times = boundaries.sorted()
         var instructions: [AVMutableVideoCompositionInstruction] = []
-        for (a, b) in zip(times, times.dropFirst()) where b - a > 0.0005 {
+        for (a, b) in zip(times, times.dropFirst()) where b > a {
             let inst = AVMutableVideoCompositionInstruction()
-            inst.timeRange = CMTimeRange(start: CMTime(seconds: a, preferredTimescale: timescale), end: CMTime(seconds: b, preferredTimescale: timescale))
+            inst.timeRange = CMTimeRange(start: CMTime(value: a, timescale: timescale), end: CMTime(value: b, timescale: timescale))
             var layers: [AVMutableVideoCompositionLayerInstruction] = []
             for (compTrack, clips) in layerSources.reversed() {  // last project track = top of stack
-                guard let (clip, size, pref) = clips.first(where: { $0.0.start <= a + 0.0005 && $0.0.end >= b - 0.0005 }) else { continue }
+                guard let (clip, size, pref) = clips.first(where: { q($0.0.start) <= a && q($0.0.end) >= b }) else { continue }
                 let li = AVMutableVideoCompositionLayerInstruction(assetTrack: compTrack)
                 li.setTransform(fitTransform(naturalSize: size, preferred: pref, into: renderSize), at: .zero)
                 li.setOpacity(Float(clip.opacity), at: .zero)

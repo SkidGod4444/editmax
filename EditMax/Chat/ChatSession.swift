@@ -177,7 +177,8 @@ final class ChatSession: ObservableObject {
     Reply briefly: say what you did in one or two sentences, use a short bullet list when there are several changes, give timecodes as mm:ss. \
     Before removing more than one clip, or restoring an old snapshot, confirm with the user unless they clearly asked for exactly that. \
     Captions: add_captions transcribes on this Mac and adds timed lines (presets subtitle, boxed, bold, outline, minimal, title); get_transcript gives the words with times; \
-    remove_captions clears them. Long files take a while to transcribe the first time.
+    remove_captions clears them. Long files take a while to transcribe the first time. \
+    Cleanup: detect_silence lists quiet stretches, remove_silence and remove_words (fillers like um/uh) cut them from every track and close the gaps; do cleanup before captions.
     """
 
     private var instructions: String {

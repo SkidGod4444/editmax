@@ -22,7 +22,8 @@ Working:
 - Timeline: video/audio tracks, clip move/split/trim/delete, speed, volume, opacity, close gaps, text overlays
 - Live preview with AVPlayer + Core Animation overlays; frame stepping
 - Export to H.264/AAC MP4 (`File > Export Video…`, ⌘E, or the `export_video` tool), verified with ffprobe
-- MCP server on `http://127.0.0.1:19790/mcp` (port and token in `~/Library/Application Support/EditMax/mcp.json`), 22 tools
+- MCP server on `http://127.0.0.1:19790/mcp` (port and token in `~/Library/Application Support/EditMax/mcp.json`), 26 tools
+- Cleanup: remove silence (from the waveform) and filler words (from the transcript) with ripple deletes across every track
 - Captions: on-device transcription with word timings (Apple SpeechAnalyzer on macOS 26+; SFSpeechRecognizer on macOS 15–25, on-device
   where the Mac has the model, else Apple's servers), six text presets, one click or one tool call
 - Timeline: frame thumbnails and a waveform band in video clips, full waveforms in audio clips (peaks cached per file in
@@ -39,7 +40,7 @@ Working:
 - codemax auto-update: the latest GitHub release is installed on its own after a health check, rolled back when it breaks
 - Debug logs (`~/Library/Application Support/EditMax/logs/`) and “Export diagnostics…” in the Agents tab
 
-Not yet built: transitions, color grading, silence and filler-word removal, keyframes, project templates,
+Not yet built: transitions, color grading, keyframes, project templates,
 asset copying into a project bundle (assets are referenced by path + security bookmark).
 
 ## Build
@@ -66,7 +67,17 @@ claude mcp add --transport http editmax http://127.0.0.1:19790/mcp --header "Aut
 Tools: `list_projects`, `inspect_timeline`, `list_assets`, `import_media`, `insert_clip`, `split_clip`, `move_clip`,
 `trim_clip`, `remove_clips`, `set_clip_properties`, `close_gaps`, `add_text`, `remove_texts`, `list_history`,
 `restore_snapshot`, `set_playhead`, `capture_frame`, `export_video`, `set_project_settings`, `get_transcript`, `add_captions`,
-`remove_captions`.
+`remove_captions`, `detect_silence`, `remove_silence`, `remove_words`, `ripple_delete`.
+
+## Cleanup
+
+Inspector → Cleanup, or the tools. `SilenceDetector` walks the cached waveform peaks (100/s) for runs under a threshold
+(default −38 dB below the loudest peak), keeps 0.15 s of air on each side. A moment counts as silent only when every
+audible clip playing there is quiet (at least 0.6 s of it), so a pause in the speech stays where music or a second voice
+runs underneath; pass `clip` to cut one clip's own pauses instead. `remove_words` takes the
+transcript's word timings for fillers (um, uh, hmm, er…; pass your own list). Both end in `Project.rippleDelete`, which
+removes the range from every track (splitting or trimming clips), drops text inside it and shifts later text, so a video
+with a separate voice track stays in sync. `ripple_delete` exposes the same cut for any range. Do cleanup before captions.
 
 ## Captions
 

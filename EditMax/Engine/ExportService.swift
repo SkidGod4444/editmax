@@ -39,7 +39,11 @@ enum ExportService {
             }
         }
         defer { poll.cancel() }
-        try await session.export(to: url, as: .mp4)
+        do { try await session.export(to: url, as: .mp4) } catch {
+            let ns = error as NSError
+            DebugLog.event("export-failed", ["code": ns.code, "domain": ns.domain, "description": ns.localizedDescription, "reason": ns.localizedFailureReason ?? "", "info": "\(ns.userInfo)".prefix(600).description])
+            throw EditError.invalid("Export failed (\(ns.domain) \(ns.code)): \(ns.localizedDescription). \(ns.localizedFailureReason ?? "")")
+        }
         progress?(1)
         let bytes = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
         return Result(path: url.path, duration: out.duration.seconds, bytes: bytes)

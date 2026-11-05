@@ -281,6 +281,7 @@ enum UIDriver {
         guard let ctx = CGContext(data: nil, width: Int(size.width * scale), height: Int(size.height * scale), bitsPerComponent: 8, bytesPerRow: 0,
                                   space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue) else { throw EditError.invalid("cannot create bitmap") }
         ctx.scaleBy(x: scale, y: scale)
+        ctx.translateBy(x: 0, y: size.height); ctx.scaleBy(x: 1, y: -1)   // CGContext is bottom-up; keep the image upright
         layer.render(in: ctx)
         guard let cg = ctx.makeImage() else { throw EditError.invalid("cannot render window") }
         return cg

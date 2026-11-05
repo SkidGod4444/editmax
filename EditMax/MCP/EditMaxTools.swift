@@ -83,6 +83,16 @@ enum EditMaxTools {
              inputSchema: schema(["kind": str("video or audio"), "name": str("Optional name (default V2, A2…)"), "project": projectArg], required: ["kind"])),
         Tool(name: "move_track", description: "Move a track to another row (0 = top). The top row covers the rows below it in the picture.",
              inputSchema: schema(["track": str("Track name or id prefix"), "row": int("Target row, 0 = top"), "project": projectArg], required: ["track", "row"])),
+        Tool(name: "ui_layout", description: "Where things are in the EditMax window, in window points (origin top-left): media rows (media.<file>), track headers (header.<name>, header.Text, header.<name>.mute/.hide), lanes (lane.<name>, lane.Text), clip and text bars (clip.<id>, text.<id>, with .left/.right trim handles), toolbar buttons, addtrack.video/audio, ruler, inspector buttons. Use the ids with ui_drag and ui_click to drive the real UI.",
+             inputSchema: schema(["prefix": str("Only ids starting with this (e.g. 'clip.')")]), annotations: .init(readOnlyHint: true)),
+        Tool(name: "ui_drag", description: "Drag with the mouse inside the EditMax window, from one element (or point) to another: move or trim a bar, drop a media row onto a lane, reorder track headers, scrub the ruler. Events are posted to EditMax's own window only. Check the result with inspect_timeline or ui_screenshot.",
+             inputSchema: schema(["from": .object(["description": .string("Element id from ui_layout, or {x, y} in window points")]), "to": .object(["description": .string("Element id or {x, y}")]),
+                                  "from_dx": num("Offset from the source centre, points (e.g. -40 to grab near a clip's left part)"), "from_dy": num("Offset, points"), "to_dx": num("Offset from the target centre"), "to_dy": num("Offset"),
+                                  "steps": int("Intermediate mouse moves (default 12)"), "hold_ms": int("Pause after mouse-down before moving (default 80)")], required: ["from", "to"])),
+        Tool(name: "ui_click", description: "Click an element (or point) in the EditMax window: buttons, a bar to select it, a header toggle. count 2 = double-click (e.g. a media row appends it).",
+             inputSchema: schema(["target": .object(["description": .string("Element id from ui_layout, or {x, y}")]), "dx": num("Offset, points"), "dy": num("Offset, points"), "count": int("Clicks (default 1)")], required: ["target"])),
+        Tool(name: "ui_screenshot", description: "The EditMax window as it looks now (this window's pixels only), as a PNG image.",
+             inputSchema: schema(["max_width": int("Image width in pixels (default 1400)")]), annotations: .init(readOnlyHint: true)),
         Tool(name: "set_project_settings", description: "Change output resolution, frame rate or project name.",
              inputSchema: schema(["width": int("Pixels"), "height": int("Pixels"), "fps": num("Frames per second"), "name": str("Project name"), "project": projectArg])),
     ]
@@ -194,6 +204,20 @@ enum EditMaxTools {
         case "export_video":
             let preset = ExportService.Preset.allCases.first { $0.rawValue.lowercased().hasPrefix((s("preset") ?? "high").lowercased()) } ?? .high
             return try payload(try await x.exportVideo(to: try req("path"), preset: preset))
+        case "ui_layout":
+            return try payload(try UIDriver.layout(prefix: s("prefix")))
+        case "ui_drag":
+            let from = try UIDriver.resolve(a["from"], dx: d("from_dx") ?? 0, dy: d("from_dy") ?? 0)
+            let to = try UIDriver.resolve(a["to"], dx: d("to_dx") ?? 0, dy: d("to_dy") ?? 0)
+            let n = try await UIDriver.drag(from: from, to: to, steps: i("steps") ?? 12, holdMs: i("hold_ms") ?? 80)
+            return message("Dragged from (\(Int(from.x)), \(Int(from.y))) to (\(Int(to.x)), \(Int(to.y))) with \(n) mouse events")
+        case "ui_click":
+            let p = try UIDriver.resolve(a["target"], dx: d("dx") ?? 0, dy: d("dy") ?? 0)
+            try await UIDriver.click(at: p, count: i("count") ?? 1)
+            return message("Clicked (\(Int(p.x)), \(Int(p.y)))")
+        case "ui_screenshot":
+            let shot = try await UIDriver.screenshot(maxWidth: i("max_width") ?? 1400)
+            return Payload(text: "Window (\(shot.png.count) bytes PNG, \(shot.method))", value: nil, image: shot.png)
         case "add_track":
             return try payload(try x.addTrack(kind: try req("kind"), name: s("name")))
         case "move_track":

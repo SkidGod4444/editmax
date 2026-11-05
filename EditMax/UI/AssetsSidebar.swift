@@ -19,7 +19,7 @@ struct AssetsSidebar: View {
                 }
                 Spacer()
                 Button { importing = true } label: { Image(systemName: "plus").font(.system(size: 12, weight: .semibold)) }
-                    .buttonStyle(.plain).foregroundStyle(.secondary).focusable(false).help("Import media (or drop files here)").pointer()
+                    .buttonStyle(.plain).foregroundStyle(.secondary).focusable(false).help("Import media (or drop files here)").pointer().uiFrame("media.import")
             }
             .padding(.horizontal, 12).padding(.vertical, 8)
             Divider()
@@ -50,6 +50,7 @@ struct AssetsSidebar: View {
                         .onHover { hovered = $0 ? asset.id : (hovered == asset.id ? nil : hovered) }
                         .help("Drag onto the timeline, or double-click to append")
                         .pointer()
+                        .uiFrame("media.\(asset.name)")
                     }
                 }
                 .padding(6)

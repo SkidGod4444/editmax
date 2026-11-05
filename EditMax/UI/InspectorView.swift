@@ -259,8 +259,8 @@ struct ProjectInspector: View {
             }
             Section("Cleanup") {
                 HStack {
-                    Button(cleanupBusy ? "Working…" : "Remove silence") { cleanup(.silence) }.disabled(cleanupBusy || p.allClips.isEmpty).pointer()
-                    Button("Remove filler words") { cleanup(.fillers) }.disabled(cleanupBusy || p.allClips.isEmpty).pointer()
+                    Button(cleanupBusy ? "Working…" : "Remove silence") { cleanup(.silence) }.disabled(cleanupBusy || p.allClips.isEmpty).pointer().uiFrame("inspector.removeSilence")
+                    Button("Remove filler words") { cleanup(.fillers) }.disabled(cleanupBusy || p.allClips.isEmpty).pointer().uiFrame("inspector.removeFillers")
                 }
                 Text(cleanupStatus ?? cleanupHint)
                     .font(.caption).foregroundStyle(.secondary)

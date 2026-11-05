@@ -53,7 +53,7 @@ struct TimelineView: View {
         HStack(spacing: 10) {
             HStack(spacing: 2) {
                 Button { player.step(frames: -1, fps: document.project.settings.fps) } label: { Image(systemName: "backward.frame") }.help("Previous frame").pointer()
-                Button { player.togglePlay() } label: { Image(systemName: player.isPlaying ? "pause.fill" : "play.fill").frame(width: 18) }.keyboardShortcut(.space, modifiers: []).help("Play or pause (space)").pointer()
+                Button { player.togglePlay() } label: { Image(systemName: player.isPlaying ? "pause.fill" : "play.fill").frame(width: 18) }.keyboardShortcut(.space, modifiers: []).help("Play or pause (space)").pointer().uiFrame("toolbar.play")
                 Button { player.step(frames: 1, fps: document.project.settings.fps) } label: { Image(systemName: "forward.frame") }.help("Next frame").pointer()
             }
             .font(.system(size: 12))
@@ -64,9 +64,9 @@ struct TimelineView: View {
             .frame(width: 170, alignment: .leading)
             Divider().frame(height: 14)
             HStack(spacing: 4) {
-                Button("Split", systemImage: "scissors") { splitAtPlayhead() }.keyboardShortcut("s", modifiers: []).disabled(state.selectedClipIDs.isEmpty).help("Split the selected clip at the playhead (S)").pointer()
-                Button("Delete", systemImage: "trash") { deleteSelection() }.keyboardShortcut(.delete, modifiers: []).disabled(state.selectedClipIDs.isEmpty && state.selectedTextID == nil).help("Delete the selection (⌫)").pointer()
-                Button("Close gaps", systemImage: "arrow.left.and.line.vertical.and.arrow.right") { closeGaps() }.help("Remove the empty space between clips").pointer()
+                Button("Split", systemImage: "scissors") { splitAtPlayhead() }.keyboardShortcut("s", modifiers: []).disabled(state.selectedClipIDs.isEmpty).help("Split the selected clip at the playhead (S)").pointer().uiFrame("toolbar.split")
+                Button("Delete", systemImage: "trash") { deleteSelection() }.keyboardShortcut(.delete, modifiers: []).disabled(state.selectedClipIDs.isEmpty && state.selectedTextID == nil).help("Delete the selection (⌫)").pointer().uiFrame("toolbar.delete")
+                Button("Close gaps", systemImage: "arrow.left.and.line.vertical.and.arrow.right") { closeGaps() }.help("Remove the empty space between clips").pointer().uiFrame("toolbar.closeGaps")
             }
             .font(.system(size: 11))
             Spacer()
@@ -106,10 +106,10 @@ struct TimelineView: View {
                     Spacer(minLength: 2)
                     if track.kind == .video {
                         Button { toggleHidden(track) } label: { Image(systemName: track.isHidden ? "eye.slash" : "eye").frame(width: 16) }
-                            .buttonStyle(.borderless).font(.system(size: 10)).foregroundStyle(track.isHidden ? Color.orange : Color.secondary).help(track.isHidden ? "Hidden; click to show" : "Hide this track").pointer()
+                            .buttonStyle(.borderless).font(.system(size: 10)).foregroundStyle(track.isHidden ? Color.orange : Color.secondary).help(track.isHidden ? "Hidden; click to show" : "Hide this track").pointer().uiFrame("header.\(track.name).hide")
                     }
                     Button { toggleMute(track) } label: { Image(systemName: track.isMuted ? "speaker.slash" : "speaker.wave.2").frame(width: 16) }
-                        .buttonStyle(.borderless).font(.system(size: 10)).foregroundStyle(track.isMuted ? Color.orange : Color.secondary).help(track.isMuted ? "Muted; click to unmute" : "Mute this track").pointer()
+                        .buttonStyle(.borderless).font(.system(size: 10)).foregroundStyle(track.isMuted ? Color.orange : Color.secondary).help(track.isMuted ? "Muted; click to unmute" : "Mute this track").pointer().uiFrame("header.\(track.name).mute")
                 }
                 .padding(.leading, 6).padding(.trailing, 6).frame(height: rowHeight)
                 .contentShape(Rectangle())
@@ -122,6 +122,7 @@ struct TimelineView: View {
                 }
                 .onDrop(of: [.utf8PlainText], delegate: TrackDrop(onHover: { trackDropTarget = $0 ? track.id : nil }, onDrop: { providers in dropRow(providers, onto: track.id) }))
                 .help("Drag to reorder tracks. The top row covers the rows below it.")
+                .uiFrame("header.\(track.name)")
     }
 
     private var textHeader: some View {
@@ -144,12 +145,13 @@ struct TimelineView: View {
         }
         .onDrop(of: [.utf8PlainText], delegate: TrackDrop(onHover: { trackDropTarget = $0 ? id : nil }, onDrop: { providers in dropRow(providers, onto: id) }))
         .help("Drag to move the Text lane. Text always draws over the picture.")
+        .uiFrame("header.Text")
     }
 
     private var addTrackRow: some View {
             HStack(spacing: 6) {
-                Button { addTrack(.video) } label: { Label("Video", systemImage: "plus").font(.system(size: 11)).fixedSize() }.help("Add a video track").pointer()
-                Button { addTrack(.audio) } label: { Label("Audio", systemImage: "plus").font(.system(size: 11)).fixedSize() }.help("Add an audio track").pointer()
+                Button { addTrack(.video) } label: { Label("Video", systemImage: "plus").font(.system(size: 11)).fixedSize() }.help("Add a video track").pointer().uiFrame("addtrack.video")
+                Button { addTrack(.audio) } label: { Label("Audio", systemImage: "plus").font(.system(size: 11)).fixedSize() }.help("Add an audio track").pointer().uiFrame("addtrack.audio")
             }
             .buttonStyle(.plain).labelStyle(.titleAndIcon).foregroundStyle(.secondary)
             .padding(.horizontal, 10).frame(height: 30)
@@ -203,12 +205,14 @@ struct TimelineView: View {
                     .frame(height: rowHeight)
                     .background(dropLane == track.id ? Color.accentColor.opacity(0.15) : Color.clear)
                     .onDrop(of: [.utf8PlainText, .fileURL], delegate: LaneDrop(lane: track.id, onHover: { dropLane = $0 ? track.id : nil }, onDrop: { providers, x in drop(providers, track: track, x: x) }))
+                    .uiFrame("lane.\(track.name)")
                 case .text:
                     ZStack(alignment: .leading) {
                         Color.clear.contentShape(Rectangle()).onTapGesture { location in seek(x: location.x); state.selectedClipIDs = []; state.selectedTextID = nil }
                         ForEach(document.project.texts) { t in textView(t) }
                     }
                     .frame(height: rowHeight)
+                    .uiFrame("lane.Text")
                 }
                 Divider()
             }
@@ -318,13 +322,14 @@ struct TimelineView: View {
         }
         .contentShape(Rectangle())
         .gesture(DragGesture(minimumDistance: 0).onChanged { v in seek(x: v.location.x) })
+        .uiFrame("ruler")
     }
 
     private func clipView(_ clip: Clip, track: Track) -> some View {
         let selected = state.selectedClipIDs.contains(clip.id)
         let asset = document.project.asset(clip.assetID)
         let x = ToolExecutor(document: document, origin: .user)
-        return TimelineBar(id: clip.id, start: clip.start, duration: clip.duration, pps: pps, height: rowHeight - 10,
+        return TimelineBar(id: clip.id, uiID: "clip.\(clip.id.short)", start: clip.start, duration: clip.duration, pps: pps, height: rowHeight - 10,
                            minStart: clip.start - clip.sourceIn / clip.speed,
                            maxEnd: clip.start + ((asset?.duration ?? clip.end) - clip.sourceIn) / clip.speed,
                            help: "\(clip.name)  \(Timecode.string(clip.start)) → \(Timecode.string(clip.end))",
@@ -344,7 +349,7 @@ struct TimelineView: View {
         func edit(_ label: String, _ body: @escaping (inout TextOverlay) -> Void) {
             document.apply(label, origin: .user) { p in if let i = p.texts.firstIndex(where: { $0.id == t.id }) { body(&p.texts[i]) } }
         }
-        return TimelineBar(id: t.id, start: t.start, duration: t.duration, pps: pps, height: 30, minStart: 0, maxEnd: .infinity,
+        return TimelineBar(id: t.id, uiID: "text.\(t.id.short)", start: t.start, duration: t.duration, pps: pps, height: 30, minStart: 0, maxEnd: .infinity,
                            help: "\(t.text)  \(Timecode.string(t.start)) → \(Timecode.string(t.end))",
                            onSelect: { state.selectedTextID = t.id; state.selectedClipIDs = [] },
                            onMove: { s in edit("Move text to \(s)s") { $0.start = s } },
@@ -473,6 +478,7 @@ private struct TextBody: View, Equatable {
 /// whole timeline; the move or trim is committed once, on release. Edges (8 pt) trim, the middle moves.
 private struct TimelineBar<Content: View>: View {
     let id: UUID
+    let uiID: String
     let start: Double
     let duration: Double
     let pps: CGFloat
@@ -499,8 +505,9 @@ private struct TimelineBar<Content: View>: View {
         let w = max(4, fullW - trimL + trimR)
         content()
             .frame(width: w, height: height)
-            .overlay(alignment: .leading) { handle(leading: true) }
-            .overlay(alignment: .trailing) { handle(leading: false) }
+            .uiFrame(uiID)
+            .overlay(alignment: .leading) { handle(leading: true).uiFrame(uiID + ".left") }
+            .overlay(alignment: .trailing) { handle(leading: false).uiFrame(uiID + ".right") }
             .offset(x: CGFloat(start) * pps + trimL + max(-CGFloat(start) * pps, moveDX))
             .onTapGesture { onSelect() }
             .gesture(DragGesture(minimumDistance: 3)
@@ -519,7 +526,8 @@ private struct TimelineBar<Content: View>: View {
             .frame(width: active ? 3 : 8)
             .contentShape(Rectangle().inset(by: -2))
             .onHover { inside in if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() } }
-            .gesture(DragGesture(minimumDistance: 2)
+            // Measured in the window's space: the handle itself moves with the live trim, which would halve its own translation.
+            .gesture(DragGesture(minimumDistance: 2, coordinateSpace: .global)
                 .onChanged { v in trim = (leading, v.translation.width) }
                 .onEnded { v in
                     trim = nil

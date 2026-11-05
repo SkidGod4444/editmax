@@ -22,7 +22,7 @@ Working:
 - Timeline: video/audio tracks, clip move/split/trim/delete, speed, volume, opacity, close gaps, text overlays
 - Live preview with AVPlayer + Core Animation overlays; frame stepping
 - Export to H.264/AAC MP4 (`File > Export Video…`, ⌘E, or the `export_video` tool), verified with ffprobe
-- MCP server on `http://127.0.0.1:19790/mcp` (port and token in `~/Library/Application Support/EditMax/mcp.json`), 28 tools
+- MCP server on `http://127.0.0.1:19790/mcp` (port and token in `~/Library/Application Support/EditMax/mcp.json`), 32 tools
 - Cleanup: remove silence (from the waveform) and filler words (from the transcript) with ripple deletes across every track
 - Captions: on-device transcription with word timings (Apple SpeechAnalyzer on macOS 26+; SFSpeechRecognizer on macOS 15–25, on-device
   where the Mac has the model, else Apple's servers), six text presets, one click or one tool call
@@ -67,7 +67,21 @@ claude mcp add --transport http editmax http://127.0.0.1:19790/mcp --header "Aut
 Tools: `list_projects`, `inspect_timeline`, `list_assets`, `import_media`, `insert_clip`, `split_clip`, `move_clip`,
 `trim_clip`, `remove_clips`, `set_clip_properties`, `close_gaps`, `add_text`, `remove_texts`, `list_history`,
 `restore_snapshot`, `set_playhead`, `capture_frame`, `export_video`, `set_project_settings`, `get_transcript`, `add_captions`,
-`remove_captions`, `detect_silence`, `remove_silence`, `remove_words`, `ripple_delete`, `add_track`, `move_track`.
+`remove_captions`, `detect_silence`, `remove_silence`, `remove_words`, `ripple_delete`, `add_track`, `move_track`, `ui_layout`,
+`ui_drag`, `ui_click`, `ui_screenshot`.
+
+## Driving the real UI
+
+An agent can work the window itself, not only the model: `ui_layout` lists what is on screen with ids and window
+coordinates (media rows, track headers and their mute/hide toggles, lanes, clip and text bars with their trim handles,
+toolbar and inspector buttons, the ruler); `ui_drag` and `ui_click` post mouse events to EditMax's own window through the
+app's event queue (`NSApp.postEvent`, so nothing can reach another app and the real cursor stays put; SwiftUI gestures need the active app, so when
+EditMax is behind another app it is activated for that one gesture, keystrokes arriving meanwhile are dropped rather than
+applied, and the previous app gets the focus straight back); `ui_screenshot`
+returns the window's own pixels as a PNG through ScreenCaptureKit, filtered to that one window (never the screen around
+it; macOS asks for the Screen Recording permission once; without it the tool falls back to rendering the window's layer
+tree, which misses some inspector controls, and says so). Verified: moving and trimming bars, dropping a media row on a lane, reordering
+headers, clicking toolbar buttons. Views register themselves with `.uiFrame("id")` (`EditMax/MCP/UIDriver.swift`).
 
 ## Cleanup
 

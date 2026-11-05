@@ -37,6 +37,8 @@
 	<string>1</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>15.0</string>
+	<key>NSScreenCaptureUsageDescription</key>
+	<string>The ui_screenshot tool shows an agent the EditMax window. Only this window is captured, never the rest of the screen.</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>UTExportedTypeDeclarations</key>

@@ -57,7 +57,7 @@ enum EditMaxTools {
              inputSchema: schema(["clip": str("Clip id prefix (default: all clips with audio)"), "threshold_db": num("Quiet below this many dB under the loudest peak (default -38)"),
                                   "min_duration": num("Shortest silence to report, seconds (default 0.6)"), "padding": num("Seconds of silence kept on each side (default 0.15)"), "project": projectArg]),
              annotations: .init(readOnlyHint: true)),
-        Tool(name: "remove_silence", description: "Cut the quiet stretches out of the timeline (ripple: every track shifts, captions move with the content). Do this before adding captions. Same parameters as detect_silence.",
+        Tool(name: "remove_silence", description: "Cut the quiet stretches out of the timeline (ripple: every track shifts, captions move with the content). Hidden and muted tracks are not listened to but are still cut; the result lists them as ignoredTracks. Do this before adding captions. Same parameters as detect_silence.",
              inputSchema: schema(["clip": str("Clip id prefix (default: all clips with audio)"), "threshold_db": num("Default -38"), "min_duration": num("Default 0.6 s"), "padding": num("Default 0.15 s"), "project": projectArg]),
              annotations: .init(destructiveHint: true)),
         Tool(name: "remove_words", description: "Cut the moments where filler words are spoken (um, uh, hmm, er… by default), using the transcript's word timings; ripple delete across all tracks. Do this before adding captions.",
@@ -79,6 +79,10 @@ enum EditMaxTools {
              inputSchema: schema(["seconds": num("Timeline time"), "max_width": int("Image width in pixels (default 960)"), "project": projectArg], required: ["seconds"]), annotations: .init(readOnlyHint: true)),
         Tool(name: "export_video", description: "Render the whole timeline to an H.264/AAC MP4 at the project resolution. Blocks until done; expect roughly real time or faster.",
              inputSchema: schema(["path": str("Absolute output path ending in .mp4"), "preset": str("high (default), medium (720p) or low (480p)"), "project": projectArg], required: ["path"])),
+        Tool(name: "add_track", description: "Add a video or audio track. New tracks go to the bottom row; the top row covers the rows below it in the picture.",
+             inputSchema: schema(["kind": str("video or audio"), "name": str("Optional name (default V2, A2…)"), "project": projectArg], required: ["kind"])),
+        Tool(name: "move_track", description: "Move a track to another row (0 = top). The top row covers the rows below it in the picture.",
+             inputSchema: schema(["track": str("Track name or id prefix"), "row": int("Target row, 0 = top"), "project": projectArg], required: ["track", "row"])),
         Tool(name: "set_project_settings", description: "Change output resolution, frame rate or project name.",
              inputSchema: schema(["width": int("Pixels"), "height": int("Pixels"), "fps": num("Frames per second"), "name": str("Project name"), "project": projectArg])),
     ]
@@ -190,6 +194,10 @@ enum EditMaxTools {
         case "export_video":
             let preset = ExportService.Preset.allCases.first { $0.rawValue.lowercased().hasPrefix((s("preset") ?? "high").lowercased()) } ?? .high
             return try payload(try await x.exportVideo(to: try req("path"), preset: preset))
+        case "add_track":
+            return try payload(try x.addTrack(kind: try req("kind"), name: s("name")))
+        case "move_track":
+            return try payload(try x.moveTrack(try req("track"), toRow: Int(try reqNum("row"))))
         case "set_project_settings":
             try x.setProjectSettings(width: i("width"), height: i("height"), fps: d("fps"), name: s("name")); return message("Settings updated")
         default: throw MCPError.methodNotFound("Unknown tool \(name)")

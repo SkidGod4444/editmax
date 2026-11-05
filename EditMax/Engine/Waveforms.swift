@@ -83,11 +83,12 @@ enum WaveformExtractor {
 
 /// Peaks of one clip's source range as a filled envelope, mirrored around the middle and lightly smoothed.
 /// Draws nothing while the peaks are still being extracted.
-struct WaveformView: View {
+struct WaveformView: View, Equatable {
     let peaks: [Float]
     let sourceIn: Double
     let sourceOut: Double
     var color: Color = .white.opacity(0.7)
+    static func == (a: WaveformView, b: WaveformView) -> Bool { a.peaks.count == b.peaks.count && a.sourceIn == b.sourceIn && a.sourceOut == b.sourceOut && a.color == b.color }
 
     var body: some View {
         Canvas { ctx, size in

@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct TimelineView: View {
     @ObservedObject var document: EditMaxDocument
@@ -8,8 +9,12 @@ struct TimelineView: View {
     @ObservedObject private var thumbnails = ThumbnailStore.shared
     @State private var scroll = ScrollPosition()
     @State private var visibleX: ClosedRange<CGFloat> = 0...0
+    @State private var dropLane: UUID?          // lane under a drag, for the highlight (nil id = the default lane)
+    @State private var dropError: String?
+    @State private var trackDropTarget: UUID?   // header row a dragged track hovers over
+    @State private var hoveredHeader: UUID?
 
-    private let headerWidth: CGFloat = 124
+    private let headerWidth: CGFloat = 132
     private let rowHeight: CGFloat = 66
     private let rulerHeight: CGFloat = 24
 
@@ -32,7 +37,7 @@ struct TimelineView: View {
                                 tracksArea
                                 playhead
                             }
-                            .frame(width: contentWidth, alignment: .topLeading).frame(minHeight: geo.size.height, alignment: .topLeading)
+                            .frame(width: max(contentWidth, geo.size.width - headerWidth), alignment: .topLeading).frame(minHeight: geo.size.height, alignment: .topLeading)
                         }
                         .scrollPosition($scroll)
                         .onScrollGeometryChange(for: ClosedRange<CGFloat>.self) { g in g.contentOffset.x...(g.contentOffset.x + g.containerSize.width) } action: { _, new in visibleX = new }
@@ -45,19 +50,29 @@ struct TimelineView: View {
     }
 
     private var toolbar: some View {
-        HStack(spacing: 12) {
-            Button { player.togglePlay() } label: { Image(systemName: player.isPlaying ? "pause.fill" : "play.fill") }.keyboardShortcut(.space, modifiers: []).pointer()
-            Button { player.step(frames: -1, fps: document.project.settings.fps) } label: { Image(systemName: "backward.frame") }.pointer()
-            Button { player.step(frames: 1, fps: document.project.settings.fps) } label: { Image(systemName: "forward.frame") }.pointer()
-            Text(Timecode.string(player.currentTime, fps: document.project.settings.fps)).monospacedDigit().frame(width: 90, alignment: .leading)
-            Text("/ \(Timecode.string(document.project.duration, fps: document.project.settings.fps))").monospacedDigit().foregroundStyle(.secondary)
-            Divider().frame(height: 16)
-            Button("Split", systemImage: "scissors") { splitAtPlayhead() }.keyboardShortcut("s", modifiers: []).disabled(state.selectedClipIDs.isEmpty).pointer()
-            Button("Delete", systemImage: "trash") { deleteSelection() }.keyboardShortcut(.delete, modifiers: []).disabled(state.selectedClipIDs.isEmpty && state.selectedTextID == nil).pointer()
-            Button("Close gaps", systemImage: "arrow.left.and.line.vertical.and.arrow.right") { closeGaps() }.pointer()
+        HStack(spacing: 10) {
+            HStack(spacing: 2) {
+                Button { player.step(frames: -1, fps: document.project.settings.fps) } label: { Image(systemName: "backward.frame") }.help("Previous frame").pointer()
+                Button { player.togglePlay() } label: { Image(systemName: player.isPlaying ? "pause.fill" : "play.fill").frame(width: 18) }.keyboardShortcut(.space, modifiers: []).help("Play or pause (space)").pointer()
+                Button { player.step(frames: 1, fps: document.project.settings.fps) } label: { Image(systemName: "forward.frame") }.help("Next frame").pointer()
+            }
+            .font(.system(size: 12))
+            HStack(spacing: 4) {
+                Text(Timecode.string(player.currentTime, fps: document.project.settings.fps)).font(.system(size: 13, weight: .semibold, design: .rounded)).monospacedDigit()
+                Text("/ \(Timecode.string(document.project.duration, fps: document.project.settings.fps))").font(.system(size: 11, design: .rounded)).monospacedDigit().foregroundStyle(.secondary)
+            }
+            .frame(width: 170, alignment: .leading)
+            Divider().frame(height: 14)
+            HStack(spacing: 4) {
+                Button("Split", systemImage: "scissors") { splitAtPlayhead() }.keyboardShortcut("s", modifiers: []).disabled(state.selectedClipIDs.isEmpty).help("Split the selected clip at the playhead (S)").pointer()
+                Button("Delete", systemImage: "trash") { deleteSelection() }.keyboardShortcut(.delete, modifiers: []).disabled(state.selectedClipIDs.isEmpty && state.selectedTextID == nil).help("Delete the selection (⌫)").pointer()
+                Button("Close gaps", systemImage: "arrow.left.and.line.vertical.and.arrow.right") { closeGaps() }.help("Remove the empty space between clips").pointer()
+            }
+            .font(.system(size: 11))
             Spacer()
-            Slider(value: $state.pixelsPerSecond, in: 10...400).frame(width: 140)
-            Image(systemName: "magnifyingglass")
+            Button { state.pixelsPerSecond = max(10, state.pixelsPerSecond / 1.4) } label: { Image(systemName: "minus.magnifyingglass") }.help("Zoom out").pointer()
+            Slider(value: $state.pixelsPerSecond, in: 10...400).frame(width: 110).controlSize(.small)
+            Button { state.pixelsPerSecond = min(400, state.pixelsPerSecond * 1.4) } label: { Image(systemName: "plus.magnifyingglass") }.help("Zoom in").pointer()
         }
         .buttonStyle(.borderless)
         .padding(.horizontal, 10).padding(.vertical, 6)
@@ -66,46 +81,96 @@ struct TimelineView: View {
     private var headers: some View {
         VStack(spacing: 0) {
             Color.clear.frame(height: rulerHeight)
-            ForEach(document.project.tracks) { track in
-                HStack(spacing: 4) {
-                    Image(systemName: track.kind == .video ? "film" : "waveform").font(.caption2).foregroundStyle(.secondary)
-                    Text(track.name).font(.caption.bold()).lineLimit(1).fixedSize()
-                    Spacer()
-                    if track.kind == .video {
-                        Button { toggleHidden(track) } label: { Image(systemName: track.isHidden ? "eye.slash" : "eye") }.buttonStyle(.borderless).font(.caption).help("Show or hide this track").pointer()
-                    }
-                    Button { toggleMute(track) } label: { Image(systemName: track.isMuted ? "speaker.slash" : "speaker.wave.2") }.buttonStyle(.borderless).font(.caption).help("Mute or unmute this track").pointer()
+            Divider()
+            ForEach(document.project.rows) { row in
+                switch row {
+                case .text: textHeader
+                case .track(let track): trackHeader(track)
                 }
-                .padding(.horizontal, 8).frame(height: rowHeight)
                 Divider()
             }
-            HStack { Text("Text").font(.caption.bold()); Spacer() }.padding(.horizontal, 8).frame(height: rowHeight)
-            Divider()
-            HStack(spacing: 4) {
-                Button { addTrack(.video) } label: { Label("Video", systemImage: "plus").font(.caption2).fixedSize() }.help("Add a video track").pointer()
-                Button { addTrack(.audio) } label: { Label("Audio", systemImage: "plus").font(.caption2).fixedSize() }.help("Add an audio track").pointer()
-            }
-            .buttonStyle(.borderless).labelStyle(.titleAndIcon).padding(.horizontal, 8).frame(height: 28)
+            addTrackRow
             Spacer(minLength: 0)
         }
         .background(Color(nsColor: .controlBackgroundColor))
+        .overlay(alignment: .trailing) { Divider() }
+    }
+
+    private func trackHeader(_ track: Track) -> some View {
+                HStack(spacing: 6) {
+                    Image(systemName: "line.3.horizontal").font(.system(size: 9)).foregroundStyle(hoveredHeader == track.id ? .secondary : .quaternary)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(track.name).font(.system(size: 12, weight: .semibold)).lineLimit(1).fixedSize()
+                        Text(track.kind == .video ? "Video" : "Audio").font(.system(size: 9)).foregroundStyle(.tertiary)
+                    }
+                    Spacer(minLength: 2)
+                    if track.kind == .video {
+                        Button { toggleHidden(track) } label: { Image(systemName: track.isHidden ? "eye.slash" : "eye").frame(width: 16) }
+                            .buttonStyle(.borderless).font(.system(size: 10)).foregroundStyle(track.isHidden ? Color.orange : Color.secondary).help(track.isHidden ? "Hidden; click to show" : "Hide this track").pointer()
+                    }
+                    Button { toggleMute(track) } label: { Image(systemName: track.isMuted ? "speaker.slash" : "speaker.wave.2").frame(width: 16) }
+                        .buttonStyle(.borderless).font(.system(size: 10)).foregroundStyle(track.isMuted ? Color.orange : Color.secondary).help(track.isMuted ? "Muted; click to unmute" : "Mute this track").pointer()
+                }
+                .padding(.leading, 6).padding(.trailing, 6).frame(height: rowHeight)
+                .contentShape(Rectangle())
+                .onHover { hoveredHeader = $0 ? track.id : (hoveredHeader == track.id ? nil : hoveredHeader) }
+                .background(trackDropTarget == track.id ? Color.accentColor.opacity(0.15) : hoveredHeader == track.id ? Color.primary.opacity(0.04) : Color.clear)
+                .overlay(alignment: .top) { if trackDropTarget == track.id { Rectangle().fill(Color.accentColor).frame(height: 2) } }
+                // Drag a header onto another to reorder: the top row covers the rows below it in the picture.
+                .onDrag { NSItemProvider(object: TrackDrag.string(track.id) as NSString) } preview: {
+                    Label(track.name, systemImage: track.kind == .video ? "film" : "waveform").padding(6).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
+                }
+                .onDrop(of: [.utf8PlainText], delegate: TrackDrop(onHover: { trackDropTarget = $0 ? track.id : nil }, onDrop: { providers in dropRow(providers, onto: track.id) }))
+                .help("Drag to reorder tracks. The top row covers the rows below it.")
+    }
+
+    private var textHeader: some View {
+        let id = Project.textRowID
+        return HStack(spacing: 6) {
+            Image(systemName: "line.3.horizontal").font(.system(size: 9)).foregroundStyle(hoveredHeader == id ? .secondary : .quaternary)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Text").font(.system(size: 12, weight: .semibold))
+                Text("Titles & captions").font(.system(size: 9)).foregroundStyle(.tertiary)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 6).frame(height: rowHeight)
+        .contentShape(Rectangle())
+        .onHover { hoveredHeader = $0 ? id : (hoveredHeader == id ? nil : hoveredHeader) }
+        .background(trackDropTarget == id ? Color.accentColor.opacity(0.15) : hoveredHeader == id ? Color.primary.opacity(0.04) : Color.clear)
+        .overlay(alignment: .top) { if trackDropTarget == id { Rectangle().fill(Color.accentColor).frame(height: 2) } }
+        .onDrag { NSItemProvider(object: TrackDrag.string(id) as NSString) } preview: {
+            Label("Text", systemImage: "textformat").padding(6).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
+        }
+        .onDrop(of: [.utf8PlainText], delegate: TrackDrop(onHover: { trackDropTarget = $0 ? id : nil }, onDrop: { providers in dropRow(providers, onto: id) }))
+        .help("Drag to move the Text lane. Text always draws over the picture.")
+    }
+
+    private var addTrackRow: some View {
+            HStack(spacing: 6) {
+                Button { addTrack(.video) } label: { Label("Video", systemImage: "plus").font(.system(size: 11)).fixedSize() }.help("Add a video track").pointer()
+                Button { addTrack(.audio) } label: { Label("Audio", systemImage: "plus").font(.system(size: 11)).fixedSize() }.help("Add an audio track").pointer()
+            }
+            .buttonStyle(.plain).labelStyle(.titleAndIcon).foregroundStyle(.secondary)
+            .padding(.horizontal, 10).frame(height: 30)
     }
 
     /// Time ticks and lane stripes behind the clips, covering the full pane height.
     private var grid: some View {
         Canvas { ctx, size in
             let step: Double = pps >= 120 ? 0.5 : pps >= 40 ? 1 : pps >= 20 ? 2 : 5
-            var y = rulerHeight
-            var lane = 0
-            while y < size.height {   // alternating lane stripes continue below the last track
-                if lane % 2 == 1 { ctx.fill(Path(CGRect(x: 0, y: y, width: size.width, height: rowHeight)), with: .color(.primary.opacity(0.03))) }
-                y += rowHeight + 1; lane += 1
+            let rows = document.project.tracks.count + 1
+            let lanesBottom = rulerHeight + CGFloat(rows) * (rowHeight + 1)
+            // Lanes carry a faint fill; the space below them stays bare so the stack has a visible end.
+            for lane in 0..<rows {
+                let y = rulerHeight + CGFloat(lane) * (rowHeight + 1)
+                ctx.fill(Path(CGRect(x: 0, y: y, width: size.width, height: rowHeight)), with: .color(.primary.opacity(lane % 2 == 1 ? 0.035 : 0.02)))
             }
             var t = 0.0
             while CGFloat(t) * pps < size.width {
                 let x = CGFloat(t) * pps
                 let major = t.truncatingRemainder(dividingBy: step * 5) == 0
-                ctx.stroke(Path { $0.move(to: CGPoint(x: x, y: rulerHeight)); $0.addLine(to: CGPoint(x: x, y: size.height)) }, with: .color(.primary.opacity(major ? 0.12 : 0.05)))
+                ctx.stroke(Path { $0.move(to: CGPoint(x: x, y: rulerHeight)); $0.addLine(to: CGPoint(x: x, y: lanesBottom)) }, with: .color(.primary.opacity(major ? 0.10 : 0.045)))
                 t += step
             }
         }
@@ -128,36 +193,128 @@ struct TimelineView: View {
     private var tracksArea: some View {
         VStack(spacing: 0) {
             ruler.frame(height: rulerHeight)
-            ForEach(document.project.tracks) { track in
-                ZStack(alignment: .leading) {
-                    Color.clear.contentShape(Rectangle()).onTapGesture { location in seek(x: location.x); state.selectedClipIDs = []; state.selectedTextID = nil }
-                    ForEach(track.clips) { clip in clipView(clip, track: track) }
+            ForEach(document.project.rows) { row in
+                switch row {
+                case .track(let track):
+                    ZStack(alignment: .leading) {
+                        Color.clear.contentShape(Rectangle()).onTapGesture { location in seek(x: location.x); state.selectedClipIDs = []; state.selectedTextID = nil }
+                        ForEach(track.clips) { clip in clipView(clip, track: track) }
+                    }
+                    .frame(height: rowHeight)
+                    .background(dropLane == track.id ? Color.accentColor.opacity(0.15) : Color.clear)
+                    .onDrop(of: [.utf8PlainText, .fileURL], delegate: LaneDrop(lane: track.id, onHover: { dropLane = $0 ? track.id : nil }, onDrop: { providers, x in drop(providers, track: track, x: x) }))
+                case .text:
+                    ZStack(alignment: .leading) {
+                        Color.clear.contentShape(Rectangle()).onTapGesture { location in seek(x: location.x); state.selectedClipIDs = []; state.selectedTextID = nil }
+                        ForEach(document.project.texts) { t in textView(t) }
+                    }
+                    .frame(height: rowHeight)
                 }
-                .frame(height: rowHeight)
                 Divider()
             }
-            ZStack(alignment: .leading) {
-                Color.clear.contentShape(Rectangle()).onTapGesture { location in seek(x: location.x); state.selectedClipIDs = []; state.selectedTextID = nil }
-                ForEach(document.project.texts) { t in textView(t) }
-            }
-            .frame(height: rowHeight)
-            Divider()
-            // Below the last lane: still the timeline (click to seek, deselect).
+            // Below the last lane: still the timeline (click to seek, deselect, drop onto the default track).
             Color.clear.contentShape(Rectangle()).frame(maxHeight: .infinity)
                 .onTapGesture { location in seek(x: location.x); state.selectedClipIDs = []; state.selectedTextID = nil }
+                .onDrop(of: [.utf8PlainText, .fileURL], delegate: LaneDrop(lane: nil, onHover: { _ in }, onDrop: { providers, x in drop(providers, track: nil, x: x) }))
+        }
+        .alert("Could not add to timeline", isPresented: .init(get: { dropError != nil }, set: { if !$0 { dropError = nil } })) { Button("OK") {} } message: { Text(dropError ?? "") }
+    }
+
+    /// A media-panel asset or Finder files dropped on a lane: placed at the drop time on that track (a track of the right
+    /// kind when the lane does not match, e.g. audio onto a video lane). A drop inside an existing clip lands after it.
+    private func drop(_ providers: [NSItemProvider], track: Track?, x: CGFloat) -> Bool {
+        let time = max(0, (Double(x / pps) * 100).rounded() / 100)
+        DebugLog.event("drop", ["lane": track?.name ?? "default", "x": Double(x), "time": time, "types": providers.flatMap(\.registeredTypeIdentifiers).joined(separator: ",")])
+        var handled = false
+        for p in providers {
+            if p.hasItemConformingToTypeIdentifier(UTType.utf8PlainText.identifier) {
+                handled = true
+                p.loadItem(forTypeIdentifier: UTType.utf8PlainText.identifier) { item, _ in
+                    let s = (item as? Data).flatMap { String(data: $0, encoding: .utf8) } ?? (item as? String)
+                    guard let s, let id = AssetDrag.id(from: s) else { return }   // a track-header drag has no asset id and is ignored
+                    Task { @MainActor in place(assetID: id, track: track, at: time) }
+                }
+            } else if p.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+                handled = true
+                p.loadItem(forTypeIdentifier: UTType.fileURL.identifier) { item, _ in
+                    guard let data = item as? Data, let url = URL(dataRepresentation: data, relativeTo: nil) else { return }
+                    Task { @MainActor in
+                        do {
+                            let imported = try await ToolExecutor(document: document, origin: .user).importMedia(paths: [url.path])
+                            if let first = imported.first, let id = UUID(uuidString: first.id) ?? document.project.assets.first(where: { $0.path == url.path })?.id { place(assetID: id, track: track, at: time) }
+                        } catch { dropError = error.localizedDescription }
+                    }
+                }
+            }
+        }
+        return handled
+    }
+
+    private func place(assetID: UUID, track: Track?, at time: Double) {
+        guard let asset = document.project.asset(assetID) else { return }
+        let kind: TrackKind = asset.kind == .audio ? .audio : .video
+        let target = (track?.kind == kind ? track : nil) ?? document.project.tracks.first(where: { $0.kind == kind })
+        var start = time
+        if let target, let under = target.clips.first(where: { $0.start < start && $0.end > start }) { start = under.end }
+        do { try ToolExecutor(document: document, origin: .user).insertClip(asset: assetID.uuidString, track: target?.id.uuidString, at: start) }
+        catch { dropError = error.localizedDescription }
+    }
+
+    /// A header (track or the Text lane) dropped onto another row takes that row's place.
+    private func dropRow(_ providers: [NSItemProvider], onto target: UUID) -> Bool {
+        guard let p = providers.first(where: { $0.hasItemConformingToTypeIdentifier(UTType.utf8PlainText.identifier) }) else { return false }
+        p.loadItem(forTypeIdentifier: UTType.utf8PlainText.identifier) { item, _ in
+            let s = (item as? Data).flatMap { String(data: $0, encoding: .utf8) } ?? (item as? String)
+            guard let s, let id = TrackDrag.id(from: s), id != target else { return }
+            Task { @MainActor in
+                guard let to = document.project.rows.firstIndex(where: { $0.id == target }) else { return }
+                let name = id == Project.textRowID ? "Text lane" : "track \(document.project.track(id)?.name ?? "")"
+                document.apply("Move \(name)", origin: .user) { p in _ = p.moveRow(id, toRow: to) }
+            }
+        }
+        return true
+    }
+
+    private struct TrackDrop: DropDelegate {
+        let onHover: (Bool) -> Void
+        let onDrop: ([NSItemProvider]) -> Bool
+        func validateDrop(info: DropInfo) -> Bool { info.hasItemsConforming(to: [.utf8PlainText]) }
+        func dropEntered(info: DropInfo) { onHover(true) }
+        func dropExited(info: DropInfo) { onHover(false) }
+        func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: .move) }
+        func performDrop(info: DropInfo) -> Bool { onHover(false); return onDrop(info.itemProviders(for: [.utf8PlainText])) }
+    }
+
+    /// Drop handling for one lane: reports hover for the highlight and hands the providers plus the drop x to the view.
+    private struct LaneDrop: DropDelegate {
+        let lane: UUID?
+        let onHover: (Bool) -> Void
+        let onDrop: ([NSItemProvider], CGFloat) -> Bool
+        func dropEntered(info: DropInfo) { DebugLog.event("drag-enter", ["lane": lane?.uuidString ?? "default"]); onHover(true) }
+        func dropExited(info: DropInfo) { onHover(false) }
+        func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: .copy) }
+        func performDrop(info: DropInfo) -> Bool {
+            onHover(false)
+            return onDrop(info.itemProviders(for: [.utf8PlainText, .fileURL]), info.location.x)
         }
     }
 
     private var ruler: some View {
         Canvas { ctx, size in
+            ctx.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.black.opacity(0.18)))
             let step: Double = pps >= 120 ? 0.5 : pps >= 40 ? 1 : pps >= 20 ? 2 : 5
-            var t = 0.0
-            while CGFloat(t) * pps < size.width {
+            let minor = step / 5
+            var i = 0
+            while CGFloat(Double(i) * minor) * pps < size.width {
+                let t = Double(i) * minor   // computed, not accumulated, so labels stay exact
                 let x = CGFloat(t) * pps
-                ctx.stroke(Path { $0.move(to: CGPoint(x: x, y: size.height)); $0.addLine(to: CGPoint(x: x, y: size.height - 8)) }, with: .color(.secondary))
-                ctx.draw(Text(Timecode.string(t)).font(.system(size: 9)).foregroundColor(.secondary), at: CGPoint(x: x + 3, y: 7), anchor: .leading)
-                t += step
+                let isMajor = i % 5 == 0
+                let h: CGFloat = isMajor ? 9 : 4
+                ctx.stroke(Path { $0.move(to: CGPoint(x: x, y: size.height)); $0.addLine(to: CGPoint(x: x, y: size.height - h)) }, with: .color(.primary.opacity(isMajor ? 0.5 : 0.22)), lineWidth: 1)
+                if isMajor { ctx.draw(Text(Timecode.string(t)).font(.system(size: 9, weight: .medium, design: .rounded)).foregroundColor(.secondary), at: CGPoint(x: x + 4, y: 7), anchor: .leading) }
+                i += 1
             }
+            ctx.stroke(Path { $0.move(to: CGPoint(x: 0, y: size.height - 0.5)); $0.addLine(to: CGPoint(x: size.width, y: size.height - 0.5)) }, with: .color(.primary.opacity(0.15)))
         }
         .contentShape(Rectangle())
         .gesture(DragGesture(minimumDistance: 0).onChanged { v in seek(x: v.location.x) })
@@ -165,70 +322,50 @@ struct TimelineView: View {
 
     private func clipView(_ clip: Clip, track: Track) -> some View {
         let selected = state.selectedClipIDs.contains(clip.id)
-        let w = max(4, CGFloat(clip.duration) * pps)
         let asset = document.project.asset(clip.assetID)
-        let peaks = waveforms.peaks[clip.assetID] ?? []
-        let strip = thumbnails.strips[clip.assetID]
-        let h = rowHeight - 10
-        let waveBand: CGFloat = track.kind == .video ? 18 : h   // video: frames on top, audio in a band below; audio: the whole clip
-        let base = track.kind == .video ? Color(red: 0.16, green: 0.32, blue: 0.62) : Color(red: 0.15, green: 0.45, blue: 0.3)
-        return RoundedRectangle(cornerRadius: 6)
-            .fill(base.opacity(selected ? 1 : 0.85))
-            .overlay {
-                VStack(spacing: 0) {
-                    if track.kind == .video {
-                        ZStack {
-                            Color.black.opacity(0.25)
-                            if let strip, !strip.frames.isEmpty {
-                                ThumbnailStripView(strip: strip, sourceIn: clip.sourceIn, sourceOut: clip.sourceOut)
-                            }
-                        }
-                        .frame(height: h - waveBand)
-                    }
-                    ZStack {
-                        if track.kind == .video { Color.black.opacity(0.35) }
-                        if !peaks.isEmpty {
-                            WaveformView(peaks: peaks, sourceIn: clip.sourceIn, sourceOut: clip.sourceOut, color: .white.opacity(track.kind == .video ? 0.75 : 0.8))
-                                .padding(.vertical, track.kind == .video ? 2 : 6)
-                        }
-                    }
-                    .frame(height: waveBand)
-                }
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-            }
-            .overlay(RoundedRectangle(cornerRadius: 6).stroke(selected ? Color.white : Color.white.opacity(0.12), lineWidth: selected ? 1.5 : 0.5))
-            .overlay(alignment: .topLeading) {
-                Text(clip.name).font(.caption2.weight(.medium)).lineLimit(1).foregroundStyle(.white)
-                    .padding(.horizontal, 5).padding(.vertical, 2)
-                    .background(Color.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 4))
-                    .padding(4)
-            }
-            .onAppear { if let asset { waveforms.request(asset); thumbnails.request(asset) } }
-            .frame(width: w, height: h)
-            .offset(x: CGFloat(clip.start) * pps)
-            .onTapGesture { select(clip.id) }
-            .gesture(DragGesture(minimumDistance: 3).onEnded { v in
-                let newStart = max(0, clip.start + Double(v.translation.width) / Double(pps))
-                try? ToolExecutor(document: document, origin: .user).moveClip(clip.id.uuidString, to: (newStart * 100).rounded() / 100)
-            })
-            .help("\(clip.name)  \(Timecode.string(clip.start)) → \(Timecode.string(clip.end))").pointer()
+        let x = ToolExecutor(document: document, origin: .user)
+        return TimelineBar(id: clip.id, start: clip.start, duration: clip.duration, pps: pps, height: rowHeight - 10,
+                           minStart: clip.start - clip.sourceIn / clip.speed,
+                           maxEnd: clip.start + ((asset?.duration ?? clip.end) - clip.sourceIn) / clip.speed,
+                           help: "\(clip.name)  \(Timecode.string(clip.start)) → \(Timecode.string(clip.end))",
+                           onSelect: { select(clip.id) },
+                           onMove: { try? x.moveClip(clip.id.uuidString, to: $0) },
+                           onTrimStart: { try? x.trimClip(clip.id.uuidString, start: $0, end: nil) },
+                           onTrimEnd: { try? x.trimClip(clip.id.uuidString, start: nil, end: $0) }) {
+            ClipBody(clip: clip, kind: track.kind, selected: selected, height: rowHeight - 10,
+                     peaks: waveforms.peaks[clip.assetID] ?? [], strip: thumbnails.strips[clip.assetID])
+                .equatable()
+                .onAppear { if let asset { waveforms.request(asset); thumbnails.request(asset) } }
+        }
     }
 
     private func textView(_ t: TextOverlay) -> some View {
         let selected = state.selectedTextID == t.id
-        return RoundedRectangle(cornerRadius: 5)
-            .fill((t.isCaption ? Color.teal : Color.orange).opacity(selected ? 0.95 : 0.65))
-            .overlay(RoundedRectangle(cornerRadius: 5).stroke(selected ? Color.white : Color.clear, lineWidth: 1.5))
-            .overlay(alignment: .leading) { Text(t.text).font(.caption).lineLimit(1).padding(.horizontal, 6).foregroundStyle(.white) }
-            .frame(width: max(4, CGFloat(t.duration) * pps), height: rowHeight - 10)
-            .offset(x: CGFloat(t.start) * pps)
-            .onTapGesture { state.selectedTextID = t.id; state.selectedClipIDs = [] }.pointer()
+        func edit(_ label: String, _ body: @escaping (inout TextOverlay) -> Void) {
+            document.apply(label, origin: .user) { p in if let i = p.texts.firstIndex(where: { $0.id == t.id }) { body(&p.texts[i]) } }
+        }
+        return TimelineBar(id: t.id, start: t.start, duration: t.duration, pps: pps, height: 30, minStart: 0, maxEnd: .infinity,
+                           help: "\(t.text)  \(Timecode.string(t.start)) → \(Timecode.string(t.end))",
+                           onSelect: { state.selectedTextID = t.id; state.selectedClipIDs = [] },
+                           onMove: { s in edit("Move text to \(s)s") { $0.start = s } },
+                           onTrimStart: { s in edit("Trim text") { $0.duration = t.end - s; $0.start = s } },
+                           onTrimEnd: { e in edit("Trim text") { $0.duration = e - t.start } }) {
+            TextBody(text: t, selected: selected).equatable()
+        }
     }
 
     private var playhead: some View {
-        Rectangle().fill(Color.red).frame(width: 1.5).frame(maxHeight: .infinity)
-            .offset(x: CGFloat(player.currentTime) * pps)
-            .allowsHitTesting(false)
+        let x = CGFloat(player.currentTime) * pps
+        return ZStack(alignment: .topLeading) {
+            Rectangle().fill(Color.red).frame(width: 1).frame(maxHeight: .infinity).offset(x: x)
+            // Marker in the ruler: a small downward pentagon.
+            Path { p in
+                p.move(to: CGPoint(x: -5, y: 0)); p.addLine(to: CGPoint(x: 5, y: 0)); p.addLine(to: CGPoint(x: 5, y: rulerHeight - 10))
+                p.addLine(to: CGPoint(x: 0, y: rulerHeight - 4)); p.addLine(to: CGPoint(x: -5, y: rulerHeight - 10)); p.closeSubpath()
+            }
+            .fill(Color.red).frame(width: 10, height: rulerHeight).offset(x: x)
+        }
+        .allowsHitTesting(false)
     }
 
     // MARK: actions
@@ -259,5 +396,141 @@ struct TimelineView: View {
         document.apply(track.isMuted ? "Unmute \(track.name)" : "Mute \(track.name)", origin: .user) { p in
             if let i = p.tracks.firstIndex(where: { $0.id == track.id }) { p.tracks[i].isMuted.toggle() }
         }
+    }
+}
+
+/// The look of a clip: frames on top and a waveform band for video, a full waveform for audio, the name in a pill.
+/// Equatable, so a drag elsewhere on the timeline does not redraw every clip's canvases.
+private struct ClipBody: View, Equatable {
+    let clip: Clip
+    let kind: TrackKind
+    let selected: Bool
+    let height: CGFloat
+    let peaks: [Float]
+    let strip: ThumbnailStore.Strip?
+
+    static func == (a: ClipBody, b: ClipBody) -> Bool {
+        a.clip == b.clip && a.kind == b.kind && a.selected == b.selected && a.height == b.height
+            && a.peaks.count == b.peaks.count && a.strip?.frames.count == b.strip?.frames.count
+    }
+
+    var body: some View {
+        let waveBand: CGFloat = kind == .video ? 18 : height
+        let base = kind == .video ? Color(red: 0.16, green: 0.32, blue: 0.62) : Color(red: 0.15, green: 0.45, blue: 0.3)
+        RoundedRectangle(cornerRadius: 6)
+            .fill(base.opacity(selected ? 1 : 0.85))
+            .overlay {
+                VStack(spacing: 0) {
+                    if kind == .video {
+                        ZStack {
+                            Color.black.opacity(0.25)
+                            if let strip, !strip.frames.isEmpty {
+                                ThumbnailStripView(strip: strip, sourceIn: clip.sourceIn, sourceOut: clip.sourceOut).equatable()
+                            }
+                        }
+                        .frame(height: height - waveBand)
+                    }
+                    ZStack {
+                        if kind == .video { Color.black.opacity(0.35) }
+                        if !peaks.isEmpty {
+                            WaveformView(peaks: peaks, sourceIn: clip.sourceIn, sourceOut: clip.sourceOut, color: .white.opacity(kind == .video ? 0.75 : 0.8))
+                                .equatable()
+                                .padding(.vertical, kind == .video ? 2 : 6)
+                        }
+                    }
+                    .frame(height: waveBand)
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+            }
+            .overlay(RoundedRectangle(cornerRadius: 6).stroke(selected ? Color.white : Color.white.opacity(0.12), lineWidth: selected ? 1.5 : 0.5))
+            .overlay(alignment: .topLeading) {
+                Text(clip.name).font(.caption2.weight(.medium)).lineLimit(1).foregroundStyle(.white)
+                    .padding(.horizontal, 5).padding(.vertical, 2)
+                    .background(Color.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 4))
+                    .padding(4)
+            }
+    }
+}
+
+/// Slim bar with a colored edge: titles orange, captions teal.
+private struct TextBody: View, Equatable {
+    let text: TextOverlay
+    let selected: Bool
+    var body: some View {
+        let tint = text.isCaption ? Color.teal : Color.orange
+        RoundedRectangle(cornerRadius: 4)
+            .fill(tint.opacity(selected ? 0.55 : 0.28))
+            .overlay(alignment: .leading) { Rectangle().fill(tint).frame(width: 3) }
+            .overlay(RoundedRectangle(cornerRadius: 4).stroke(selected ? Color.white : tint.opacity(0.5), lineWidth: selected ? 1.5 : 0.5))
+            .overlay(alignment: .leading) {
+                Label(text.text, systemImage: text.isCaption ? "captions.bubble" : "textformat").font(.system(size: 10, weight: .medium)).lineLimit(1).padding(.leading, 8).padding(.trailing, 6).foregroundStyle(.white)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 4))
+    }
+}
+
+/// One movable, trimmable bar on a lane. Keeps its own drag state, so dragging re-renders this bar alone, not the
+/// whole timeline; the move or trim is committed once, on release. Edges (8 pt) trim, the middle moves.
+private struct TimelineBar<Content: View>: View {
+    let id: UUID
+    let start: Double
+    let duration: Double
+    let pps: CGFloat
+    let height: CGFloat
+    let minStart: Double      // earliest start the leading edge may reach
+    let maxEnd: Double        // latest end the trailing edge may reach
+    let help: String
+    let onSelect: () -> Void
+    let onMove: (Double) -> Void
+    let onTrimStart: (Double) -> Void
+    let onTrimEnd: (Double) -> Void
+    @ViewBuilder let content: () -> Content
+
+    @State private var moveDX: CGFloat = 0
+    @State private var trim: (leading: Bool, dx: CGFloat)?
+
+    private var end: Double { start + duration }
+    private func round2(_ v: Double) -> Double { (v * 100).rounded() / 100 }
+
+    var body: some View {
+        let fullW = CGFloat(duration) * pps
+        let trimL: CGFloat = trim?.leading == true ? min(fullW - 8, max(-CGFloat(start - minStart) * pps, trim!.dx)) : 0
+        let trimR: CGFloat = trim?.leading == false ? max(-fullW + 8, min(maxEnd.isFinite ? CGFloat(maxEnd - end) * pps : .infinity, trim!.dx)) : 0
+        let w = max(4, fullW - trimL + trimR)
+        content()
+            .frame(width: w, height: height)
+            .overlay(alignment: .leading) { handle(leading: true) }
+            .overlay(alignment: .trailing) { handle(leading: false) }
+            .offset(x: CGFloat(start) * pps + trimL + max(-CGFloat(start) * pps, moveDX))
+            .onTapGesture { onSelect() }
+            .gesture(DragGesture(minimumDistance: 3)
+                .onChanged { v in if moveDX == 0 { onSelect() }; moveDX = v.translation.width }
+                .onEnded { v in
+                    moveDX = 0
+                    let newStart = round2(max(0, start + Double(v.translation.width) / Double(pps)))
+                    if newStart != start { onMove(newStart) }
+                })
+            .help(help).pointer()
+    }
+
+    private func handle(leading: Bool) -> some View {
+        let active = trim?.leading == leading
+        return Rectangle().fill(active ? Color.white.opacity(0.9) : Color.white.opacity(0.001))
+            .frame(width: active ? 3 : 8)
+            .contentShape(Rectangle().inset(by: -2))
+            .onHover { inside in if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() } }
+            .gesture(DragGesture(minimumDistance: 2)
+                .onChanged { v in trim = (leading, v.translation.width) }
+                .onEnded { v in
+                    trim = nil
+                    let d = Double(v.translation.width) / Double(pps)
+                    if leading {
+                        let s = round2(max(minStart, min(end - 0.1, start + d)))
+                        if s != start { onTrimStart(s) }
+                    } else {
+                        let e = round2(min(maxEnd, max(start + 0.1, end + d)))
+                        if e != end { onTrimEnd(e) }
+                    }
+                })
     }
 }

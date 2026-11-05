@@ -75,7 +75,7 @@ enum CompositionBuilder {
             let inst = AVMutableVideoCompositionInstruction()
             inst.timeRange = CMTimeRange(start: CMTime(value: a, timescale: timescale), end: CMTime(value: b, timescale: timescale))
             var layers: [AVMutableVideoCompositionLayerInstruction] = []
-            for (compTrack, clips) in layerSources.reversed() {  // last project track = top of stack
+            for (compTrack, clips) in layerSources {  // first project track (top row of the timeline) covers the rows below, as in other editors
                 guard let (clip, size, pref) = clips.first(where: { q($0.0.start) <= a && q($0.0.end) >= b }) else { continue }
                 let li = AVMutableVideoCompositionLayerInstruction(assetTrack: compTrack)
                 li.setTransform(fitTransform(naturalSize: size, preferred: pref, into: renderSize), at: .zero)

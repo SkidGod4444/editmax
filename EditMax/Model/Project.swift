@@ -92,6 +92,8 @@ struct Project: Codable, Equatable {
     var settings = ProjectSettings()
     var assets: [Asset] = []
     var tracks: [Track] = [Track(name: "V1", kind: .video), Track(name: "A1", kind: .audio)]
+    /// Row of the Text lane in the timeline (0 = top); nil = below the tracks. Display only: text always draws over the picture.
+    var textLaneRow: Int? = nil
     var texts: [TextOverlay] = []
     var transcripts: [String: Transcript]? = nil   // keyed by asset id; a cache, left out of history snapshots
     var history: [HistoryEntry] = []
@@ -151,6 +153,43 @@ extension Project {
 
     /// End of the last clip on a track (0 if empty).
     func trackEnd(_ trackID: UUID) -> Double { track(trackID)?.clips.map(\.end).max() ?? 0 }
+
+    /// Timeline rows top to bottom: tracks with the Text lane at `textLaneRow`.
+    enum Row: Identifiable, Equatable {
+        case track(Track), text
+        var id: UUID { if case .track(let t) = self { return t.id }; return Project.textRowID }
+    }
+    static let textRowID = UUID(uuidString: "00000000-0000-0000-0000-00000000007E")!
+    var rows: [Row] {
+        var r = tracks.map(Row.track)
+        r.insert(.text, at: min(textLaneRow ?? tracks.count, tracks.count))
+        return r
+    }
+
+    /// Moves a row (a track or the Text lane) to another row. Returns false when nothing changed.
+    @discardableResult
+    mutating func moveRow(_ id: UUID, toRow index: Int) -> Bool {
+        var r = rows
+        guard let from = r.firstIndex(where: { $0.id == id }) else { return false }
+        let to = max(0, min(r.count - 1, index))
+        guard from != to else { return false }
+        let row = r.remove(at: from)
+        r.insert(row, at: to)
+        tracks = r.compactMap { if case .track(let t) = $0 { return t }; return nil }
+        textLaneRow = r.firstIndex(of: .text)
+        return true
+    }
+
+    /// Moves a track to another row. The top row covers the rows below it in the picture. Returns false when nothing changed.
+    @discardableResult
+    mutating func moveTrack(_ id: UUID, toIndex index: Int) -> Bool {
+        guard let from = tracks.firstIndex(where: { $0.id == id }) else { return false }
+        let to = max(0, min(tracks.count - 1, index))
+        guard from != to else { return false }
+        let t = tracks.remove(at: from)
+        tracks.insert(t, at: to)
+        return true
+    }
 
     mutating func addTrack(name: String? = nil, kind: TrackKind) -> Track {
         let n = tracks.filter { $0.kind == kind }.count + 1

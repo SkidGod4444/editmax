@@ -197,6 +197,11 @@ struct TextInspector: View {
 
 extension ProjectInspector {
     private enum CleanupKind { case silence, fillers }
+    private var cleanupHint: String {
+        let ignored = document.project.tracks.filter { ($0.isHidden || $0.isMuted) && !$0.clips.isEmpty }.map(\.name)
+        let base = "Cuts moments where nothing is audible (over 0.6 s) or spoken fillers (um, uh, hmm…) from every track and closes the gaps. Do this before captions."
+        return ignored.isEmpty ? base : base + " Muted or hidden now, so not listened to, but cut along: \(ignored.joined(separator: ", "))."
+    }
     private func cleanup(_ kind: CleanupKind) {
         cleanupBusy = true; cleanupStatus = kind == .silence ? "Listening for silence…" : "Transcribing…"
         Task { @MainActor in
@@ -205,7 +210,9 @@ extension ProjectInspector {
                 let x = ToolExecutor(document: document, origin: .user)
                 let r = kind == .silence ? try await x.removeSilence(clip: nil, thresholdDb: -38, minDuration: 0.6, padding: 0.15) : try await x.removeWords(clip: nil, words: nil, language: nil)
                 let what = kind == .silence ? "\(r.ranges.count) silence\(r.ranges.count == 1 ? "" : "s")" : "\(r.words?.count ?? 0) filler word\((r.words?.count ?? 0) == 1 ? "" : "s")"
-                cleanupStatus = r.ranges.isEmpty ? "Nothing to remove." : "Removed \(what), \(String(format: "%.1f", r.removedSeconds)) s. Timeline is now \(Timecode.string(r.duration))."
+                var status = r.ranges.isEmpty ? "Nothing to remove." : "Removed \(what), \(String(format: "%.1f", r.removedSeconds)) s. Timeline is now \(Timecode.string(r.duration))."
+                if !r.ignoredTracks.isEmpty { status += " Not listened to (muted or hidden), but cut along: \(r.ignoredTracks.joined(separator: ", "))." }
+                cleanupStatus = status
             } catch { cleanupStatus = error.localizedDescription }
         }
     }
@@ -255,7 +262,7 @@ struct ProjectInspector: View {
                     Button(cleanupBusy ? "Working…" : "Remove silence") { cleanup(.silence) }.disabled(cleanupBusy || p.allClips.isEmpty).pointer()
                     Button("Remove filler words") { cleanup(.fillers) }.disabled(cleanupBusy || p.allClips.isEmpty).pointer()
                 }
-                Text(cleanupStatus ?? "Cuts moments where nothing is audible (over 0.6 s) or spoken fillers (um, uh, hmm…) from every track and closes the gaps. Do this before captions.")
+                Text(cleanupStatus ?? cleanupHint)
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Captions") {

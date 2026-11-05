@@ -189,7 +189,7 @@ struct ToolExecutor {
     func captionableClips() -> [Clip] {
         var seen: Set<String> = []
         var out: [Clip] = []
-        for t in project.tracks where !t.isHidden && !(t.kind == .audio && t.isMuted) {
+        for t in project.tracks where !t.isHidden && !t.isMuted {   // a muted or hidden track is not heard, so it neither gets captions nor counts for silence
             for c in t.clips {
                 guard let a = project.asset(c.assetID), a.kind != .image else { continue }
                 let key = "\(c.assetID)-\(c.start)-\(c.sourceIn)"
@@ -241,7 +241,10 @@ struct ToolExecutor {
 
     // MARK: Cleanup: silence, filler words, ripple delete
     struct RangeInfo: Codable { var start: Double, end: Double, duration: Double }
-    struct CleanupResult: Codable { var ranges: [RangeInfo], removedSeconds: Double, duration: Double, words: [String]? }
+    struct CleanupResult: Codable { var ranges: [RangeInfo], removedSeconds: Double, duration: Double, words: [String]?, ignoredTracks: [String] }
+
+    /// Tracks with clips that cleanup does not listen to (hidden or muted). They are still cut by the ripple.
+    func ignoredTracks() -> [String] { project.tracks.filter { ($0.isHidden || $0.isMuted) && !$0.clips.isEmpty }.map(\.name) }
 
     private func cleanupClips(_ clip: String?) throws -> [Clip] {
         if let clip, !clip.isEmpty { let id = try resolveClip(clip); return [project.clip(id)!.clip] }
@@ -298,7 +301,7 @@ struct ToolExecutor {
                 for r in ranges.sorted(by: { $0.start > $1.start }) { p.rippleDelete(start: r.start, end: r.end) }   // last first keeps earlier times valid
             }
         }
-        return CleanupResult(ranges: ranges, removedSeconds: r(removed), duration: r(project.duration), words: nil)
+        return CleanupResult(ranges: ranges, removedSeconds: r(removed), duration: r(project.duration), words: nil, ignoredTracks: ignoredTracks())
     }
 
     func removeSilence(clip: String?, thresholdDb: Double, minDuration: Double, padding: Double) async throws -> CleanupResult {
@@ -396,6 +399,21 @@ struct ToolExecutor {
     }
 
     // MARK: Settings
+
+    struct TrackResult: Codable { var id: String, name: String, kind: String, row: Int }
+    func addTrack(kind: String, name: String?) throws -> TrackResult {
+        guard let k = TrackKind(rawValue: kind.lowercased()) else { throw EditError.invalid("kind must be video or audio") }
+        var t: Track!
+        document.apply("Add \(k.rawValue) track", origin: origin) { p in t = p.addTrack(name: name, kind: k) }
+        return TrackResult(id: t.id.short, name: t.name, kind: t.kind.rawValue, row: project.tracks.firstIndex(where: { $0.id == t.id }) ?? 0)
+    }
+
+    /// Row 0 is the top of the timeline and covers the rows below it in the picture.
+    func moveTrack(_ track: String, toRow row: Int) throws -> TrackResult {
+        guard let id = try resolveTrack(track), let t = project.track(id) else { throw EditError.notFound("track '\(track)'") }
+        document.apply("Move track \(t.name)", origin: origin) { p in _ = p.moveTrack(id, toIndex: row) }
+        return TrackResult(id: id.short, name: t.name, kind: t.kind.rawValue, row: project.tracks.firstIndex(where: { $0.id == id }) ?? 0)
+    }
 
     func setProjectSettings(width: Int?, height: Int?, fps: Double?, name: String?) throws {
         document.apply("Project settings", origin: origin) { p in

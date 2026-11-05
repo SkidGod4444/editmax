@@ -47,10 +47,11 @@ final class ThumbnailStore: ObservableObject {
 }
 
 /// Frames of one clip's source range, tiled left to right; each tile shows the frame nearest its own time.
-struct ThumbnailStripView: View {
+struct ThumbnailStripView: View, Equatable {
     let strip: ThumbnailStore.Strip
     let sourceIn: Double
     let sourceOut: Double
+    static func == (a: ThumbnailStripView, b: ThumbnailStripView) -> Bool { a.strip.frames.count == b.strip.frames.count && a.strip.interval == b.strip.interval && a.sourceIn == b.sourceIn && a.sourceOut == b.sourceOut }
 
     var body: some View {
         Canvas { ctx, size in

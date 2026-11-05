@@ -74,6 +74,12 @@ final class EditMaxDocument: ReferenceFileDocument, ObservableObject {
         let before = project.withoutHistory
         var next = project
         try body(&next)
+        if record {
+            // Labels may quote the user's content (a title, a phrase); the log keeps the action, not the words.
+            let safe = label.replacingOccurrences(of: "\"[^\"]*\"", with: "\"…\"", options: .regularExpression)
+                .replacingOccurrences(of: "'[^']*'", with: "'…'", options: .regularExpression)
+            DebugLog.event("edit", ["label": safe, "origin": origin.rawValue, "project": displayName])
+        }
         if record, let data = try? Self.encoder.encode(before) {
             next.history.append(HistoryEntry(label: label, origin: origin, project: data))
             if next.history.count > Self.maxHistory { next.history.removeFirst(next.history.count - Self.maxHistory) }

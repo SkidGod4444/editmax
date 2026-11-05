@@ -24,6 +24,7 @@ final class EditorState: ObservableObject {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
+        InteractionLog.install()
         // No NSApp.activate here: a normal launch is activated by Launch Services, and a background launch (`open -g`)
         // must stay in the background.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {

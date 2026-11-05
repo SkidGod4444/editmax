@@ -174,11 +174,38 @@ enum EditMaxTools {
                                   "remove": .object(["type": "boolean", "description": "Remove the stabilization instead"]), "project": projectArg], required: ["clip"])),
     ]
 
+    /// Tools whose results carry what is said or shown in the footage.
+    private static let contentTools: Set<String> = ["get_transcript", "search_transcript", "cut_transcript", "remove_words", "add_captions"]
+    /// Free-text arguments (titles, searched phrases, words to remove) are the user's or the footage's content:
+    /// the log records how long they were, never what they said.
+    private static let textArgs: Set<String> = ["text", "phrase", "query", "words", "from_word", "to_word", "lines", "names"]
+    private static func loggableArgs(_ args: [String: Value]) -> String {
+        var out: [String: Value] = [:]
+        for (k, v) in args {
+            if textArgs.contains(k) {
+                switch v {
+                case .string(let s): out[k] = .string("<\(s.count) chars>")
+                case .array(let a): out[k] = .string("<\(a.count) items>")
+                default: out[k] = v
+                }
+            } else { out[k] = v }
+        }
+        return (try? JSONEncoder().encode(out)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+    }
+
     static func register(on server: Server) async {
         await server.withMethodHandler(ListTools.self) { _ in .init(tools: tools) }
         await server.withMethodHandler(CallTool.self) { params in
+            let t0 = Date()
+            let args = loggableArgs(params.arguments ?? [:])
             do {
                 let payload = try await call(params.name, params.arguments ?? [:])
+                var f: [String: Any] = ["tool": params.name, "args": String(args.prefix(500)), "ms": Int(Date().timeIntervalSince(t0) * 1000), "image": payload.image != nil]
+                // Transcript and caption results are the footage's dialogue: the log keeps their length, not their words.
+                if contentTools.contains(params.name) { f["resultChars"] = payload.text.count } else { f["result"] = String(payload.text.prefix(200)) }
+                // The redactor blanks any JSON field named "key" (API keys); a keyboard key is not a secret.
+                if params.name == "ui_key", let k = params.arguments?["key"]?.stringValue { f["pressed"] = k }
+                DebugLog.event("mcp-call", f)
                 var content: [Tool.Content] = [.text(payload.text)]
                 if let img = payload.image { content.append(.image(data: img.base64EncodedString(), mimeType: "image/png")) }
                 // structuredContent must be a JSON object; list results are wrapped so strict clients (Claude Code) accept them.
@@ -186,6 +213,7 @@ enum EditMaxTools {
                 if case .array(let items)? = structured { structured = .object(["items": .array(items)]) }
                 return .init(content: content, structuredContent: structured, isError: false)
             } catch {
+                DebugLog.error("mcp-call", error, ["tool": params.name, "args": String(args.prefix(500)), "ms": Int(Date().timeIntervalSince(t0) * 1000)])
                 return .init(content: [.text("Error: \(error.localizedDescription)")], isError: true)
             }
         }

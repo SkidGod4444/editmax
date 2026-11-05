@@ -146,6 +146,7 @@ final class ChatSession: ObservableObject {
     func send() {
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !isRunning else { return }
+        DebugLog.event("chat-send", ["backend": backend == .agent ? "agent" : "api-key", "characters": text.count])   // never the prompt
         switch backend {
         case .agent:
             guard CodemaxRunner.bundledBinary != nil else { items.append(Item(kind: .error, text: "codemax is missing from this build of EditMax.")); return }
@@ -172,7 +173,7 @@ final class ChatSession: ObservableObject {
         return "Earlier in this chat (a previous session, whose edits are already in the timeline and History):\n\(earlier)\n\nNew request: \(text)"
     }
 
-    func stop() { (backend == .apiKey ? apiRunner : runner).cancel() }
+    func stop() { DebugLog.event("chat-stop"); (backend == .apiKey ? apiRunner : runner).cancel() }
 
     /// Forgets the conversation; the next message starts a fresh session.
     func clear() {

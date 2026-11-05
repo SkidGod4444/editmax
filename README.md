@@ -205,6 +205,17 @@ and icon buttons in bars and overlays get `.focusable(false)` so none of them ta
 and continuous edits coalesce into one undo step. Menu items must not gate on `@FocusedObject` state: the focused
 document goes nil whenever the editor window is not key, so gate in the notification receiver instead.
 
+## Session log
+
+`~/Library/Application Support/EditMax/logs/editmax.log` records the whole session as JSON lines, in order: every
+user interaction (`ui-click` with the element id under the pointer or the view class, `ui-drag`, `ui-key`, `ui-menu`,
+`ui-typing` as a burst marker that never contains the characters), every recorded edit (`edit`: label, origin
+user/agent/system, project), every MCP tool call (`mcp-call`: tool, arguments capped at 500 characters with free-text ones such as a title,
+a searched phrase or words to remove replaced by their length, duration, the first 200 characters of the result
+or the error; transcript and caption tools log only the result's length, so the footage's dialogue stays out), `chat-send`/`chat-stop` (backend and length only, never the
+prompt), and the engine events (renders, exports, player rebuilds). Events the MCP driver posted carry
+`synthetic: true`. Secrets are redacted at write time; prompts and keys are never written.
+
 ## Cleanup
 
 Inspector → Cleanup, or the tools. `SilenceDetector` walks the cached waveform peaks (100/s) for runs under a threshold

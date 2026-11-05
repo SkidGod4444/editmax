@@ -16,6 +16,10 @@ final class UIRegistry {
     func set(_ id: String, _ frame: CGRect) { frames[id] = frame }
     func remove(_ id: String) { frames.removeValue(forKey: id) }
     func frame(_ id: String) -> CGRect? { frames[id] }
+    /// The smallest registered element containing `point` (window points, top-left origin).
+    func element(at point: CGPoint) -> String? {
+        frames.filter { $0.value.contains(point) }.min { $0.value.width * $0.value.height < $1.value.width * $1.value.height }?.key
+    }
     /// Views that react to a click through a SwiftUI gesture (bars select on tap, media rows append on double-click),
     /// keyed by id then click count; and the window's key handler. Used like `dragHandlers`.
     private(set) var tapHandlers: [String: [Int: () -> Void]] = [:]
@@ -231,6 +235,7 @@ enum UIDriver {
                 return .handler(id)
             }
             guard p.x >= 0 else { throw EditError.invalid("no handler for a \(count)-click on '\(id ?? "")'") }
+            InteractionLog.syntheticUntil = Date().addingTimeInterval(1)
             for c in 1...max(1, count) {
                 post(.leftMouseDown, at: p, in: w, clickCount: c)
                 try await Task.sleep(for: .milliseconds(30))
@@ -328,6 +333,7 @@ enum UIDriver {
                 if let h = UIRegistry.shared.keyHandler, h(down) { try await Task.sleep(for: .milliseconds(120)); return "handler" }
                 if f.contains(.command), NSApp.mainMenu?.performKeyEquivalent(with: down) == true { try await Task.sleep(for: .milliseconds(120)); return "menu" }
             }
+            InteractionLog.syntheticUntil = Date().addingTimeInterval(1)
             for type in [NSEvent.EventType.keyDown, .keyUp] {
                 guard let e = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: f, timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: w.windowNumber, context: nil,
                                                characters: shown, charactersIgnoringModifiers: chars, isARepeat: false, keyCode: code) else { continue }

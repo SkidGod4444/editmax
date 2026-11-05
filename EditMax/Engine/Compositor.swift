@@ -63,7 +63,16 @@ class EditMaxCompositor: NSObject, AVVideoCompositing {
     static let context = CIContext(options: [.cacheIntermediates: false, .name: "EditMax", .workingColorSpace: NSNull(), .outputColorSpace: NSNull()])
     private let queue = DispatchQueue(label: "io.openhorizon.editmax.compositor", qos: .userInteractive)
     /// Source pixel formats seen so far (logged once each, so the decode path can be checked from the log).
+    /// Every source pixel format seen, logged once. Several compositors render at once (preview, export, capture_frame),
+    /// so the set sits behind a lock: unguarded, the static Set corrupted under that race and aborted the app.
     nonisolated(unsafe) private static var loggedFormats = Set<OSType>()
+    private static let formatLock = NSLock()
+    private static func noteFormat(_ t: OSType) {
+        formatLock.lock(); defer { formatLock.unlock() }
+        guard loggedFormats.insert(t).inserted else { return }
+        let s = String(bytes: [UInt8(t >> 24 & 0xff), UInt8(t >> 16 & 0xff), UInt8(t >> 8 & 0xff), UInt8(t & 0xff)], encoding: .ascii) ?? "?"
+        DebugLog.event("source-pixel-format", ["fourcc": s, "code": "\(t)"])
+    }
     private static let attrs: [String: Any] = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
                                                kCVPixelBufferMetalCompatibilityKey as String: true]
     /// Sources are decoded to 16-bit half floats, so 10-bit footage (D-Log and other log profiles) keeps its precision
@@ -84,11 +93,7 @@ class EditMaxCompositor: NSObject, AVVideoCompositing {
             guard let out = request.renderContext.newPixelBuffer() else { request.finish(with: EditError.invalid("no pixel buffer")); return }
             let image = self.image(inst, at: request.compositionTime.seconds) { id in
                 let f = request.sourceFrame(byTrackID: id)
-                if let f, !Self.loggedFormats.contains(CVPixelBufferGetPixelFormatType(f)) {
-                    Self.loggedFormats.insert(CVPixelBufferGetPixelFormatType(f))
-                    let t = CVPixelBufferGetPixelFormatType(f); let s = String(bytes: [UInt8(t >> 24 & 0xff), UInt8(t >> 16 & 0xff), UInt8(t >> 8 & 0xff), UInt8(t & 0xff)], encoding: .ascii) ?? "?"
-                    DebugLog.event("source-pixel-format", ["fourcc": s, "code": "\(t)"])
-                }
+                if let f { Self.noteFormat(CVPixelBufferGetPixelFormatType(f)) }
                 return f
             }
             Self.context.render(image, to: out, bounds: CGRect(origin: .zero, size: inst.renderSize), colorSpace: nil)
@@ -183,10 +188,18 @@ enum FrameRenderer {
             let r = CGRect(x: w * tf.cropLeft, y: h * tf.cropBottom, width: w * max(0.01, 1 - tf.cropLeft - tf.cropRight), height: h * max(0.01, 1 - tf.cropTop - tf.cropBottom))
             img = img.cropped(to: r)
         }
+        // Stabilization: counter-shift the picture in oriented source pixels (dy is + down; Core Image is y-up), then
+        // zoom with the fit so the shifted borders stay outside the frame.
+        var zoom = 1.0
+        if src.still == nil, let st = clip.stabilization {
+            let o = st.offset(at: clip.sourceIn + clip.sourceOffset(at: local))
+            img = img.transformed(by: CGAffineTransform(translationX: o.dx * w, y: -o.dy * h))
+            zoom = st.zoom
+        }
         // Fit the (uncropped) picture into the frame, then the user's scale, rotation and offset about the frame center.
         let fit = min(size.width / w, size.height / h)
         var T = CGAffineTransform(translationX: -w / 2, y: -h / 2)
-        T = T.concatenating(CGAffineTransform(scaleX: fit * tf.scale, y: fit * tf.scale))
+        T = T.concatenating(CGAffineTransform(scaleX: fit * tf.scale * zoom, y: fit * tf.scale * zoom))
         if tf.rotation != 0 { T = T.concatenating(CGAffineTransform(rotationAngle: -tf.rotation * .pi / 180)) }
         T = T.concatenating(CGAffineTransform(translationX: size.width / 2 + tf.x * size.width, y: size.height / 2 - tf.y * size.height))
         img = img.transformed(by: T)

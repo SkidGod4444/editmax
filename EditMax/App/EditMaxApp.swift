@@ -14,6 +14,8 @@ struct EditMaxApp: App {
         .commands {
             CommandGroup(after: .saveItem) {
                 Button("Export Video…") { NotificationCenter.default.post(name: .editmaxExport, object: nil) }.keyboardShortcut("e", modifiers: [.command])
+                Button("Export Chapters…") { NotificationCenter.default.post(name: .editmaxExportChapters, object: nil) }
+                Button("Batch Export…") { NotificationCenter.default.post(name: .editmaxBatchExport, object: nil) }.keyboardShortcut("e", modifiers: [.command, .shift])
             }
             ViewCommands()
             EditCommands()
@@ -74,6 +76,14 @@ struct EditorRootView: View {
         .onReceive(NotificationCenter.default.publisher(for: .editmaxExport)) { _ in
             guard DocumentRegistry.shared.activeID == document.id, !state.isExporting else { return }
             exportVideo()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .editmaxExportChapters)) { _ in
+            guard DocumentRegistry.shared.activeID == document.id else { return }
+            DeliveryActions(document: document, state: state).exportChapters()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .editmaxBatchExport)) { _ in
+            guard DocumentRegistry.shared.activeID == document.id, !state.isExporting else { return }
+            DeliveryActions(document: document, state: state).batchExport()
         }
         .overlay(alignment: .top) {
             if let s = state.exportStatus {

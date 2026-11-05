@@ -219,10 +219,13 @@ struct ClipInspector: View {
     @EnvironmentObject var state: EditorState
     @EnvironmentObject var player: PlayerController
     @ObservedObject private var thumbnails = ThumbnailStore.shared
+    @ObservedObject private var isolated = IsolatedAudio.shared
     let clip: Clip
     let track: Track
     @State private var nameDraft = ""
     @State private var transitionNote: String?
+    @State private var reframing = false
+    @State private var reframeNote: String?
 
     var body: some View {
         let x = ToolExecutor(document: document, origin: .user, coalesce: true)   // slider drags make one undo step
@@ -331,6 +334,7 @@ struct ClipInspector: View {
                     Text("Click the diamond to start a speed ramp from the playhead.").font(.caption).foregroundStyle(.secondary)
                 }
             }
+            if let asset, asset.kind == .video || asset.kind == .audio { TranscriptSection(document: document, clip: clip) }
             if track.kind == .video {
                 Section {
                     let tf = clip.transform
@@ -343,6 +347,25 @@ struct ClipInspector: View {
                     slider("Crop top", value: tf.cropTop, range: 0...0.9, format: { "\(Int($0 * 100))%" }, reset: 0) { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: nil, y: nil, rotation: nil, cropLeft: nil, cropRight: nil, cropTop: $0, cropBottom: nil, reset: false) }
                     slider("Crop bottom", value: tf.cropBottom, range: 0...0.9, format: { "\(Int($0 * 100))%" }, reset: 0) { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: nil, y: nil, rotation: nil, cropLeft: nil, cropRight: nil, cropTop: nil, cropBottom: $0, reset: false) }
                     slider("Opacity", param: .opacity, value: clip.opacity, range: 0...1, format: { "\(Int($0 * 100))%" }, reset: 1) { try? x.setClipProperties(clip.id.uuidString, opacity: $0) }
+                    if asset?.kind == .video {
+                        // Auto-reframe: cover the frame and keyframe the position so the subject stays in view (Vision person / saliency).
+                        let reframe = { Task { @MainActor in
+                            guard !reframing else { return }
+                            reframing = true; reframeNote = "Analysing…"
+                            defer { reframing = false }
+                            do {
+                                let r = try await ToolExecutor(document: document, origin: .user).autoReframe(clip.id.uuidString)
+                                reframeNote = "\(r.mode): \(r.keyframesX + r.keyframesY) keyframes, scale \(Int((r.scale * 100).rounded()))%" + (r.note.map { " — \($0)" } ?? "")
+                            } catch { reframeNote = error.localizedDescription }
+                        } }
+                        HStack {
+                            Button("Auto-reframe", systemImage: "person.crop.rectangle.badge.plus") { _ = reframe() }
+                                .controlSize(.small).pointer().disabled(reframing).uiTap("inspector.autoReframe") { _ = reframe() }.uiFrame("inspector.autoReframe")
+                            if reframing { ProgressView().controlSize(.mini) }
+                            if let reframeNote { Text(reframeNote).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
+                        }
+                    }
+                    if asset?.kind == .video { StabilizeRow(document: document, clip: clip) }
                 } header: {
                     HStack { Text("Transform"); Spacer(); if !clip.transform.isIdentity { Button("Reset") { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: nil, y: nil, rotation: nil, cropLeft: nil, cropRight: nil, cropTop: nil, cropBottom: nil, reset: true) }.controlSize(.mini).pointer().uiFrame("inspector.transform.reset") } }
                 }
@@ -402,8 +425,10 @@ struct ClipInspector: View {
                 slider("High-pass", value: au.highPass, range: 0...400, format: { $0 <= 0 ? "off" : "\(Int($0)) Hz" }, reset: 0) { try? x.setClipAudio(clip.id.uuidString, low: nil, mid: nil, high: nil, highPass: $0 < 20 ? 0 : $0, gate: nil, reset: false) }
                 slider("Noise gate", value: au.gate, range: -80...0, format: { $0 >= 0 ? "off" : "\(Int($0)) dB" }, reset: 0) { try? x.setClipAudio(clip.id.uuidString, low: nil, mid: nil, high: nil, highPass: nil, gate: $0 > -1 ? 0 : $0, reset: false) }
                 Text("EQ shelves at 200 Hz and 6 kHz, a 1 kHz peak. A high-pass around 80–120 Hz removes rumble; the gate drops 26 dB below its threshold.").font(.caption).foregroundStyle(.secondary)
+                slider("Voice isolation", value: au.voiceIsolation, range: 0...1, format: { $0 < 0.005 ? "off" : "\(Int(($0 * 100).rounded()))%" }, reset: 0) { try? x.setClipAudio(clip.id.uuidString, low: nil, mid: nil, high: nil, highPass: nil, gate: nil, voiceIsolation: $0, reset: false) }
+                Text(isolated.caption(for: IsolatedAudio.audioAsset(of: clip, in: document.project), amount: au.voiceIsolation)).font(.caption).foregroundStyle(.secondary)
             } header: {
-                HStack { Text("EQ & cleanup"); Spacer(); if !clip.audio.isIdentity { Button("Reset") { try? x.setClipAudio(clip.id.uuidString, low: nil, mid: nil, high: nil, highPass: nil, gate: nil, reset: true) }.controlSize(.mini).pointer().uiFrame("inspector.audio.reset") } }
+                HStack { Text("EQ & cleanup"); Spacer(); if !clip.audio.isDefault { Button("Reset") { try? x.setClipAudio(clip.id.uuidString, low: nil, mid: nil, high: nil, highPass: nil, gate: nil, reset: true) }.controlSize(.mini).pointer().uiFrame("inspector.audio.reset") } }
             }
             Section("Transition in") {
                 Picker("Kind", selection: Binding(get: { clip.transitionIn?.kind.rawValue ?? "none" }, set: { v in _ = try? ToolExecutor(document: document, origin: .user).setTransition(clip.id.uuidString, kind: v, duration: nil); transitionNote = nil })) {
@@ -702,6 +727,8 @@ struct ProjectInspector: View {
                             Button { document.apply("Remove marker", origin: .user) { p in p.markers.removeAll { $0.id == m.id } } } label: { Image(systemName: "trash") }.buttonStyle(.borderless).help("Remove marker").pointer().uiFrame("inspector.marker.\(m.id.short).remove")
                         }
                     }
+                    Button("Copy YouTube chapters", systemImage: "doc.on.doc") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(Chapters.youtubeText(p), forType: .string) }
+                        .controlSize(.small).help("The markers as \"mm:ss Name\" lines for a YouTube description (File > Export Chapters… saves them as a file)").pointer().disabled(p.markers.isEmpty).uiFrame("markers.copyChapters")
                 }
             }
             if p.tracks.count > 1 {
@@ -757,4 +784,61 @@ struct ProjectInspector: View {
         }
         newText = ""
     }
+}
+
+/// The Stabilize row of a video clip's transform section: runs the shake analysis for the clip (see `Stabilizer`),
+/// shows its progress, then what it found; "Remove" clears it. One analysis at a time; switching clips cancels it.
+private struct StabilizeRow: View {
+    @ObservedObject var document: EditMaxDocument
+    let clip: Clip
+    @State private var progress: Double?          // nil = idle
+    @State private var task: Task<Void, Never>?
+    @State private var note: String?
+
+    var body: some View {
+        let busy = progress != nil
+        HStack(spacing: 8) {
+            Button(clip.stabilization == nil ? "Stabilize" : "Re-analyse", systemImage: "camera.metering.center.weighted") { start() }
+                .controlSize(.small).focusable(false).pointer().disabled(busy)
+                .uiTap("inspector.stabilize") { start() }.uiFrame("inspector.stabilize")
+                .help("Smooth camera shake: analyse the clip's motion and counter-shift the picture, zooming in a little to hide the borders")
+            if clip.stabilization != nil {
+                Button("Remove") { remove() }.controlSize(.small).focusable(false).pointer().disabled(busy)
+                    .uiTap("inspector.stabilize.remove") { remove() }.uiFrame("inspector.stabilize.remove")
+            }
+            if busy { ProgressView().controlSize(.mini) }
+            Spacer()
+            Text(status).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
+        }
+        .onChange(of: clip.id) { _, _ in cancel() }   // not onDisappear: a lazy Form may tear the row down on scroll
+    }
+
+    private var status: String {
+        if let progress { return "Analysing… \(Int((progress * 100).rounded())) %" }
+        if let note { return note }
+        if let s = document.project.hydrated(clip).stabilization { return "\(s.samples.count) samples · zoom \(Int((s.zoom * 100).rounded())) % · \(Stabilizer.cropPercent(s.zoom)) % crop · \(ProjectDiff.fmt(s.strength)) s" }
+        return "Not stabilized"
+    }
+
+    private func start() {
+        guard progress == nil else { return }
+        progress = 0; note = nil
+        let id = clip.id.uuidString, strength = clip.stabilization?.strength
+        task = Task { @MainActor in
+            do {
+                let r = try await ToolExecutor(document: document, origin: .user).stabilizeClip(id, strength: strength) { p in
+                    Task { @MainActor in if progress != nil { progress = p } }
+                }
+                note = r.note.map { "Done; \($0)" }
+            } catch is CancellationError {
+            } catch { note = error.localizedDescription }
+            progress = nil
+        }
+    }
+    private func remove() {
+        guard progress == nil else { return }
+        note = nil
+        Task { @MainActor in _ = try? await ToolExecutor(document: document, origin: .user).stabilizeClip(clip.id.uuidString, strength: nil, remove: true) }
+    }
+    private func cancel() { task?.cancel(); task = nil; progress = nil }
 }

@@ -7,11 +7,12 @@ import VideoToolbox
 enum ExportService {
     enum Preset: String, CaseIterable { case high = "High quality", medium = "Medium", low = "Low", hevc10 = "HEVC 10-bit" }
 
-    struct Result: Codable { var path: String; var duration: Double; var bytes: Int }
+    struct Result: Codable { var path: String; var duration: Double; var bytes: Int; var chapters: String? = nil }   // chapters: the sidecar written beside the MP4, when asked for
 
     static func export(_ project: Project, to url: URL, preset: Preset = .high, progress: ((Double) -> Void)? = nil, depth: Int = 0) async throws -> Result {
         guard project.duration > 0 else { throw EditError.invalid("timeline is empty") }
         if preset == .hevc10 { return try await exportHEVC10(project, to: url, progress: progress, depth: depth) }
+        try await IsolatedAudio.shared.ensureAll(project)   // voice-isolated sound is rendered per asset before the build looks for it
         let out = try await CompositionBuilder.build(project, depth: depth)   // titles, stills, color and transitions all come from the compositor
 
         let presetName: String = {
@@ -53,6 +54,7 @@ enum ExportService {
     /// frames), encoded by VideoToolbox as 10-bit 4:2:0 with Rec.709 tags, with the audio mix rendered to AAC.
     /// About 0.25 bits per pixel per frame (1080p30 ≈ 15 Mb/s), the usual rate for an SDR grading master.
     static func exportHEVC10(_ project: Project, to url: URL, progress: ((Double) -> Void)? = nil, depth: Int = 0) async throws -> Result {
+        try await IsolatedAudio.shared.ensureAll(project)
         let out = try await CompositionBuilder.build(project, depth: depth, compositor: EditMaxCompositor10.self)
         let reader = try AVAssetReader(asset: out.composition)
         reader.timeRange = CMTimeRange(start: .zero, duration: out.duration)

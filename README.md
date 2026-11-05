@@ -115,7 +115,7 @@ Working:
 - Grouped inspectors: a clip shows its thumbnail, name, split/delete, timing and reset-able sliders; a text shows text, style, size, a color picker and position; the project inspector adds titles at the playhead. Right-click menus on media rows (add, reveal, remove), track headers (mute, hide, delete) and bars (split, show, style, delete); empty-state hints in the preview and timeline
 - Live preview with AVPlayer + Core Animation overlays; frame stepping
 - Export to H.264/AAC MP4 (`File > Export Video…`, ⌘E, or the `export_video` tool), verified with ffprobe
-- MCP server on `http://127.0.0.1:19790/mcp` (port and token in `~/Library/Application Support/EditMax/mcp.json`), 56 tools
+- MCP server on `http://127.0.0.1:19790/mcp` (port and token in `~/Library/Application Support/EditMax/mcp.json`), 62 tools
 - Cleanup: remove silence (from the waveform) and filler words (from the transcript) with ripple deletes across every track
 - Captions: on-device transcription with word timings (Apple SpeechAnalyzer on macOS 26+; SFSpeechRecognizer on macOS 15–25, on-device
   where the Mac has the model, else Apple's servers), six text presets, one click or one tool call
@@ -133,8 +133,28 @@ Working:
 - codemax auto-update: the latest GitHub release is installed on its own after a health check, rolled back when it breaks
 - Debug logs (`~/Library/Application Support/EditMax/logs/`) and “Export diagnostics…” in the Agents tab
 
-Not yet built: keyframes (animated transform/color), speed ramps, LUTs, audio ducking, multicam, project templates,
-asset copying into a project bundle (assets are referenced by path + security bookmark).
+- Transcript editing (Descript-style): `search_transcript` finds a phrase in the speech with its times, `cut_transcript`
+  removes a phrase (by occurrence), a word range or a time span and ripples every track; the clip inspector's Transcript
+  section shows the clip's words (click a word, then another, to select a span; Cut selection). Transcripts stay valid after
+  a ripple because they are stored per asset and mapped through the clip's source offset.
+- Voice isolation: `set_clip_audio voice_isolation` (inspector: EQ & cleanup → Voice isolation) runs Apple's on-device
+  AUSoundIsolation unit over the clip's asset once (offline, cached in `~/Library/Application Support/EditMax/isolated/`,
+  keyed by file and strength) and plays/exports the isolated file; the original plays until the render is done.
+- Auto-reframe: `auto_reframe` (inspector: Transform → Auto-reframe) finds the subject with Vision (largest person, else the
+  salient object) every 0.33 s, scales the picture to cover a frame of another aspect and keyframes its position (smooth,
+  dead-banded, speed-limited) so the subject stays in view: the one-call vertical version of a landscape clip.
+- Stabilization: `stabilize_clip` (inspector: Transform → Stabilize) registers consecutive frames with Vision, smooths the
+  camera path over `strength` seconds and counter-shifts the picture in the compositor with a small zoom (≤ 1.25×) to hide
+  the borders. The clip keeps strength, zoom and a key (`Clip.stabilization`); the per-frame samples live in
+  `Project.motionPaths`, a cache like the transcripts that history snapshots skip, so a long clip is stored once, not
+  once per later edit. Samples are keyed by source time, so trims and speed ramps keep working.
+- Delivery: `export_chapters` turns the markers into a YouTube chapter list (`00:00 Intro` added when needed; File →
+  Export Chapters…, or Copy YouTube chapters in the project inspector); `export_video chapters: true` writes it beside the
+  MP4; `export_batch` (File → Batch Export…) renders one MP4 per template into a directory, auto-reframing every video
+  clip for templates of another aspect. Built-in templates applied to a timeline with clips now only change the frame.
+
+Not yet built: asset copying into a project bundle (assets are referenced by path + security bookmark), an embedded MP4
+chapter track (chapters are a sidecar text file).
 
 ## Build
 

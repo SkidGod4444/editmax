@@ -62,7 +62,7 @@ enum CompositionBuilder {
             let params = audio.map { $0.map { AVMutableAudioMixInputParameters(track: $0) } }
             var sources: [LayerSource] = []
             // Multicam clips play as one plain piece per angle interval.
-            let clips = track.clips.flatMap { $0.multicamPieces(in: project) }.sorted { $0.start < $1.start }
+            let clips = track.clips.flatMap { $0.multicamPieces(in: project) }.map { project.hydrated($0) }.sorted { $0.start < $1.start }
             // EQ/gate: one tap per slot, only when a clip on it asks for processing (plain projects never touch a tap).
             for slot in 0..<2 {
                 let spans = clips.enumerated().filter { $0.offset % 2 == slot && !$0.element.audio.isIdentity }.map { AudioTapContext.Span(start: $0.element.start, end: $0.element.end, audio: $0.element.audio) }
@@ -127,8 +127,10 @@ enum CompositionBuilder {
                 }
                 // Sound may come from another asset (a multicam piece's audio angle); same time map, its own source offset.
                 let audioAsset = clip.audioAssetID.flatMap { project.asset($0) } ?? asset
-                let aav = audioAsset.id == asset.id ? av : (assetCache[audioAsset.id] ?? AVURLAsset(url: proxies[audioAsset.id] ?? audioAsset.url))
-                assetCache[audioAsset.id] = aav
+                // Voice isolation: the pre-rendered isolated copy of the sound when the cache has one (same timeline, never cached as the asset).
+                let isolated = clip.audio.needsIsolation ? IsolatedAudio.readyURL(for: audioAsset, amount: clip.audio.voiceIsolation) : nil
+                let aav = isolated.map { AVURLAsset(url: $0) } ?? (audioAsset.id == asset.id ? av : (assetCache[audioAsset.id] ?? AVURLAsset(url: proxies[audioAsset.id] ?? audioAsset.url)))
+                if isolated == nil { assetCache[audioAsset.id] = aav }
                 var aclip = clip; if let s = clip.audioSourceIn { aclip.sourceIn = s }
                 let asegments = audioAsset.id == asset.id && clip.audioSourceIn == nil ? segments : TimeMap.segments(aclip, assetDuration: audioAsset.duration)
                 if let a = audio[slot], let atr = try await aav.loadTracks(withMediaType: .audio).first, let prm = params[slot] {

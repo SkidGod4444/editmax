@@ -78,7 +78,7 @@ enum EditMaxTools {
         Tool(name: "capture_frame", description: "Render the frame at a timeline time as a PNG image so you can see what the viewer sees (video, images and text).",
              inputSchema: schema(["seconds": num("Timeline time"), "max_width": int("Image width in pixels (default 960)"), "project": projectArg], required: ["seconds"]), annotations: .init(readOnlyHint: true)),
         Tool(name: "export_video", description: "Render the whole timeline to an MP4 at the project resolution: H.264/AAC 8-bit by default, or hevc10 for a 10-bit HEVC Main 10 master (4:2:0, Rec.709 tags, about 0.25 bits per pixel) to hand to a colorist. Blocks until done; expect roughly real time or faster.",
-             inputSchema: schema(["path": str("Absolute output path ending in .mp4"), "preset": str("high (default, H.264), medium (720p), low (480p) or hevc10 (10-bit HEVC, project resolution)"), "project": projectArg], required: ["path"])),
+             inputSchema: schema(["path": str("Absolute output path ending in .mp4"), "preset": str("high (default, H.264), medium (720p), low (480p) or hevc10 (10-bit HEVC, project resolution)"), "chapters": .object(["type": "boolean", "description": "Also write the markers as a YouTube chapter list to <basename>.chapters.txt beside the MP4 (default false)"]), "project": projectArg], required: ["path"])),
         Tool(name: "add_track", description: "Add a video or audio track. New tracks go to the bottom row; the top row covers the rows below it in the picture.",
              inputSchema: schema(["kind": str("video or audio"), "name": str("Optional name (default V2, A2…)"), "project": projectArg], required: ["kind"])),
         Tool(name: "move_track", description: "Move a track to another row (0 = top). The top row covers the rows below it in the picture.",
@@ -105,8 +105,8 @@ enum EditMaxTools {
              inputSchema: schema(["clip": str("Clip id prefix"), "exposure": num("-4 to 4 stops"), "contrast": num("0.25 to 3"), "saturation": num("0 to 3"), "temperature": num("-100 to 100"), "tint": num("-100 to 100"),
                                   "shadows": num("-1 to 1"), "midtones": num("-1 to 1"), "highlights": num("-1 to 1"), "vibrance": num("-1 to 1"), "input_lut": str("Path of a .cube conversion LUT applied first at full strength (log footage such as DJI D-Log to Rec.709), or none"), "look": str("Built-in look name, a .cube path, or none"), "look_mix": num("0 to 1 (default 1)"),
                                   "reset": .object(["type": "boolean", "description": "Clear the color correction first"]), "project": projectArg], required: ["clip"])),
-        Tool(name: "set_clip_audio", description: "Shape a clip's sound: three-band EQ gains in dB (low shelf 200 Hz, mid peak 1 kHz, high shelf 6 kHz; -18 to 18), a high-pass filter in Hz (0 = off; 80-120 removes rumble and hum), and a noise gate threshold in dBFS (0 = off; e.g. -45 closes the gate by 26 dB between words). reset=true clears all.",
-             inputSchema: schema(["clip": str("Clip id prefix"), "low": num("dB"), "mid": num("dB"), "high": num("dB"), "high_pass": num("Hz, 0 = off"), "gate": num("dBFS threshold, 0 = off"),
+        Tool(name: "set_clip_audio", description: "Shape a clip's sound: three-band EQ gains in dB (low shelf 200 Hz, mid peak 1 kHz, high shelf 6 kHz; -18 to 18), a high-pass filter in Hz (0 = off; 80-120 removes rumble and hum), and a noise gate threshold in dBFS (0 = off; e.g. -45 closes the gate by 26 dB between words), and voice_isolation (0 = off, 1 = speech only: strips room noise and background with Apple's on-device voice isolator; rendered once per asset and amount, the preview plays the original until it is ready, the export waits for it). reset=true clears all.",
+             inputSchema: schema(["clip": str("Clip id prefix"), "low": num("dB"), "mid": num("dB"), "high": num("dB"), "high_pass": num("Hz, 0 = off"), "gate": num("dBFS threshold, 0 = off"), "voice_isolation": num("0 = off, 1 = speech only; renders once per asset on this Mac"),
                                   "reset": .object(["type": "boolean", "description": "Clear the audio settings first"]), "project": projectArg], required: ["clip"])),
         Tool(name: "set_ducking", description: "Auto-duck a track (music) under another track's clips (voice): its volume drops to level while clips play on the other track, with attack and release ramps. under \"none\" stops ducking.",
              inputSchema: schema(["track": str("Track name or id to duck (e.g. A2)"), "under": str("Track whose clips cause the duck (e.g. A1), or none"), "level": num("Volume while ducked, 0 to 1 (default 0.25)"), "attack": num("Seconds to drop (default 0.15)"), "release": num("Seconds to come back (default 0.4)"), "project": projectArg], required: ["track"])),
@@ -142,12 +142,36 @@ enum EditMaxTools {
              inputSchema: schema(["project": projectArg])),
         Tool(name: "list_templates", description: "Project templates: built-in formats (YouTube 16:9, Shorts 9:16, Square, 4K, Cinema, 4:5) and templates saved from projects.",
              inputSchema: schema(["project": projectArg]), annotations: .init(readOnlyHint: true)),
-        Tool(name: "apply_template", description: "Replace the current project with a template (undoable). A built-in sets the frame size and fps on an empty timeline; a saved template restores its tracks, clips and titles.",
+        Tool(name: "apply_template", description: "Apply a template (undoable). A built-in (YouTube 16:9, Shorts / Reels 9:16, Square 1:1…) only sets the frame size and fps: clips, titles and markers stay (then auto_reframe each clip for the new aspect); on an empty timeline it starts a fresh project at that size. A saved template replaces the project with its tracks, clips and titles.",
              inputSchema: schema(["name": str("Template name from list_templates"), "project": projectArg], required: ["name"])),
         Tool(name: "save_template", description: "Save the current project (without history) as a named template for later apply_template calls.",
              inputSchema: schema(["name": str("Template name"), "project": projectArg], required: ["name"])),
         Tool(name: "set_project_settings", description: "Change output resolution, frame rate or project name.",
              inputSchema: schema(["width": int("Pixels"), "height": int("Pixels"), "fps": num("Frames per second"), "name": str("Project name"), "project": projectArg, "use_proxies": .object(["type": "boolean", "description": "Preview from proxy files when they exist (see make_proxies)"])])),
+        Tool(name: "search_transcript", description: "Find a phrase in the spoken words of a clip, an asset's clips, or every clip with audio (case and punctuation ignored). Each match gives its occurrence number, clip, timeline start/end, 0-based word indices (as in get_transcript for that clip) and a few words of context. Transcribes on first use.",
+             inputSchema: schema(["query": str("Words to find, e.g. \"let me start again\""), "clip": str("Clip id prefix (default: all clips with audio)"), "asset": str("Asset id prefix or file name: only that asset's clips"),
+                                  "language": str("Language tag for transcription (default: the Mac's language)"), "project": projectArg], required: ["query"]),
+             annotations: .init(readOnlyHint: true)),
+        Tool(name: "cut_transcript", description: "Cut a span of speech out of the timeline by its words, like deleting text (ripple: every track shifts, captions move). Choose the span by phrase (+ occurrence when it is said more than once; the error lists them), by from_word/to_word (0-based indices into get_transcript's words for one clip), or by start/end (the words whose middle falls in that range, one clip). The cut runs from the first word's start to the last word's end, padded by `padding` but never into the neighbouring words. Returns the removed words and range.",
+             inputSchema: schema(["phrase": str("Words to cut, as spoken"), "occurrence": int("Which occurrence of the phrase, 1-based (default 1 when it occurs once)"),
+                                  "from_word": int("First word index (0-based) in the clip's transcript"), "to_word": int("Last word index, inclusive (default: from_word)"),
+                                  "start": num("Timeline seconds: cut the words inside start…end"), "end": num("Timeline seconds"),
+                                  "padding": num("Seconds of silence taken on each side, capped at the neighbouring words (default 0.03)"),
+                                  "clip": str("Clip id prefix (default: all clips with audio; required for from_word)"), "asset": str("Asset id prefix or file name: only that asset's clips"),
+                                  "language": str("Language tag for transcription (default: the Mac's language)"), "project": projectArg]),
+             annotations: .init(destructiveHint: true)),
+        Tool(name: "export_chapters", description: "The project's markers as a YouTube chapter list (\"mm:ss Name\" per line, sorted, with a 00:00 Intro added when no marker sits at 0; unnamed markers become Chapter N). Without path it only returns the text, to paste into a video description; with path it is also written to that .txt file, or to <basename>.chapters.txt beside the given .mp4.",
+             inputSchema: schema(["path": str("Optional: a .txt file to write, or an exported .mp4 to put <basename>.chapters.txt beside"), "project": projectArg])),
+        Tool(name: "export_batch", description: "Render the timeline to several formats in one go: one MP4 per template (built-in or saved), each named <project>-<template slug>.mp4 in the directory, exported one after another with the template's width, height and fps; for a template with another aspect every video clip is auto-reframed to follow its subject (reframe false keeps letter-/pillarboxing). The project itself is not changed. Blocks until every file is done; expect roughly real time per template.",
+             inputSchema: schema(["directory": str("Absolute directory to write into (created if missing)"), "templates": strs("Template names from list_templates (default: every built-in)"), "preset": str("high (default, H.264), medium, low or hevc10"),
+                                  "chapters": .object(["type": "boolean", "description": "Also write the markers as <project>.chapters.txt in the directory (default false)"]),
+                                  "reframe": .object(["type": "boolean", "description": "Auto-reframe every video clip for templates with another aspect than the project (default true); false letter- or pillarboxes instead"]), "project": projectArg], required: ["directory"])),
+        Tool(name: "auto_reframe", description: "Make a clip follow its subject when the project frame has a different aspect than the source (16:9 footage in a 9:16 or 1:1 project): scales the picture to cover the frame and keyframes its position (smooth ease) so the subject stays in view, replacing any x/y animation. Finds the subject with Vision (largest person, else the salient object, else the frame centre). When the user asks for a vertical / Shorts / Reels version, set the frame FIRST: apply_template \"Shorts / Reels 9:16\" on an empty project before inserting clips (a built-in template empties the timeline), or set_project_settings width 1080 height 1920 when clips are already placed; then call this per clip. One undoable edit; inspect_timeline shows the keyframes.",
+             inputSchema: schema(["clip": str("Clip id prefix or name"), "mode": str("auto (default: person, else saliency), person, saliency"), "sample_interval": num("Seconds of timeline between analysed frames (default 0.33; smaller = finer, slower)"),
+                                  "strength": num("0-1: how much of the subject's displacement from the centre the pan follows (default 1 = keep it centred)"), "project": projectArg], required: ["clip"])),
+        Tool(name: "stabilize_clip", description: "Smooth camera shake on a video clip: analyses its motion frame by frame (on-device image registration, a few seconds per minute of footage), smooths the camera path over `strength` seconds and counter-shifts the picture every frame, zooming in slightly (up to 1.25×) to hide the borders. Keyed to source time, so later trims and speed changes keep working; call again to re-analyse. Returns samples, zoom, crop percentage and the largest shift; remove true clears it.",
+             inputSchema: schema(["clip": str("Clip id prefix or name"), "strength": num("Smoothing window in seconds (default 0.6; larger = steadier but more zoom, 0.1-3)"),
+                                  "remove": .object(["type": "boolean", "description": "Remove the stabilization instead"]), "project": projectArg], required: ["clip"])),
     ]
 
     static func register(on server: Server) async {
@@ -258,7 +282,7 @@ enum EditMaxTools {
         case "export_video":
             let want = (s("preset") ?? "high").lowercased().filter { $0.isLetter || $0.isNumber }   // "hevc10", "hevc", "high", "med"…
             let preset = ExportService.Preset.allCases.first { $0.rawValue.lowercased().filter { $0.isLetter || $0.isNumber }.hasPrefix(want) } ?? .high
-            return try payload(try await x.exportVideo(to: try req("path"), preset: preset))
+            return try payload(try await x.exportVideo(to: try req("path"), preset: preset, chapters: b("chapters")))
         case "ui_layout":
             return try payload(try UIDriver.layout(prefix: s("prefix")))
         case "ui_drag":
@@ -300,7 +324,7 @@ enum EditMaxTools {
             try x.setClipColor(try req("clip"), exposure: d("exposure"), contrast: d("contrast"), saturation: d("saturation"), temperature: d("temperature"), tint: d("tint"), reset: b("reset"),
                                shadows: d("shadows"), midtones: d("midtones"), highlights: d("highlights"), vibrance: d("vibrance"), lut: s("look"), lutMix: d("look_mix"), inputLut: s("input_lut")); return message("Color updated")
         case "set_clip_audio":
-            try x.setClipAudio(try req("clip"), low: d("low"), mid: d("mid"), high: d("high"), highPass: d("high_pass"), gate: d("gate"), reset: b("reset")); return message("Audio updated")
+            try x.setClipAudio(try req("clip"), low: d("low"), mid: d("mid"), high: d("high"), highPass: d("high_pass"), gate: d("gate"), voiceIsolation: d("voice_isolation"), reset: b("reset")); return message("Audio updated")
         case "set_ducking":
             return try payload(try x.setDucking(try req("track"), under: s("under"), level: d("level"), attack: d("attack"), release: d("release")))
         case "nest_clips":
@@ -344,6 +368,19 @@ enum EditMaxTools {
             return try payload(x.addMarker(at: try reqNum("at"), name: s("name"), colorHex: s("color")))
         case "remove_marker":
             try x.removeMarker(try req("marker")); return message("Marker removed")
+        case "search_transcript":
+            return try payload(try await x.searchTranscript(clip: s("clip"), asset: s("asset"), query: try req("query"), language: s("language")))
+        case "cut_transcript":
+            return try payload(try await x.cutTranscript(clip: s("clip"), asset: s("asset"), phrase: s("phrase"), occurrence: i("occurrence"), fromWord: i("from_word"), toWord: i("to_word"),
+                                                         startTime: d("start"), endTime: d("end"), padding: d("padding") ?? 0.03, language: s("language")))
+        case "export_chapters":
+            return try payload(try x.exportChapters(path: s("path")))
+        case "export_batch":
+            return try payload(try await x.exportBatch(directory: try req("directory"), templates: list("templates"), preset: ExportService.Preset.parse(s("preset")), chapters: b("chapters"), reframe: a["reframe"]?.boolValue ?? true))
+        case "auto_reframe":
+            return try payload(try await x.autoReframe(try req("clip"), mode: s("mode"), sampleInterval: d("sample_interval"), strength: d("strength")))
+        case "stabilize_clip":
+            return try payload(try await x.stabilizeClip(try req("clip"), strength: d("strength"), remove: b("remove")))
         default: throw MCPError.methodNotFound("Unknown tool \(name)")
         }
     }

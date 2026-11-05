@@ -11,7 +11,13 @@ struct ClipAudio: Codable, Equatable {
     var highGain: Double = 0
     var highPass: Double = 0
     var gate: Double = 0
-    var isIdentity: Bool { self == ClipAudio() }
+    /// Voice isolation amount, 0 = off … 1 = speech only. Pre-rendered per asset by `IsolatedAudio`, never run in the tap.
+    var voiceIsolation: Double = 0
+    /// Nothing for the tap to process (EQ, high-pass, gate). Isolation does not count: it is rendered ahead of time.
+    var isIdentity: Bool { lowGain == 0 && midGain == 0 && highGain == 0 && highPass == 0 && gate == 0 }
+    /// Every setting at its default, isolation included.
+    var isDefault: Bool { self == ClipAudio() }
+    var needsIsolation: Bool { voiceIsolation > 0.001 }
     static let identity = ClipAudio()
 
     init() {}
@@ -22,6 +28,7 @@ struct ClipAudio: Codable, Equatable {
         highGain = try c.decodeIfPresent(Double.self, forKey: .highGain) ?? 0
         highPass = try c.decodeIfPresent(Double.self, forKey: .highPass) ?? 0
         gate = try c.decodeIfPresent(Double.self, forKey: .gate) ?? 0
+        voiceIsolation = try c.decodeIfPresent(Double.self, forKey: .voiceIsolation) ?? 0
     }
 }
 

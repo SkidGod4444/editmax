@@ -24,6 +24,7 @@ struct ToolExecutor {
             var audio: ClipAudio?                      // EQ / high-pass / gate, only when set
             var multicam: MulticamInfo?                // angles, cuts and the audio angle, only for multicam clips
             var sequence: String?                      // name of the nested sequence this clip plays, if any
+            var stabilized: Bool?                      // true when stabilize_clip has run on the clip
         }
         struct KeyframeInfo: Codable { var time: Double, value: Double, ease: String }
         struct MarkerInfo: Codable { var id: String, time: Double, name: String, color: String }
@@ -45,9 +46,10 @@ struct ToolExecutor {
                                    transform: c.transform.isIdentity ? nil : c.transform, color: c.color.isIdentity ? nil : c.color,
                                    fadeIn: c.fadeIn > 0 ? c.fadeIn : nil, fadeOut: c.fadeOut > 0 ? c.fadeOut : nil, transition: c.transitionIn,
                                    keyframes: c.isAnimated ? c.animations.mapValues { $0.map { .init(time: r(c.start + $0.time), value: r($0.value), ease: $0.ease.rawValue) } } : nil,
-                                   audio: c.audio.isIdentity ? nil : c.audio,
+                                   audio: c.audio.isDefault ? nil : c.audio,
                                    multicam: c.multicam.map { multicamInfo(c, $0) },
-                                   sequence: p.sequence(of: c)?.name))
+                                   sequence: p.sequence(of: c)?.name,
+                                   stabilized: c.stabilization == nil ? nil : true))
             }
         }
         return TimelineSummary(
@@ -315,7 +317,7 @@ struct ToolExecutor {
         return ranges.filter { $0.duration >= minDuration }
     }
 
-    private func rippleDelete(_ ranges: [RangeInfo], label: String) -> CleanupResult {
+    func rippleDelete(_ ranges: [RangeInfo], label: String) -> CleanupResult {
         let removed = ranges.reduce(0) { $0 + $1.duration }
         if !ranges.isEmpty {
             document.apply(label, origin: origin) { p in
@@ -397,10 +399,13 @@ struct ToolExecutor {
 
     // MARK: Export
 
-    func exportVideo(to path: String, preset: ExportService.Preset = .high, progress: ((Double) -> Void)? = nil) async throws -> ExportService.Result {
+    /// With `chapters`, the markers also go to `<basename>.chapters.txt` beside the MP4 (skipped when there are none; a sidecar failure never fails the export).
+    func exportVideo(to path: String, preset: ExportService.Preset = .high, chapters: Bool = false, progress: ((Double) -> Void)? = nil) async throws -> ExportService.Result {
         var url = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
         if url.pathExtension.lowercased() != "mp4" { url.appendPathExtension("mp4") }
-        return try await ExportService.export(project, to: url, preset: preset, progress: progress)
+        var r = try await ExportService.export(project, to: url, preset: preset, progress: progress)
+        if chapters, !project.markers.isEmpty { r.chapters = try? Chapters.write(project, nextTo: url).path }
+        return r
     }
 
     // MARK: Playhead and frames
@@ -489,8 +494,15 @@ struct ToolExecutor {
 
     // MARK: Audio
 
-    func setClipAudio(_ clip: String, low: Double?, mid: Double?, high: Double?, highPass: Double?, gate: Double?, reset: Bool) throws {
+    /// `voiceIsolation` 0…1 is rendered per asset by `IsolatedAudio` (kicked off here so the preview catches up); the AU
+    /// missing on this Mac is an error before anything changes.
+    func setClipAudio(_ clip: String, low: Double?, mid: Double?, high: Double?, highPass: Double?, gate: Double?, voiceIsolation: Double? = nil, reset: Bool) throws {
         let id = try resolveClip(clip)
+        let isolation = voiceIsolation.map { max(0, min(1, $0)) }
+        if let isolation, isolation > 0.001 {
+            guard IsolatedAudio.isAvailable else { throw EditError.invalid(IsolatedAudio.unavailableMessage) }
+            if let c = project.clip(id)?.clip, let a = IsolatedAudio.audioAsset(of: c, in: project), a.sequenceID != nil { throw EditError.invalid(IsolatedAudio.sequenceMessage) }
+        }
         try document.apply("Clip audio", origin: origin, coalesce: coalesce) { p in
             try p.updateClip(id) { c in
                 if reset { c.audio = .identity }
@@ -499,7 +511,11 @@ struct ToolExecutor {
                 if let high { c.audio.highGain = max(-18, min(18, high)) }
                 if let highPass { c.audio.highPass = highPass <= 0 ? 0 : max(20, min(2000, highPass)) }
                 if let gate { c.audio.gate = gate >= 0 ? 0 : max(-90, gate) }
+                if let isolation { c.audio.voiceIsolation = isolation < 0.005 ? 0 : isolation }
             }
+        }
+        if let found = project.clip(id)?.clip, found.audio.needsIsolation, let asset = IsolatedAudio.audioAsset(of: found, in: project) {
+            IsolatedAudio.shared.schedule(asset, amount: found.audio.voiceIsolation)
         }
     }
 
@@ -936,8 +952,18 @@ struct ToolExecutor {
     /// Replaces the whole project with a template (undoable). Built-ins change the format and empty the timeline.
     func applyTemplate(_ name: String) throws -> Templates.Info {
         let p = try Templates.project(named: name)
-        document.apply("Apply template \(name)", origin: origin) { cur in
-            var next = p; next.history = cur.history; cur = next
+        let info = Templates.list().first { $0.name.caseInsensitiveCompare(name) == .orderedSame }
+        let hasContent = !project.allClips.isEmpty || !project.texts.isEmpty
+        if info?.builtin == true, hasContent {
+            // A built-in template is only a frame size and rate: on a timeline with a cut, keep the cut and change the frame
+            // (then auto_reframe follows the subject). Only an empty project becomes the fresh template project.
+            document.apply("Set frame \(p.settings.width)×\(p.settings.height)", origin: origin) { cur in
+                cur.settings.width = p.settings.width; cur.settings.height = p.settings.height; cur.settings.fps = p.settings.fps
+            }
+        } else {
+            document.apply("Apply template \(name)", origin: origin) { cur in
+                var next = p; next.history = cur.history; cur = next
+            }
         }
         return Templates.list().first { $0.name.caseInsensitiveCompare(name) == .orderedSame } ?? Templates.Info(name: name, builtin: false, width: p.settings.width, height: p.settings.height, fps: p.settings.fps, summary: "")
     }

@@ -55,6 +55,9 @@ final class PlayerController: ObservableObject {
         ProxyStore.shared.$version.dropFirst().receive(on: DispatchQueue.main)
             .sink { [weak self, weak document] _ in guard let document, document.project.settings.useProxies else { return }; self?.rebuild(document.project) }
             .store(in: &cancellables)
+        IsolatedAudio.shared.$version.dropFirst().receive(on: DispatchQueue.main)   // an isolated sound file became ready: play it
+            .sink { [weak self, weak document] _ in guard let document else { return }; self?.rebuild(document.project) }
+            .store(in: &cancellables)
         document.$seekRequest
             .compactMap { $0 }
             .receive(on: DispatchQueue.main)

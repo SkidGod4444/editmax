@@ -52,6 +52,40 @@ struct ClipTransform: Codable, Equatable {
     static let identity = ClipTransform()
 }
 
+/// Camera-shake correction for a clip (see `Stabilizer`). Samples are keyed by SOURCE time in the asset, so trims and
+/// speed ramps never move them; `dx`/`dy` are the shift to apply to the picture as a fraction of the oriented source
+/// width/height (+ = move it right/down); `zoom` is the uniform scale that keeps the shifted borders out of the frame.
+struct Stabilization: Codable, Equatable {
+    struct Sample: Codable, Equatable { var t: Double; var dx: Double; var dy: Double }
+    var strength: Double
+    var zoom: Double
+    /// Per-frame corrections. On a clip in the document this stays empty: the samples live in `Project.motionPaths[pathKey]`
+    /// (a cache that history snapshots skip, so a long clip's thousands of samples are stored once, not once per edit);
+    /// the composition builder fills them in (`Project.hydrated`) before the compositor reads them.
+    var samples: [Sample] = []
+    var pathKey: String = ""
+
+    init(strength: Double, zoom: Double, samples: [Sample], pathKey: String = "") { self.strength = strength; self.zoom = zoom; self.samples = samples; self.pathKey = pathKey }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        strength = try c.decodeIfPresent(Double.self, forKey: .strength) ?? 0.6
+        zoom = try c.decodeIfPresent(Double.self, forKey: .zoom) ?? 1
+        samples = try c.decodeIfPresent([Sample].self, forKey: .samples) ?? []
+        pathKey = try c.decodeIfPresent(String.self, forKey: .pathKey) ?? ""
+    }
+
+    /// The shift at a source time: linear between samples, held at the ends. Samples are sorted by `t`.
+    func offset(at sourceTime: Double) -> (dx: Double, dy: Double) {
+        guard let first = samples.first, let last = samples.last else { return (0, 0) }
+        if sourceTime <= first.t { return (first.dx, first.dy) }
+        if sourceTime >= last.t { return (last.dx, last.dy) }
+        var lo = 0, hi = samples.count - 1   // samples[lo].t <= sourceTime < samples[hi].t
+        while hi - lo > 1 { let mid = (lo + hi) / 2; if samples[mid].t <= sourceTime { lo = mid } else { hi = mid } }
+        let a = samples[lo], b = samples[hi], u = (sourceTime - a.t) / max(1e-9, b.t - a.t)
+        return (a.dx + (b.dx - a.dx) * u, a.dy + (b.dy - a.dy) * u)
+    }
+}
+
 /// Primary color correction. Exposure in stops, contrast and saturation as multipliers (1 = untouched),
 /// temperature and tint from -100 (cool / green) to 100 (warm / magenta).
 struct ClipColor: Codable, Equatable {
@@ -164,6 +198,8 @@ struct Clip: Codable, Identifiable, Equatable {
     /// Sound from another asset than the picture (a multicam piece's audio angle); nil = the clip's own asset.
     var audioAssetID: UUID? = nil
     var audioSourceIn: Double? = nil
+    /// Camera-shake correction from `stabilize_clip`; nil = none.
+    var stabilization: Stabilization? = nil
     var end: Double { start + duration }
     /// Where the clip's media ends in the asset: with a speed ramp, the integral of speed over the clip.
     var sourceOut: Double { sourceIn + sourceOffset(at: duration) }
@@ -195,6 +231,7 @@ struct Clip: Codable, Identifiable, Equatable {
         multicam = try c.decodeIfPresent(Multicam.self, forKey: .multicam)
         audioAssetID = try c.decodeIfPresent(UUID.self, forKey: .audioAssetID)
         audioSourceIn = try c.decodeIfPresent(Double.self, forKey: .audioSourceIn)
+        stabilization = try c.decodeIfPresent(Stabilization.self, forKey: .stabilization)
     }
 
     /// The two clips a split at `local` seconds produces; the right one gets a new id and no transition or fade-in.
@@ -238,6 +275,7 @@ struct Clip: Codable, Identifiable, Equatable {
             p.audioAssetID = mc.angles[au]
             p.audioSourceIn = max(0, piece.sourceIn + mc.offset(au))
             p.multicam = nil
+            if ai != 0 { p.stabilization = nil }   // the analysis is of angle 1's picture
             p.name = "\(name) ∠\(ai + 1)"
             if i > 0 { var u = id.uuid; u.0 ^= UInt8(i & 0xff); u.1 ^= UInt8((i >> 8) & 0xff); p.id = UUID(uuid: u) }   // leading bytes: short ids stay distinct
             return p
@@ -466,6 +504,9 @@ struct Project: Codable, Equatable {
     var texts: [TextOverlay] = []
     var markers: [Marker] = []
     var transcripts: [String: Transcript]? = nil   // keyed by asset id; a cache, left out of history snapshots
+    /// Stabilization samples keyed by `Stabilization.pathKey` (asset, source range, strength): analysis results, a cache like
+    /// `transcripts`, left out of history snapshots and kept across undo/redo/restore.
+    var motionPaths: [String: [Stabilization.Sample]]? = nil
     /// Nested sequences (timelines folded into one clip); assets of kind `.sequence` point at them.
     var sequences: [Sequence] = []
     var history: [HistoryEntry] = []
@@ -483,6 +524,7 @@ struct Project: Codable, Equatable {
         texts = try c.decodeIfPresent([TextOverlay].self, forKey: .texts) ?? []
         markers = try c.decodeIfPresent([Marker].self, forKey: .markers) ?? []
         transcripts = try c.decodeIfPresent([String: Transcript].self, forKey: .transcripts)
+        motionPaths = try c.decodeIfPresent([String: [Stabilization.Sample]].self, forKey: .motionPaths)
         sequences = try c.decodeIfPresent([Sequence].self, forKey: .sequences) ?? []
         history = try c.decodeIfPresent([HistoryEntry].self, forKey: .history) ?? []
     }
@@ -509,7 +551,12 @@ struct Project: Codable, Equatable {
     }
 
     /// Copy of this project with history (and the transcript cache) stripped, for snapshots and resource reads.
-    var withoutHistory: Project { var p = self; p.history = []; p.transcripts = nil; return p }
+    var withoutHistory: Project { var p = self; p.history = []; p.transcripts = nil; p.motionPaths = nil; return p }
+    /// The clip with its stabilization samples filled in from the cache (the compositor reads them from the clip).
+    func hydrated(_ clip: Clip) -> Clip {
+        guard var st = clip.stabilization, st.samples.isEmpty, let samples = motionPaths?[st.pathKey], !samples.isEmpty else { return clip }
+        var c = clip; st.samples = samples; c.stabilization = st; return c
+    }
     func transcript(for assetID: UUID) -> Transcript? { transcripts?[assetID.uuidString] }
 }
 

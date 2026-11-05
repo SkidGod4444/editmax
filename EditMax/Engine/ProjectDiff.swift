@@ -27,6 +27,7 @@ enum ProjectDiff {
             if x.transitionIn != y.transitionIn { c.append(y.transitionIn.map { "transition \($0.kind.rawValue) \(fmt($0.duration)) s" } ?? "transition removed") }
             if x.animations != y.animations { c.append("keyframes") }
             if x.multicam != y.multicam { c.append("multicam") }
+            if x.stabilization != y.stabilization { c.append(y.stabilization.map { "stabilized (zoom \(fmt($0.zoom))×)" } ?? "stabilization removed") }
             if c.isEmpty { c.append("changed") }
             parts.append("\(y.name): " + c.joined(separator: ", "))
         }

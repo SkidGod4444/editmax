@@ -49,6 +49,9 @@ Working:
   a Rec.709 image; the creative look still runs last. Sources are decoded to 16-bit half floats
   (`kCVPixelFormatType_64RGBAHalf`), so 10-bit footage keeps its precision through the LUT: on a 10-bit ramp stretched
   ×6 the exported staircase matches the ideal (RMS 0.95 vs 0.93, max step 2) where the 8-bit decode had steps of 9.
+  Tested with DJI's official D-Log to Rec.709 cube on DJI's Inspire 3 D-Log sample (ProRes HQ and a 10-bit HEVC
+  Main 10 transcode of it): EditMax's export matches ffmpeg's `lut3d` within 5 levels. DJI's cubes use tabs after
+  `LUT_3D_SIZE` and CR line ends; the parser accepts any whitespace and Latin-1 text.
   10-bit delivery: `export_video preset: hevc10` (export panel: Format → HEVC 10-bit) writes HEVC Main 10, 4:2:0,
   `hvc1`, Rec.709 tags, at about 0.25 bits per pixel per frame (1080p30 ≈ 15 Mb/s ceiling; simple content comes out
   far smaller), through `AVAssetReader` + `AVAssetWriter` with `EditMaxCompositor10` (16-bit half-float frames). The

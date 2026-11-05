@@ -72,14 +72,15 @@ enum Looks {
 
     /// Parses an Adobe/Resolve `.cube` 3D LUT (red varies fastest, as Core Image wants). Larger cubes are resampled down to `maxDimension`.
     static func parseCube(at url: URL) -> Cube? {
-        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+        // DJI and some Resolve exports write Latin-1 comments, CR line ends and tabs between the keyword and its value.
+        guard let text = (try? String(contentsOf: url, encoding: .utf8)) ?? (try? String(contentsOf: url, encoding: .isoLatin1)) else { return nil }
         var size = 0
         var lo = [0.0, 0.0, 0.0], hi = [1.0, 1.0, 1.0]
         var values: [Float] = []
         for raw in text.split(whereSeparator: \.isNewline) {
             let line = raw.trimmingCharacters(in: .whitespaces)
             if line.isEmpty || line.hasPrefix("#") { continue }
-            let parts = line.split(separator: " ", omittingEmptySubsequences: true).map(String.init)
+            let parts = line.split(whereSeparator: \.isWhitespace).map(String.init)
             switch parts.first?.uppercased() {
             case "LUT_3D_SIZE": size = Int(parts.dropFirst().first ?? "") ?? 0
             case "DOMAIN_MIN": lo = parts.dropFirst().compactMap(Double.init); if lo.count != 3 { lo = [0, 0, 0] }

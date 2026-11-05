@@ -100,7 +100,8 @@ ten minutes, is rolled back to the previous copy or the bundled one (every build
 the chat retries the agent with the restored copy, so one message recovers. Quota, login and "not installed" errors are
 the user's, not codemax's, and never count. State in `bin/update-state.json`; “Check now” and the
 status are in the Agents tab. Releases come from codemax's `release.yml` workflow (tag `vX.Y.Z` → binaries attached;
-v0.1.21 is the first). Verified against the real release: 0.1.21 bundled, 0.1.21 latest, nothing to do. Tests: `EDITMAX_UPDATE_URL=<json>
+v0.1.21 was the first). Verified against the real releases: an app bundling 0.1.21 installed 0.1.22 from GitHub on
+its own and chatted through it; a build that bundles 0.1.22 then took over and dropped the updated copy. Tests: `EDITMAX_UPDATE_URL=<json>
 EDITMAX_UPDATE_NOW=1` point the updater at a local fake release.
 
 **Debug logs.** `~/Library/Application Support/EditMax/logs/editmax.log` (NDJSON events: codemax and sidecar launches,

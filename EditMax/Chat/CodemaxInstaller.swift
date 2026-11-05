@@ -49,7 +49,9 @@ final class CodemaxInstaller: ObservableObject {
             if keepUpdated {
                 updatedNote = " (updated to \(state.updatedVersion ?? ""))"
             } else if state.active == "updated" {
+                // The bundled copy has caught up with the update: the previous copy it was keeping is no longer needed.
                 var s = state; s.active = "bundled"; s.updatedVersion = nil; CodemaxUpdater.saveState(s)
+                try? fm.removeItem(at: dest.deletingLastPathComponent().appendingPathComponent("codemax.prev"))
             }
             // Same version string can be a newer build: compare the bytes, not the version.
             if !keepUpdated, digest(of: dest) != digest(of: bundled) {

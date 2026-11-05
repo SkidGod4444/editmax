@@ -10,9 +10,39 @@ import ScreenCaptureKit
 final class UIRegistry {
     static let shared = UIRegistry()
     private(set) var frames: [String: CGRect] = [:]
+    /// Views that can apply a horizontal drag themselves (timeline bars: move and the two trim edges), keyed like frames.
+    /// The driver calls these when macOS refuses to activate EditMax, since SwiftUI gestures only run in the active app.
+    private(set) var dragHandlers: [String: (CGFloat) -> Void] = [:]
     func set(_ id: String, _ frame: CGRect) { frames[id] = frame }
     func remove(_ id: String) { frames.removeValue(forKey: id) }
     func frame(_ id: String) -> CGRect? { frames[id] }
+    func setDrag(_ id: String, _ handler: @escaping (CGFloat) -> Void) { dragHandlers[id] = handler }
+    func removeDrag(_ id: String) { dragHandlers.removeValue(forKey: id) }
+    /// The handler for the element named `id`, else the smallest registered frame containing `point` (a trim handle
+    /// lies inside its bar, so the smaller frame is the more specific one).
+    func dragHandler(id: String?, at point: CGPoint) -> (String, (CGFloat) -> Void)? {
+        if let id, let h = dragHandlers[id] { return (id, h) }
+        let hits = dragHandlers.compactMap { id, h -> (String, (CGFloat) -> Void, CGFloat)? in
+            guard let f = frames[id], f.contains(point) else { return nil }
+            return (id, h, f.width * f.height)
+        }
+        return hits.min { $0.2 < $1.2 }.map { ($0.0, $0.1) }
+    }
+}
+
+private struct UIDragModifier: ViewModifier {
+    let id: String
+    /// Changes whenever the closure would compute something different (a bar's start, length, zoom), so the registry
+    /// never keeps a closure that captured old values.
+    let key: String
+    let handler: (CGFloat) -> Void
+    func body(content: Content) -> some View {
+        content
+            .onAppear { UIRegistry.shared.setDrag(id, handler) }
+            .onChange(of: id) { old, new in UIRegistry.shared.removeDrag(old); UIRegistry.shared.setDrag(new, handler) }
+            .onChange(of: key) { _, _ in UIRegistry.shared.setDrag(id, handler) }
+            .onDisappear { UIRegistry.shared.removeDrag(id) }
+    }
 }
 
 private struct UIFrameModifier: ViewModifier {
@@ -33,6 +63,8 @@ private struct UIFrameModifier: ViewModifier {
 extension View {
     /// Registers this view's frame under `id` for the MCP UI driver.
     func uiFrame(_ id: String) -> some View { modifier(UIFrameModifier(id: id)) }
+    /// Lets the MCP UI driver apply a horizontal drag of `dx` points to this view without a mouse gesture.
+    func uiDrag(_ id: String, key: String, _ handler: @escaping (CGFloat) -> Void) -> some View { modifier(UIDragModifier(id: id, key: key, handler: handler)) }
 }
 
 /// Posts mouse events to EditMax's own window through the app's event queue. They never leave the process, so they
@@ -86,8 +118,8 @@ enum UIDriver {
     /// SwiftUI gestures only run while EditMax is the active app with a key window. For one gesture EditMax is activated,
     /// then the app that was in front gets the focus back and the window its place in the stack. Keystrokes arriving
     /// meanwhile are dropped, not applied, so nothing typed into another app can split or delete a clip.
-    private static func withActiveWindow<T>(_ w: NSWindow, _ body: () async throws -> T) async throws -> T {
-        if NSApp.isActive && w.isKeyWindow { return try await body() }
+    private static func withActiveWindow<T>(_ w: NSWindow, _ body: (_ active: Bool) async throws -> T) async throws -> T {
+        if NSApp.isActive && w.isKeyWindow { return try await body(true) }
         let previous = NSWorkspace.shared.frontmostApplication
         let above = windowAbove(w)
         let monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) { _ in nil }
@@ -101,7 +133,9 @@ enum UIDriver {
         NSApp.activate(ignoringOtherApps: true)
         w.makeKeyAndOrderFront(nil)
         try await Task.sleep(for: .milliseconds(100))
-        return try await body()
+        let active = NSApp.isActive && w.isKeyWindow
+        DebugLog.event("ui-activate", ["active": active, "previous": previous?.localizedName ?? ""])
+        return try await body(active)
     }
 
     /// Window number of the on-screen window just above `w`, from any app (nil when `w` is already on top).
@@ -116,10 +150,21 @@ enum UIDriver {
         return nil
     }
 
-    static func drag(from: CGPoint, to: CGPoint, steps: Int, holdMs: Int) async throws -> Int {
+    /// How a drag was delivered: mouse events through the real gesture, or the view's own drag handler because macOS
+    /// would not activate EditMax (it refuses while another app is being used).
+    enum DragMethod { case events(Int), handler(String) }
+
+    static func drag(from: CGPoint, fromID: String?, to: CGPoint, steps: Int, holdMs: Int) async throws -> DragMethod {
         guard let w = window else { throw EditError.invalid("no window") }
         acceptFirstMouse(in: w)
-        return try await withActiveWindow(w) { try await dragEvents(from: from, to: to, steps: steps, holdMs: holdMs, in: w) }
+        return try await withActiveWindow(w) { active in
+            if !active, let (id, handler) = UIRegistry.shared.dragHandler(id: fromID, at: from) {
+                handler(to.x - from.x)
+                try await Task.sleep(for: .milliseconds(120))
+                return .handler(id)
+            }
+            return .events(try await dragEvents(from: from, to: to, steps: steps, holdMs: holdMs, in: w))
+        }
     }
 
     private static func dragEvents(from: CGPoint, to: CGPoint, steps: Int, holdMs: Int, in w: NSWindow) async throws -> Int {
@@ -142,7 +187,7 @@ enum UIDriver {
     static func click(at p: CGPoint, count: Int) async throws {
         guard let w = window else { throw EditError.invalid("no window") }
         acceptFirstMouse(in: w)
-        try await withActiveWindow(w) {
+        try await withActiveWindow(w) { _ in
             for c in 1...max(1, count) {
                 post(.leftMouseDown, at: p, in: w, clickCount: c)
                 try await Task.sleep(for: .milliseconds(30))

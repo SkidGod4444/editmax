@@ -20,6 +20,8 @@ with these deliberate differences:
 Working:
 - Document model (`.editmax` JSON), multi-window, media panel with import; drag media (or Finder files) onto a timeline lane to place a clip at that time, double-click to append
 - Timeline: video/audio tracks, clip move/split/trim/delete, speed, volume, opacity, close gaps, text overlays
+- Undo/redo (⌘Z, ⇧⌘Z, toolbar arrows) over every edit, the agent's included; the History tab stays the full log with restore points
+- Grouped inspectors: a clip shows its thumbnail, name, split/delete, timing and reset-able sliders; a text shows text, style, size, a color picker and position; the project inspector adds titles at the playhead. Right-click menus on media rows (add, reveal, remove), track headers (mute, hide, delete) and bars (split, show, style, delete); empty-state hints in the preview and timeline
 - Live preview with AVPlayer + Core Animation overlays; frame stepping
 - Export to H.264/AAC MP4 (`File > Export Video…`, ⌘E, or the `export_video` tool), verified with ffprobe
 - MCP server on `http://127.0.0.1:19790/mcp` (port and token in `~/Library/Application Support/EditMax/mcp.json`), 32 tools
@@ -77,7 +79,8 @@ coordinates (media rows, track headers and their mute/hide toggles, lanes, clip 
 toolbar and inspector buttons, the ruler); `ui_drag` and `ui_click` post mouse events to EditMax's own window through the
 app's event queue (`NSApp.postEvent`, so nothing can reach another app and the real cursor stays put; SwiftUI gestures need the active app, so when
 EditMax is behind another app it is activated for that one gesture, keystrokes arriving meanwhile are dropped rather than
-applied, and the previous app gets the focus straight back); `ui_screenshot`
+applied, and the previous app gets the focus straight back; macOS refuses that activation while another app is being used, and then
+`ui_drag` applies the move or trim through the bar's own code and says so in its result); `ui_screenshot`
 returns the window's own pixels as a PNG through ScreenCaptureKit, filtered to that one window (never the screen around
 it; macOS asks for the Screen Recording permission once; without it the tool falls back to rendering the window's layer
 tree, which misses some inspector controls, and says so). Verified: moving and trimming bars, dropping a media row on a lane, reordering

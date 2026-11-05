@@ -51,6 +51,16 @@ struct AssetsSidebar: View {
                         .help("Drag onto the timeline, or double-click to append")
                         .pointer()
                         .uiFrame("media.\(asset.name)")
+                        .contextMenu {
+                            Button("Add to timeline", systemImage: "plus") { add(asset) }
+                            Button("Reveal in Finder", systemImage: "folder") { NSWorkspace.shared.activateFileViewerSelecting([asset.url]) }
+                            Divider()
+                            let uses = document.project.allClips.filter { $0.assetID == asset.id }.count
+                            Button(uses == 0 ? "Remove from project" : "Remove from project and \(uses) clip\(uses == 1 ? "" : "s")", systemImage: "trash", role: .destructive) {
+                                state.selectedClipIDs = []
+                                document.apply("Remove \(asset.name)", origin: .user) { p in _ = p.removeAsset(asset.id) }
+                            }
+                        }
                     }
                 }
                 .padding(6)

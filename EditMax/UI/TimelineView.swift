@@ -63,6 +63,12 @@ struct TimelineView: View {
             }
             .frame(width: 170, alignment: .leading)
             Divider().frame(height: 14)
+            HStack(spacing: 2) {
+                Button { document.undo() } label: { Image(systemName: "arrow.uturn.backward") }.disabled(!document.canUndo).help(document.undoLabel.map { "Undo \($0) (⌘Z)" } ?? "Undo (⌘Z)").pointer().uiFrame("toolbar.undo")
+                Button { document.redo() } label: { Image(systemName: "arrow.uturn.forward") }.disabled(!document.canRedo).help(document.redoLabel.map { "Redo \($0) (⇧⌘Z)" } ?? "Redo (⇧⌘Z)").pointer().uiFrame("toolbar.redo")
+            }
+            .font(.system(size: 12))
+            Divider().frame(height: 14)
             HStack(spacing: 4) {
                 Button("Split", systemImage: "scissors") { splitAtPlayhead() }.keyboardShortcut("s", modifiers: []).disabled(state.selectedClipIDs.isEmpty).help("Split the selected clip at the playhead (S)").pointer().uiFrame("toolbar.split")
                 Button("Delete", systemImage: "trash") { deleteSelection() }.keyboardShortcut(.delete, modifiers: []).disabled(state.selectedClipIDs.isEmpty && state.selectedTextID == nil).help("Delete the selection (⌫)").pointer().uiFrame("toolbar.delete")
@@ -123,6 +129,16 @@ struct TimelineView: View {
                 .onDrop(of: [.utf8PlainText], delegate: TrackDrop(onHover: { trackDropTarget = $0 ? track.id : nil }, onDrop: { providers in dropRow(providers, onto: track.id) }))
                 .help("Drag to reorder tracks. The top row covers the rows below it.")
                 .uiFrame("header.\(track.name)")
+                .contextMenu {
+                    Button(track.isMuted ? "Unmute" : "Mute", systemImage: track.isMuted ? "speaker.wave.2" : "speaker.slash") { toggleMute(track) }
+                    if track.kind == .video { Button(track.isHidden ? "Show" : "Hide", systemImage: track.isHidden ? "eye" : "eye.slash") { toggleHidden(track) } }
+                    Divider()
+                    Button(track.clips.isEmpty ? "Delete track" : "Delete track and \(track.clips.count) clip\(track.clips.count == 1 ? "" : "s")", systemImage: "trash", role: .destructive) {
+                        state.selectedClipIDs.subtract(track.clips.map(\.id))
+                        document.apply("Delete track \(track.name)", origin: .user) { p in _ = p.removeTrack(track.id) }
+                    }
+                    .disabled(document.project.tracks.filter { $0.kind == track.kind }.count == 1)
+                }
     }
 
     private var textHeader: some View {
@@ -215,6 +231,10 @@ struct TimelineView: View {
                     .uiFrame("lane.Text")
                 }
                 Divider()
+            }
+            if document.project.allClips.isEmpty {
+                Text("Drag media from the left panel onto a lane, or double-click a file to add it").font(.system(size: 12)).foregroundStyle(.tertiary)
+                    .padding(.leading, 16).padding(.top, 10).allowsHitTesting(false)
             }
             // Below the last lane: still the timeline (click to seek, deselect, drop onto the default track).
             Color.clear.contentShape(Rectangle()).frame(maxHeight: .infinity)
@@ -341,6 +361,13 @@ struct TimelineView: View {
                      peaks: waveforms.peaks[clip.assetID] ?? [], strip: thumbnails.strips[clip.assetID])
                 .equatable()
                 .onAppear { if let asset { waveforms.request(asset); thumbnails.request(asset) } }
+                .contextMenu {
+            Button("Split at playhead", systemImage: "scissors") { select(clip.id); try? x.splitClip(clip.id.uuidString, at: player.currentTime) }
+                .disabled(player.currentTime <= clip.start + 0.01 || player.currentTime >= clip.end - 0.01)
+            Button("Go to start", systemImage: "arrow.left.to.line") { player.pause(); player.seek(to: clip.start) }
+            Divider()
+            Button("Delete", systemImage: "trash", role: .destructive) { state.selectedClipIDs.remove(clip.id); try? x.removeClips([clip.id.uuidString]) }
+                }
         }
     }
 
@@ -356,6 +383,16 @@ struct TimelineView: View {
                            onTrimStart: { s in edit("Trim text") { $0.duration = t.end - s; $0.start = s } },
                            onTrimEnd: { e in edit("Trim text") { $0.duration = e - t.start } }) {
             TextBody(text: t, selected: selected).equatable()
+                .contextMenu {
+            Button("Show", systemImage: "eye") { player.pause(); player.seek(to: t.start + 0.05) }
+            Menu("Style") {
+                ForEach(CaptionPresets.all, id: \.name) { s in
+                    Button(s.title) { edit("Text style") { $0.preset = s.name } }
+                }
+            }
+            Divider()
+            Button("Delete", systemImage: "trash", role: .destructive) { if state.selectedTextID == t.id { state.selectedTextID = nil }; document.apply("Delete text", origin: .user) { p in p.texts.removeAll { $0.id == t.id } } }
+                }
         }
     }
 
@@ -496,6 +533,7 @@ private struct TimelineBar<Content: View>: View {
     @State private var trim: (leading: Bool, dx: CGFloat)?
 
     private var end: Double { start + duration }
+    private var dragKey: String { "\(start)|\(duration)|\(pps)|\(minStart)|\(maxEnd)" }
     private func round2(_ v: Double) -> Double { (v * 100).rounded() / 100 }
 
     var body: some View {
@@ -512,12 +550,27 @@ private struct TimelineBar<Content: View>: View {
             .onTapGesture { onSelect() }
             .gesture(DragGesture(minimumDistance: 3)
                 .onChanged { v in if moveDX == 0 { onSelect() }; moveDX = v.translation.width }
-                .onEnded { v in
-                    moveDX = 0
-                    let newStart = round2(max(0, start + Double(v.translation.width) / Double(pps)))
-                    if newStart != start { onMove(newStart) }
-                })
+                .onEnded { v in moveDX = 0; commitMove(v.translation.width) })
+            .uiDrag(uiID, key: dragKey) { dx in onSelect(); commitMove(dx) }
+            .uiDrag(uiID + ".left", key: dragKey) { dx in commitTrim(leading: true, dx: dx) }
+            .uiDrag(uiID + ".right", key: dragKey) { dx in commitTrim(leading: false, dx: dx) }
             .help(help).pointer()
+    }
+
+    private func commitMove(_ dx: CGFloat) {
+        let newStart = round2(max(0, start + Double(dx) / Double(pps)))
+        if newStart != start { onMove(newStart) }
+    }
+
+    private func commitTrim(leading: Bool, dx: CGFloat) {
+        let d = Double(dx) / Double(pps)
+        if leading {
+            let s = round2(max(minStart, min(end - 0.1, start + d)))
+            if s != start { onTrimStart(s) }
+        } else {
+            let e = round2(min(maxEnd, max(start + 0.1, end + d)))
+            if e != end { onTrimEnd(e) }
+        }
     }
 
     private func handle(leading: Bool) -> some View {
@@ -529,16 +582,6 @@ private struct TimelineBar<Content: View>: View {
             // Measured in the window's space: the handle itself moves with the live trim, which would halve its own translation.
             .gesture(DragGesture(minimumDistance: 2, coordinateSpace: .global)
                 .onChanged { v in trim = (leading, v.translation.width) }
-                .onEnded { v in
-                    trim = nil
-                    let d = Double(v.translation.width) / Double(pps)
-                    if leading {
-                        let s = round2(max(minStart, min(end - 0.1, start + d)))
-                        if s != start { onTrimStart(s) }
-                    } else {
-                        let e = round2(min(maxEnd, max(start + 0.1, end + d)))
-                        if e != end { onTrimEnd(e) }
-                    }
-                })
+                .onEnded { v in trim = nil; commitTrim(leading: leading, dx: v.translation.width) })
     }
 }

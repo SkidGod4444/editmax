@@ -15,6 +15,7 @@ struct EditMaxApp: App {
             CommandGroup(after: .saveItem) {
                 Button("Export Video…") { NotificationCenter.default.post(name: .editmaxExport, object: nil) }.keyboardShortcut("e", modifiers: [.command])
             }
+            EditCommands()
         }
     }
 }
@@ -31,6 +32,15 @@ struct EditorRootView: View {
                 AssetsSidebar(document: document).frame(minWidth: 200, idealWidth: 240, maxWidth: 360)
                 VStack(spacing: 0) {
                     PreviewView(controller: player)
+                        .overlay {
+                            if document.project.allClips.isEmpty {
+                                VStack(spacing: 8) {
+                                    Image(systemName: "play.rectangle").font(.system(size: 30, weight: .light)).foregroundStyle(.tertiary)
+                                    Text("Drop a clip on the timeline to see it here").font(.system(size: 12)).foregroundStyle(.secondary)
+                                }
+                                .allowsHitTesting(false)
+                            }
+                        }
                     if let e = player.buildError { Text(e).font(.caption).foregroundStyle(.red).padding(4) }
                 }
                 .frame(minWidth: 400)
@@ -40,6 +50,8 @@ struct EditorRootView: View {
             TimelineView(document: document, player: player).frame(minHeight: 200, idealHeight: 280)
         }
         .environmentObject(state)
+        .environmentObject(player)
+        .focusedSceneObject(document)
         .frame(minWidth: 1000, minHeight: 640)
         .onAppear { document.fileURL = fileURL; DocumentRegistry.shared.register(document); player.bind(to: document); if state.chat == nil { state.chat = ChatSession(document: document) }
             // Debug affordances (used by automated checks): EDITMAX_INSPECTOR_TAB=chat|agents|history opens that tab;
@@ -86,6 +98,32 @@ struct EditorRootView: View {
             try? await Task.sleep(for: .seconds(6))
             state.exportStatus = nil
         }
+    }
+}
+
+/// Undo/Redo for the focused window's document. A text field being edited keeps its own undo (typos), the project
+/// gets everything else. The items follow the document, so they update as edits land.
+struct EditCommands: Commands {
+    @FocusedObject private var document: EditMaxDocument?
+
+    var body: some Commands {
+        CommandGroup(replacing: .undoRedo) {
+            Button(document?.undoLabel.map { "Undo \($0)" } ?? "Undo") { if !textUndo(redo: false) { document?.undo() } }
+                .keyboardShortcut("z", modifiers: [.command])
+                .disabled(document == nil || !(document!.canUndo || editingText))
+            Button(document?.redoLabel.map { "Redo \($0)" } ?? "Redo") { if !textUndo(redo: true) { document?.redo() } }
+                .keyboardShortcut("z", modifiers: [.command, .shift])
+                .disabled(document == nil || !(document!.canRedo || editingText))
+        }
+    }
+
+    private var editingText: Bool { NSApp.keyWindow?.firstResponder is NSTextView }
+
+    /// Routes ⌘Z to the text being edited when it has something to undo. Returns false when the project should take it.
+    private func textUndo(redo: Bool) -> Bool {
+        guard let tv = NSApp.keyWindow?.firstResponder as? NSTextView, let um = tv.undoManager else { return false }
+        if redo { guard um.canRedo else { return false }; um.redo() } else { guard um.canUndo else { return false }; um.undo() }
+        return true
     }
 }
 

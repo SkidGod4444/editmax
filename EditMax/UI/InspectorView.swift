@@ -13,17 +13,18 @@ struct InspectorView: View {
             Picker("", selection: $state.inspectorTab) {
                 ForEach(EditorState.InspectorTab.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }
-            .pickerStyle(.segmented).padding(8)
+            .pickerStyle(.segmented).padding(8).pointer()
             Divider()
             if state.inspectorTab == .chat, let chat = state.chat {
                 ChatView(chat: chat)
+            } else if state.inspectorTab == .inspector {
+                inspector
             } else {
                 ScrollView {
                     switch state.inspectorTab {
-                    case .inspector: inspector.padding(12)
                     case .agents: agents.padding(12)
                     case .history: history.padding(12)
-                    case .chat: EmptyView()
+                    default: EmptyView()
                     }
                 }
             }
@@ -130,17 +131,18 @@ struct InspectorView: View {
     private var history: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Every edit records the state before it. Restore any point; restoring is itself an edit, so nothing is lost.").font(.caption).foregroundStyle(.secondary)
-            ForEach(document.project.history.reversed()) { h in
-                HStack {
+            ForEach(Array(document.project.history.reversed().enumerated()), id: \.element.id) { i, h in
+                HStack(spacing: 8) {
                     Image(systemName: h.origin == .agent ? "sparkles" : h.origin == .user ? "person" : "gear").foregroundStyle(h.origin == .agent ? .purple : .secondary).frame(width: 16)
-                    VStack(alignment: .leading) {
-                        Text(h.label).font(.caption)
-                        Text(h.createdAt.formatted(date: .omitted, time: .standard)).font(.caption2).foregroundStyle(.tertiary)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(h.label).font(.caption).lineLimit(1)
+                        Text(i == 0 ? "Latest · \(h.createdAt.formatted(date: .omitted, time: .shortened))" : h.createdAt.formatted(.relative(presentation: .named))).font(.caption2).foregroundStyle(.tertiary)
                     }
                     Spacer()
-                    Button("Restore") { try? document.restore(snapshotID: h.id, origin: .user) }.font(.caption).pointer()
+                    Button("Restore") { try? document.restore(snapshotID: h.id, origin: .user) }.font(.caption).controlSize(.small).pointer().help("Go back to the state before this edit")
                 }
-                .padding(.vertical, 2)
+                .padding(.vertical, 3).padding(.horizontal, 6)
+                .background(i == 0 ? Color.primary.opacity(0.05) : Color.clear, in: RoundedRectangle(cornerRadius: 5))
             }
             if document.project.history.isEmpty { Text("No edits yet.").font(.caption).foregroundStyle(.tertiary) }
         }
@@ -149,22 +151,75 @@ struct InspectorView: View {
 
 struct ClipInspector: View {
     @ObservedObject var document: EditMaxDocument
+    @EnvironmentObject var state: EditorState
+    @EnvironmentObject var player: PlayerController
+    @ObservedObject private var thumbnails = ThumbnailStore.shared
     let clip: Clip
     let track: Track
+    @State private var nameDraft = ""
+
     var body: some View {
         let x = ToolExecutor(document: document, origin: .user)
+        let asset = document.project.asset(clip.assetID)
         Form {
-            TextField("Name", text: .init(get: { clip.name }, set: { try? x.setClipProperties(clip.id.uuidString, name: $0) }))
-            LabeledContent("Track", value: track.name)
-            LabeledContent("Start", value: Timecode.string(clip.start))
-            LabeledContent("End", value: Timecode.string(clip.end))
-            LabeledContent("Duration", value: Timecode.string(clip.duration))
-            LabeledContent("Source in", value: Timecode.string(clip.sourceIn))
-            LabeledContent("ID", value: clip.id.short)
-            Slider(value: .init(get: { clip.speed }, set: { try? x.setClipProperties(clip.id.uuidString, speed: $0) }), in: 0.25...4) { Text("Speed \(clip.speed, specifier: "%.2f")×") }
-            Slider(value: .init(get: { clip.volume }, set: { try? x.setClipProperties(clip.id.uuidString, volume: $0) }), in: 0...2) { Text("Volume \(Int(clip.volume * 100))%") }
-            if track.kind == .video {
-                Slider(value: .init(get: { clip.opacity }, set: { try? x.setClipProperties(clip.id.uuidString, opacity: $0) }), in: 0...1) { Text("Opacity \(Int(clip.opacity * 100))%") }
+            Section {
+                HStack(spacing: 10) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 5).fill(track.kind == .audio ? Color.green.opacity(0.25) : Color.black.opacity(0.35))
+                        if let frame = thumbnails.strips[clip.assetID]?.frames.first { Image(decorative: frame, scale: 1).resizable().aspectRatio(contentMode: .fill) }
+                        else { Image(systemName: track.kind == .video ? "film" : "waveform").foregroundStyle(.secondary) }
+                    }
+                    .frame(width: 64, height: 36).clipShape(RoundedRectangle(cornerRadius: 5))
+                    VStack(alignment: .leading, spacing: 2) {
+                        TextField("Name", text: $nameDraft).textFieldStyle(.plain).font(.system(size: 13, weight: .semibold))
+                            .onSubmit { commitName(x) }
+                        Text(asset?.name ?? "missing file").font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                    }
+                }
+                .padding(.vertical, 2)
+                HStack(spacing: 8) {
+                    Button("Split at playhead", systemImage: "scissors") { try? x.splitClip(clip.id.uuidString, at: player.currentTime) }
+                        .disabled(player.currentTime <= clip.start + 0.01 || player.currentTime >= clip.end - 0.01).pointer()
+                    Button("Delete", systemImage: "trash", role: .destructive) { state.selectedClipIDs = []; try? x.removeClips([clip.id.uuidString]) }.pointer()
+                    Spacer()
+                }
+                .controlSize(.small)
+            }
+            Section("Timing") {
+                LabeledContent("Track", value: track.name)
+                LabeledContent("Start", value: Timecode.string(clip.start))
+                LabeledContent("End", value: Timecode.string(clip.end))
+                LabeledContent("Duration", value: Timecode.string(clip.duration))
+                LabeledContent("Source in", value: Timecode.string(clip.sourceIn))
+            }
+            Section("Adjust") {
+                slider("Speed", value: clip.speed, range: 0.25...4, format: String(format: "%.2f×", clip.speed), reset: 1) { try? x.setClipProperties(clip.id.uuidString, speed: $0) }
+                slider("Volume", value: clip.volume, range: 0...2, format: "\(Int(clip.volume * 100))%", reset: 1) { try? x.setClipProperties(clip.id.uuidString, volume: $0) }
+                if track.kind == .video {
+                    slider("Opacity", value: clip.opacity, range: 0...1, format: "\(Int(clip.opacity * 100))%", reset: 1) { try? x.setClipProperties(clip.id.uuidString, opacity: $0) }
+                }
+            }
+            Section {
+                LabeledContent("Clip id", value: clip.id.short).font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .onAppear { nameDraft = clip.name }
+        .onChange(of: clip.id) { _, _ in nameDraft = clip.name }
+    }
+
+    private func commitName(_ x: ToolExecutor) {
+        let n = nameDraft.trimmingCharacters(in: .whitespaces)
+        if !n.isEmpty, n != clip.name { try? x.setClipProperties(clip.id.uuidString, name: n) }
+    }
+
+    /// A labeled slider with its value on the right; double-click the value to reset.
+    private func slider(_ title: String, value: Double, range: ClosedRange<Double>, format: String, reset: Double, set: @escaping (Double) -> Void) -> some View {
+        LabeledContent(title) {
+            HStack(spacing: 8) {
+                Slider(value: .init(get: { value }, set: set), in: range).controlSize(.small)
+                Text(format).font(.caption).monospacedDigit().foregroundStyle(.secondary).frame(width: 44, alignment: .trailing)
+                    .onTapGesture(count: 2) { set(reset) }.help("Double-click to reset")
             }
         }
     }
@@ -172,24 +227,79 @@ struct ClipInspector: View {
 
 struct TextInspector: View {
     @ObservedObject var document: EditMaxDocument
+    @EnvironmentObject var state: EditorState
+    @EnvironmentObject var player: PlayerController
     let text: TextOverlay
+    @State private var draft = ""
+
     var body: some View {
         Form {
-            TextField("Text", text: binding(\.text), axis: .vertical)
-            Picker("Style", selection: Binding(get: { text.preset ?? "title" }, set: { v in
-                document.apply("Text style", origin: .user) { p in if let i = p.texts.firstIndex(where: { $0.id == text.id }) { p.texts[i].preset = v } }
-            })) { ForEach(CaptionPresets.all, id: \.name) { Text($0.title).tag($0.name) } }.pointer()
-            if text.isCaption { Text("Caption (group \(text.group!.short))").font(.caption).foregroundStyle(.secondary) }
-            Slider(value: binding(\.fontSize), in: 12...300) { Text("Size \(Int(text.fontSize))") }
-            TextField("Color (hex)", text: binding(\.colorHex))
-            Slider(value: binding(\.x), in: 0...1) { Text("X") }
-            Slider(value: binding(\.y), in: 0...1) { Text("Y") }
-            Slider(value: binding(\.start), in: 0...max(1, document.project.duration + 10)) { Text("Start \(Timecode.string(text.start))") }
-            Slider(value: binding(\.duration), in: 0.1...60) { Text("Duration \(Timecode.string(text.duration))") }
+            Section(text.isCaption ? "Caption" : "Title") {
+                TextField("Text", text: $draft, axis: .vertical).lineLimit(1...4)
+                    .onSubmit { commitText() }
+                HStack(spacing: 8) {
+                    Button("Apply text") { commitText() }.disabled(draft == text.text).pointer()
+                    Button("Show", systemImage: "eye") { player.pause(); player.seek(to: text.start + 0.05) }.help("Move the playhead to this text").pointer()
+                    Button("Delete", systemImage: "trash", role: .destructive) {
+                        state.selectedTextID = nil
+                        document.apply("Delete text", origin: .user) { p in p.texts.removeAll { $0.id == text.id } }
+                    }.pointer()
+                    Spacer()
+                }
+                .controlSize(.small)
+                if text.isCaption { Text("Part of caption group \(text.group!.short). Style changes apply to this line only.").font(.caption).foregroundStyle(.secondary) }
+            }
+            Section("Look") {
+                Picker("Style", selection: Binding(get: { text.preset ?? "title" }, set: { v in
+                    document.apply("Text style", origin: .user) { p in if let i = p.texts.firstIndex(where: { $0.id == text.id }) { p.texts[i].preset = v } }
+                })) { ForEach(CaptionPresets.all, id: \.name) { Text($0.title).tag($0.name) } }.pointer()
+                LabeledContent("Size") {
+                    HStack(spacing: 8) {
+                        Slider(value: binding(\.fontSize), in: 12...300).controlSize(.small)
+                        Text("\(Int(text.fontSize)) pt").font(.caption).monospacedDigit().foregroundStyle(.secondary).frame(width: 44, alignment: .trailing)
+                    }
+                }
+                ColorPicker("Color", selection: Binding(get: { Color(hex: text.colorHex) }, set: { c in
+                    let hex = c.hexString
+                    guard hex != text.colorHex else { return }
+                    document.apply("Text color", origin: .user) { p in if let i = p.texts.firstIndex(where: { $0.id == text.id }) { p.texts[i].colorHex = hex } }
+                }), supportsOpacity: false).pointer()
+            }
+            Section("Position") {
+                LabeledContent("Horizontal") {
+                    HStack(spacing: 8) {
+                        Slider(value: binding(\.x), in: 0...1).controlSize(.small)
+                        Text("\(Int(text.x * 100))%").font(.caption).monospacedDigit().foregroundStyle(.secondary).frame(width: 44, alignment: .trailing)
+                    }
+                }
+                LabeledContent("Vertical") {
+                    HStack(spacing: 8) {
+                        Slider(value: binding(\.y), in: 0...1).controlSize(.small)
+                        Text("\(Int(text.y * 100))%").font(.caption).monospacedDigit().foregroundStyle(.secondary).frame(width: 44, alignment: .trailing)
+                    }
+                }
+                Text("0% is the top-left of the frame, 100% the bottom-right. Drag the bar on the timeline to move it in time, its edges to change the length.").font(.caption).foregroundStyle(.secondary)
+            }
+            Section("Timing") {
+                LabeledContent("Start", value: Timecode.string(text.start))
+                LabeledContent("End", value: Timecode.string(text.end))
+                LabeledContent("Duration", value: Timecode.string(text.duration))
+            }
         }
+        .formStyle(.grouped)
+        .onAppear { draft = text.text }
+        .onChange(of: text.id) { _, _ in draft = text.text }
     }
-    private func binding<T>(_ kp: WritableKeyPath<TextOverlay, T>) -> Binding<T> {
+
+    private func commitText() {
+        let t = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty, t != text.text else { return }
+        document.apply("Edit text", origin: .user) { p in if let i = p.texts.firstIndex(where: { $0.id == text.id }) { p.texts[i].text = t } }
+    }
+
+    private func binding<T: Equatable>(_ kp: WritableKeyPath<TextOverlay, T>) -> Binding<T> {
         .init(get: { text[keyPath: kp] }, set: { v in
+            guard v != text[keyPath: kp] else { return }
             document.apply("Edit text", origin: .user) { p in if let i = p.texts.firstIndex(where: { $0.id == text.id }) { p.texts[i][keyPath: kp] = v } }
         })
     }
@@ -232,6 +342,7 @@ extension ProjectInspector {
 struct ProjectInspector: View {
     @ObservedObject var document: EditMaxDocument
     @EnvironmentObject var state: EditorState
+    @EnvironmentObject var player: PlayerController
     @State private var newText = ""
     @State private var captionPreset = "subtitle"
     @State private var captionBusy = false
@@ -249,13 +360,13 @@ struct ProjectInspector: View {
                 LabeledContent("Clips", value: "\(p.allClips.count)")
                 LabeledContent("Project ID", value: document.id.short)
             }
-            Section("Add text at playhead") {
-                TextField("Title text", text: $newText)
-                Button("Add text") {
-                    guard !newText.isEmpty else { return }
-                    _ = try? ToolExecutor(document: document, origin: .user).addText(newText, start: 0, duration: 3, fontSize: nil, colorHex: nil, x: nil, y: nil)
-                    newText = ""
-                }.pointer()
+            Section("Add text") {
+                TextField("Title text", text: $newText, prompt: Text("Type a title and press Return")).onSubmit { addTitle() }
+                HStack {
+                    Button("Add at playhead", systemImage: "plus") { addTitle() }.disabled(newText.trimmingCharacters(in: .whitespaces).isEmpty).pointer()
+                    Spacer()
+                    Text("Starts at \(Timecode.string(player.currentTime)), 3 s long. Drag the bar to adjust.").font(.caption).foregroundStyle(.secondary)
+                }
             }
             Section("Cleanup") {
                 HStack {
@@ -277,8 +388,18 @@ struct ProjectInspector: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section {
-                Text("Select a clip or text block to edit it. Use the Agents tab to connect Claude Code, Codex or Cursor.").font(.caption).foregroundStyle(.secondary)
+                Text("Click a clip or a text bar on the timeline to edit it. The Agents tab connects Claude Code, Codex or Cursor; the Chat tab talks to them here.").font(.caption).foregroundStyle(.secondary)
             }
         }
+        .formStyle(.grouped)
+    }
+
+    private func addTitle() {
+        let t = newText.trimmingCharacters(in: .whitespaces)
+        guard !t.isEmpty else { return }
+        if let added = try? ToolExecutor(document: document, origin: .user).addText(t, start: player.currentTime, duration: 3, fontSize: nil, colorHex: nil, x: nil, y: nil) {
+            state.selectedTextID = added.id; state.selectedClipIDs = []
+        }
+        newText = ""
     }
 }

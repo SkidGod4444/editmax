@@ -42,9 +42,27 @@ final class EditMaxDocument: ReferenceFileDocument, ObservableObject {
     // MARK: Mutations with history
 
     static let maxHistory = 200
+    static let maxUndo = 100
+
+    /// ⌘Z / ⇧⌘Z stacks: the state before each edit, and the states undone. Undo and redo are themselves recorded in
+    /// History, so the History tab stays a complete log.
+    @Published private(set) var undoStack: [(label: String, project: Project)] = []
+    @Published private(set) var redoStack: [(label: String, project: Project)] = []
+    var canUndo: Bool { !undoStack.isEmpty }
+    var canRedo: Bool { !redoStack.isEmpty }
+    var undoLabel: String? { undoStack.last?.label }
+    var redoLabel: String? { redoStack.last?.label }
 
     /// Apply a change. A snapshot of the pre-change state is stored with `label` so it can be restored.
     func apply(_ label: String, origin: EditOrigin, _ body: (inout Project) throws -> Void) rethrows {
+        let before = project.withoutHistory
+        try commit(label, origin: origin, body)
+        undoStack.append((label, before))
+        if undoStack.count > Self.maxUndo { undoStack.removeFirst(undoStack.count - Self.maxUndo) }
+        redoStack.removeAll()
+    }
+
+    private func commit(_ label: String, origin: EditOrigin, _ body: (inout Project) throws -> Void) rethrows {
         let before = project.withoutHistory
         var next = project
         try body(&next)
@@ -54,6 +72,26 @@ final class EditMaxDocument: ReferenceFileDocument, ObservableObject {
         }
         project = next
         revision += 1
+    }
+
+    func undo() {
+        guard let last = undoStack.popLast() else { return }
+        let current = project.withoutHistory
+        commit("Undo \(last.label)", origin: .user) { p in
+            let history = p.history, transcripts = p.transcripts
+            p = last.project; p.history = history; p.transcripts = transcripts ?? p.transcripts
+        }
+        redoStack.append((last.label, current))
+    }
+
+    func redo() {
+        guard let next = redoStack.popLast() else { return }
+        let current = project.withoutHistory
+        commit("Redo \(next.label)", origin: .user) { p in
+            let history = p.history, transcripts = p.transcripts
+            p = next.project; p.history = history; p.transcripts = transcripts ?? p.transcripts
+        }
+        undoStack.append((next.label, current))
     }
 
     /// Restore the project to the state captured by a snapshot. The current state is itself snapshotted first.

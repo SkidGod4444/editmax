@@ -49,7 +49,7 @@ struct ChatView: View {
         VStack(spacing: 6) {
             HStack(spacing: 6) {
                 Picker("", selection: $chat.backend) { ForEach(ChatSession.Backend.allCases, id: \.self) { Text($0.rawValue).tag($0) } }
-                    .pickerStyle(.segmented).labelsHidden().controlSize(.small).frame(maxWidth: 160)
+                    .pickerStyle(.segmented).labelsHidden().controlSize(.small).frame(maxWidth: 160).pointer()
                     .onChange(of: chat.backend) { _, _ in chat.clear() }
                 Spacer()
                 if chat.backend == .apiKey {
@@ -68,7 +68,7 @@ struct ChatView: View {
                         }
                         if chat.agents.isEmpty { Text(chat.agent).tag(chat.agent) }
                     }
-                    .labelsHidden().controlSize(.small).frame(maxWidth: 200).disabled(chat.isRunning)
+                    .labelsHidden().controlSize(.small).frame(maxWidth: 200).disabled(chat.isRunning).pointer()
                     Button { chat.refreshAgents() } label: { Image(systemName: "arrow.clockwise") }
                         .buttonStyle(.borderless).controlSize(.small).help("Look for installed agents again").disabled(chat.isRunning).pointer()
                     Spacer(minLength: 4)
@@ -86,7 +86,7 @@ struct ChatView: View {
                         }
                         if chat.providers.isEmpty { Text(chat.provider).tag(chat.provider) }
                     }
-                    .labelsHidden().controlSize(.small).frame(maxWidth: 170).disabled(chat.isRunning)
+                    .labelsHidden().controlSize(.small).frame(maxWidth: 170).disabled(chat.isRunning).pointer()
                     TextField(chat.selectedProvider?.defaultModel ?? "model id", text: $chat.model)
                         .textFieldStyle(.roundedBorder).controlSize(.small).frame(maxWidth: 150).disabled(chat.isRunning)
                         .help("Model id; empty uses the provider's default")

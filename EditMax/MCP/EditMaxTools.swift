@@ -209,8 +209,12 @@ enum EditMaxTools {
         case "ui_drag":
             let from = try UIDriver.resolve(a["from"], dx: d("from_dx") ?? 0, dy: d("from_dy") ?? 0)
             let to = try UIDriver.resolve(a["to"], dx: d("to_dx") ?? 0, dy: d("to_dy") ?? 0)
-            let n = try await UIDriver.drag(from: from, to: to, steps: i("steps") ?? 12, holdMs: i("hold_ms") ?? 80)
-            return message("Dragged from (\(Int(from.x)), \(Int(from.y))) to (\(Int(to.x)), \(Int(to.y))) with \(n) mouse events")
+            let how = try await UIDriver.drag(from: from, fromID: s("from"), to: to, steps: i("steps") ?? 12, holdMs: i("hold_ms") ?? 80)
+            let path = "from (\(Int(from.x)), \(Int(from.y))) to (\(Int(to.x)), \(Int(to.y)))"
+            switch how {
+            case .events(let n): return message("Dragged \(path) with \(n) mouse events")
+            case .handler(let id): return message("Dragged \(path) by calling \(id)'s own move/trim code: macOS would not make EditMax the active app, which SwiftUI gestures need. Media drops, header reorders and clicks always use real events.")
+            }
         case "ui_click":
             let p = try UIDriver.resolve(a["target"], dx: d("dx") ?? 0, dy: d("dy") ?? 0)
             try await UIDriver.click(at: p, count: i("count") ?? 1)

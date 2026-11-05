@@ -191,6 +191,26 @@ extension Project {
         return true
     }
 
+    /// Removes a track with everything on it. Returns the number of clips that went with it.
+    @discardableResult
+    mutating func removeTrack(_ id: UUID) -> Int {
+        guard let i = tracks.firstIndex(where: { $0.id == id }) else { return 0 }
+        let n = tracks[i].clips.count
+        tracks.remove(at: i)
+        if let row = textLaneRow, row > tracks.count { textLaneRow = tracks.count }
+        return n
+    }
+
+    /// Removes a media file from the project with every clip that uses it. Returns the number of clips removed.
+    @discardableResult
+    mutating func removeAsset(_ id: UUID) -> Int {
+        var n = 0
+        for ti in tracks.indices { let before = tracks[ti].clips.count; tracks[ti].clips.removeAll { $0.assetID == id }; n += before - tracks[ti].clips.count }
+        assets.removeAll { $0.id == id }
+        transcripts?[id.uuidString] = nil
+        return n
+    }
+
     mutating func addTrack(name: String? = nil, kind: TrackKind) -> Track {
         let n = tracks.filter { $0.kind == kind }.count + 1
         let t = Track(name: name ?? "\(kind == .video ? "V" : "A")\(n)", kind: kind)

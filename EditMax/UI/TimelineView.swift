@@ -112,7 +112,7 @@ struct TimelineView: View {
             }
             toolbarSeparator
             HStack(spacing: 0) {
-                toolButton("square.on.square.dashed", help: "Cross dissolve into the selected clip from the one before it (⌘T)", id: "toolbar.transition", disabled: state.selectedClipIDs.isEmpty) { actions.addTransition() }
+                toolButton("square.on.square.dashed", help: "Cross dissolve into the selected clip from the one before it; a transition already there is kept (⌘T)", id: "toolbar.transition", disabled: state.selectedClipIDs.isEmpty) { actions.addTransition() }
                 toolButton("flag", help: "Add a marker at the playhead (M)", id: "toolbar.marker") { actions.addMarker() }
             }
             toolbarSeparator
@@ -383,7 +383,7 @@ struct TimelineView: View {
     private func place(assetID: UUID, track: Track?, at time: Double) {
         guard let asset = document.project.asset(assetID) else { return }
         let kind: TrackKind = asset.kind == .audio ? .audio : .video
-        let target = (track?.kind == kind ? track : nil) ?? document.project.tracks.first(where: { $0.kind == kind })
+        let target = (track?.kind == kind ? track : nil) ?? document.project.defaultTrack(of: kind)
         var start = time
         if let target, let under = target.clips.first(where: { $0.start < start && $0.end > start }) { start = under.end }
         do { try ToolExecutor(document: document, origin: .user).insertClip(asset: assetID.uuidString, track: target?.id.uuidString, at: start) }

@@ -21,7 +21,7 @@ enum EditMaxTools {
              inputSchema: schema([:]), annotations: .init(readOnlyHint: true)),
         Tool(name: "inspect_timeline", description: "Full state of a project's timeline: settings, tracks, every clip with times and ids, text overlays, history count. Call this before and after editing.",
              inputSchema: schema(["project": projectArg]), annotations: .init(readOnlyHint: true)),
-        Tool(name: "list_assets", description: "Media files imported into the project, with ids, kind, duration and dimensions.",
+        Tool(name: "list_assets", description: "Media files imported into the project, with ids, kind, duration and dimensions; missing true marks a file that is not at its path any more (relink_media finds it).",
              inputSchema: schema(["project": projectArg]), annotations: .init(readOnlyHint: true)),
         Tool(name: "import_media", description: "Import video, audio or image files from absolute paths on this Mac into the project's asset list. Files are referenced, not copied.",
              inputSchema: schema(["paths": strs("Absolute file paths (~ is expanded)"), "project": projectArg], required: ["paths"])),
@@ -243,6 +243,38 @@ enum EditMaxTools {
         Tool(name: "normalize_loudness", description: "Make the sound a target loudness in one call: measures, sets the master gain and a master true-peak limiter (or, with clip, that clip's gain and limiter), measures again until it is within 0.1 LU, and lowers the gain if the mixed true peak passes the ceiling. Returns before and after measurements, the gain and every measuring step. One undo step. Refused while a track is soloed. target: youtube (-14, default), apple or podcast (-16), ebu (-23), or a number of LUFS.",
              inputSchema: schema(["target": str("youtube, apple, podcast, ebu or a number such as -14"), "ceiling": num("True-peak ceiling in dBTP, -9 to 0 (default -1)"),
                                   "clip": str("Clip id prefix or name: normalize that clip alone (default: the whole mix)"), "project": projectArg])),
+        // MARK: Editing
+        Tool(name: "roll_edit", description: "Roll the cut between two touching clips on one track: the cut moves by `delta` seconds (or `to` a timeline time), the clip on one side gets longer and the other shorter by the same amount, so nothing else on the timeline moves. `edge` end (default) rolls the cut after `clip`, start the cut before it. Refused (with how far it could go) when the growing clip has no more media or the shrinking one would go under one frame; never clamped. A J/L cut moves with the edit. Returns the cut before/after and both clips.",
+             inputSchema: schema(["clip": str("Clip id prefix or name on one side of the cut"), "edge": str("end (default: the cut after the clip) or start (the cut before it)"),
+                                  "delta": num("Seconds to move the cut (+ later, - earlier)"), "to": num("Timeline time to move the cut to (instead of delta)"), "project": projectArg], required: ["clip"])),
+        Tool(name: "slip_clip", description: "Slip a clip: show an earlier or later part of its source in the same place and length (source in and out both move by `delta` source seconds, or the in point goes `source_in`). Nothing on the timeline moves; keyframes stay where they are on the timeline; sound, multicam angles and J/L cuts slip with it. Refused when the source would run out at either end (the message says how far it can go) and for still images.",
+             inputSchema: schema(["clip": str("Clip id prefix or name"), "delta": num("Source seconds to slip (+ shows later media, - earlier)"), "source_in": num("New source in point in seconds (instead of delta)"), "project": projectArg], required: ["clip"])),
+        Tool(name: "slide_clip", description: "Slide a clip between its neighbours: it moves by `delta` seconds (or `to` a new start) keeping its own source in/out, the touching clip before it is extended or trimmed at its end and the touching clip after it at its start, so the track keeps its length and nothing else moves. An edge with no touching neighbour can move into a gap but not over another clip. Refused (never clamped) when a neighbour would run out of media or go under one frame.",
+             inputSchema: schema(["clip": str("Clip id prefix or name"), "delta": num("Seconds to slide (+ later, - earlier)"), "to": num("New timeline start in seconds (instead of delta)"), "project": projectArg], required: ["clip"])),
+        Tool(name: "set_split_edit", description: "J and L cuts: let a video clip's sound start before its picture (`lead` seconds: a J cut, you hear the next shot first) and/or run on after it (`trail` seconds: an L cut). The extra sound is the clip's own source media beyond its in/out, so it needs that much media (refused otherwise, with the maximum). Negative values start the sound later / end it earlier than the picture; 0 puts it back. Where the sound runs under a neighbour both sounds play (neighbour overlap, the default); neighbour trim instead moves the touching neighbour's sound edge so the sounds meet at the new audio cut. Fades sit at the sound's own edges. Split, ripple delete, trims and slips keep the split edit at its edge. Returns lead, trail, sound start/end, the maximums and any sounds now overlapping.",
+             inputSchema: schema(["clip": str("Clip id prefix or name (a video clip with sound, on a video track)"), "lead": num("Seconds the sound starts before the picture (J cut); 0 = with the picture"),
+                                  "trail": num("Seconds the sound runs after the picture (L cut); 0 = with the picture"), "neighbour": str("overlap (default: both sounds play where they meet) or trim (the touching neighbour's sound is trimmed/extended to meet this one)"), "project": projectArg], required: ["clip"])),
+        Tool(name: "relink_media", description: "Point the project at media files that moved: list_assets marks a file that is not at its path with missing true (its clips play black and silent). With no arguments every missing file is looked up through the bookmark made at import (finds files moved or renamed on the same disk). folder: also search that folder (and its subfolders unless recursive false), matching by file name and checking duration (within a frame) and picture size, then files of the same type, duration and size under another name. asset + path: use exactly that file for that asset (also for a file that is not missing). A replacement of another kind or shorter than what the timeline plays is refused. Files are only read, never moved. One undoable edit; returns what was relinked (with why) and what is still missing (with candidates). dry_run true only reports.",
+             inputSchema: schema(["asset": str("Asset id prefix or name (omit: every missing file)"), "path": str("Absolute path of the file to use for asset"), "folder": str("Absolute folder to search"),
+                                  "recursive": .object(["type": "boolean", "description": "Search subfolders too (default true)"]), "dry_run": .object(["type": "boolean", "description": "Report matches without changing the project (default false)"]), "project": projectArg])),
+        Tool(name: "consolidate_media", description: "Copy every media file the timeline uses (clips, multicam angles and their sound, media inside nested sequences, .cube LUT files given by path) into one folder and point the project at the copies, so the project and its media can be moved together. Default folder: '<project name> Media' next to the project file. Copies only: the originals are never moved or changed; a file of the same name and size already in the folder is reused, another file with the same name gets a numbered name. Missing files are listed, not copied. Returns the folder, files copied and reused, and bytes copied. Blocks until the copies are done; dry_run true only plans.",
+             inputSchema: schema(["folder": str("Absolute folder to copy into (created if missing; default next to the project file)"), "dry_run": .object(["type": "boolean", "description": "Plan the copies without copying (default false)"]), "project": projectArg])),
+        Tool(name: "detect_scenes", description: "Find hard cuts (shot changes) in a clip's media or a whole video asset, from a colour-histogram and brightness-grid difference between frames with an adaptive threshold (a cut must stand out from the second before it, so busy shots need a bigger jump). Dissolves and fades are not reported. Returns each cut's source time, timeline time (for a clip) and score 0...1. action split: split the clip at every cut (one undoable edit; J/L cuts and keyframes follow the pieces); markers: a marker named 'Scene N' at each cut; none (default): only report. Reads the file once at low resolution: about real time / 10 for HD.",
+             inputSchema: schema(["clip": str("Clip id prefix or name (give clip or asset)"), "asset": str("Asset id prefix or name: scan the whole file (action none only)"),
+                                  "sensitivity": num("0...1 (default 0.5); higher finds smaller jumps"), "min_scene": num("Shortest shot in seconds (default 0.5); cuts closer than this to the previous one are dropped"),
+                                  "action": str("none (default), split or markers"), "project": projectArg])),
+        Tool(name: "insert_edit", description: "Three/four-point insert: put a range of an asset on the timeline and push everything after it right (on every track, so sync holds; a clip under timeline in is split). Give three of source_in, source_out, timeline_in, timeline_out and the fourth follows from the length; give all four to fit the source range into the timeline range by changing the clip's speed (fit to fill, 0.1–10×). Timeline in defaults to the playhead. A range past the media, shorter than a frame, or before 0 is refused. One undoable edit; returns the placed clip, its points and speed.",
+             inputSchema: schema(["asset": str("Asset id prefix or name"), "source_in": num("Source in, seconds of the asset"), "source_out": num("Source out, seconds of the asset"),
+                                  "timeline_in": num("Timeline in, seconds (default: the playhead when the app shows one)"), "timeline_out": num("Timeline out, seconds"),
+                                  "track": str("Track id prefix or name (default: the first track of the asset's kind)"), "project": projectArg], required: ["asset"])),
+        Tool(name: "overwrite_edit", description: "Three/four-point overwrite: put a range of an asset on the timeline over whatever is between timeline in and out on ONE track (clips there are removed, or trimmed/split at the range edges; other tracks and later clips do not move). Points as insert_edit: three fix the fourth, four = fit to fill (speed). One undoable edit; returns the placed clip and the names of the clips it replaced or cut.",
+             inputSchema: schema(["asset": str("Asset id prefix or name"), "source_in": num("Source in, seconds of the asset"), "source_out": num("Source out, seconds of the asset"),
+                                  "timeline_in": num("Timeline in, seconds (default: the playhead when the app shows one)"), "timeline_out": num("Timeline out, seconds"),
+                                  "track": str("Track id prefix or name (default: the first track of the asset's kind)"), "project": projectArg], required: ["asset"])),
+        Tool(name: "set_smooth_slow_motion", description: "How a clip slower than 1× makes its in-between frames: off (each source frame repeats, as before), blend (cross-fade of the two neighbouring frames), optical_flow (frames drawn along the motion with VideoToolbox frame-rate conversion; macOS 15.4+ on supported Macs, else blend, said in note). The clip's range is rendered once at timeline fps / speed into a cache and used by the preview and the export; the sound is untouched. Refused for clips at 1× or faster, stills, sound, nested sequences, multicam and missing media. wait true renders before returning (about real time for blend at HD); otherwise it renders in the background and status says rendering.",
+             inputSchema: schema(["clip": str("Clip id prefix or name"), "mode": str("off, blend or optical_flow"), "wait": .object(["type": "boolean", "description": "Render before returning (default false)"]), "project": projectArg], required: ["clip", "mode"])),
+        Tool(name: "match_frame", description: "The source frame under a timeline time: which asset plays there (top-most visible video track, or the given clip) and the second of the asset that plays, with the clip's source in/out. In the app this also opens the source viewer on that frame (F).",
+             inputSchema: schema(["time": num("Timeline seconds (default: the playhead)"), "clip": str("Clip id prefix or name (default: the top-most picture at time)"), "project": projectArg])),
         // MARK: Color
     ] + colorTools
 
@@ -634,6 +666,27 @@ enum EditMaxTools {
             return try payload(try await x.measureLoudness(clip: s("clip")))
         case "normalize_loudness":
             return try payload(try await x.normalizeLoudness(target: s("target") ?? d("target").map { String($0) }, ceiling: d("ceiling"), clip: s("clip")))
+        // MARK: Editing
+        case "roll_edit":
+            return try payload(try x.rollEdit(try req("clip"), edge: s("edge"), delta: d("delta"), to: d("to")))
+        case "slip_clip":
+            return try payload(try x.slipClip(try req("clip"), delta: d("delta"), sourceIn: d("source_in")))
+        case "slide_clip":
+            return try payload(try x.slideClip(try req("clip"), delta: d("delta"), to: d("to")))
+        case "set_split_edit":
+            return try payload(try x.setSplitEdit(try req("clip"), lead: d("lead"), trail: d("trail"), neighbour: s("neighbour")))
+        case "relink_media":
+            return try payload(try await x.relinkMedia(asset: s("asset"), path: s("path"), folder: s("folder"), recursive: a["recursive"]?.boolValue ?? true, dryRun: b("dry_run")))
+        case "consolidate_media":
+            return try payload(try await x.consolidateMedia(folder: s("folder"), dryRun: b("dry_run")))
+        case "detect_scenes":
+            return try payload(try await x.detectScenes(clip: s("clip"), asset: s("asset"), sensitivity: d("sensitivity"), minScene: d("min_scene"), action: s("action")))
+        case "insert_edit", "overwrite_edit":
+            return try payload(try x.pointEdit(overwrite: name == "overwrite_edit", asset: try req("asset"), sourceIn: d("source_in"), sourceOut: d("source_out"), timelineIn: d("timeline_in"), timelineOut: d("timeline_out"), track: s("track")))
+        case "match_frame":
+            return try payload(try x.matchFrame(clip: s("clip"), time: d("time")))
+        case "set_smooth_slow_motion":
+            return try payload(try await x.setSmoothSlowMotion(try req("clip"), mode: try req("mode"), wait: b("wait")))
         default: throw MCPError.methodNotFound("Unknown tool \(name)")
         }
     }

@@ -22,6 +22,8 @@ final class WaveformStore: ObservableObject {
             await MainActor.run { self.peaks[id] = result; self.inFlight.remove(id) }
         }
     }
+    /// Reads the asset's file again (after a relink pointed it at another file).
+    func refresh(_ asset: Asset) { peaks[asset.id] = nil; request(asset) }
 }
 
 enum WaveformExtractor {

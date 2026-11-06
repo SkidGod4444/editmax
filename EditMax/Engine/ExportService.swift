@@ -33,6 +33,7 @@ enum ExportService {
         guard project.duration > 0 else { throw EditError.invalid("timeline is empty") }
         if preset.isMaster { return try await exportMaster(project, to: url, preset: preset, progress: progress, depth: depth) }
         try await IsolatedAudio.shared.ensureAll(project)   // voice-isolated sound is rendered per asset before the build looks for it
+        try await InterpolatedVideo.shared.ensureAll(project)   // smooth slow motion, likewise (FrameInterpolation.swift)
         let out = try await CompositionBuilder.build(project, depth: depth)   // titles, stills, color and transitions all come from the compositor
         defer { withExtendedLifetime(out) {} }   // its source assets must outlive the render (`Output.sources`)
 
@@ -79,6 +80,7 @@ enum ExportService {
     ///   movie with 24-bit 48 kHz stereo PCM sound, the files Resolve, Final Cut and Premiere edit and grade natively.
     static func exportMaster(_ project: Project, to url: URL, preset: Preset, progress: ((Double) -> Void)? = nil, depth: Int = 0) async throws -> Result {
         try await IsolatedAudio.shared.ensureAll(project)
+        try await InterpolatedVideo.shared.ensureAll(project)
         let out = try await CompositionBuilder.build(project, depth: depth, compositor: EditMaxCompositor10.self)
         defer { withExtendedLifetime(out) {} }   // its source assets must outlive the render (`Output.sources`)
         let reader = try AVAssetReader(asset: out.composition)

@@ -21,6 +21,8 @@ final class ThumbnailStore: ObservableObject {
             await MainActor.run { self.strips[id] = strip; self.inFlight.remove(id) }
         }
     }
+    /// Reads the asset's file again (after a relink pointed it at another file).
+    func refresh(_ asset: Asset) { strips[asset.id] = nil; request(asset) }
 
     private static func generate(url: URL, duration: Double) async -> Strip {
         let started = Date()

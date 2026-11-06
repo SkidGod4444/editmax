@@ -41,6 +41,7 @@ enum CompositionBuilder {
         var assetCache: [UUID: AVURLAsset] = [:]
         var keptSources: [AVURLAsset] = []
         var stillCache: [UUID: CIImage] = [:]
+        var splitItems: [SplitEditAudio.Item] = []   // J/L-cut sounds: built on audio lanes of their own after the tracks (SplitEdits.swift)
         let t = { (s: Double) in CMTime(seconds: s, preferredTimescale: timescale) }
 
         // Base track: a tiny black movie under everything, so stills and titles render without any video clip.
@@ -60,7 +61,7 @@ enum CompositionBuilder {
         var duckCurves: [UUID: DuckCurve] = [:]
         for track in project.tracks {
             guard let duck = track.duck, let src = project.track(duck.sourceTrackID), !src.isMuted, !src.isHidden else { continue }
-            let intervals = src.clips.filter { project.asset($0.assetID)?.kind != .image }.map { ($0.start, $0.end) }
+            let intervals = src.clips.filter { project.asset($0.assetID)?.kind != .image }.map { ($0.soundStart, $0.soundEnd) }   // = start/end without a J/L cut
             if !intervals.isEmpty { duckCurves[track.id] = DuckCurve(intervals: intervals, duck: duck) }
         }
 
@@ -101,7 +102,7 @@ enum CompositionBuilder {
                                 let prevAudioAsset = prev.audioAssetID.flatMap { project.asset($0) } ?? prevAsset
                                 let pav = prevAudioAsset.id == prevAsset.id ? av : AVURLAsset(url: prevAudioAsset.url)
                                 let audioExtra = CMTimeRange(start: t((prev.audioSourceIn ?? prev.sourceIn) + prev.sourceOffset(at: prev.duration)), duration: extra.duration)
-                                if let a = audio[pslot], let at = try await pav.loadTracks(withMediaType: .audio).first, audioExtra.end.seconds <= prevAudioAsset.duration + 0.01 {
+                                if let a = audio[pslot], let at = try await pav.loadTracks(withMediaType: .audio).first, audioExtra.end.seconds <= prevAudioAsset.duration + 0.01, !prev.hasSplitEdit {
                                     try a.insertTimeRange(audioExtra, of: at, at: t(prev.end))
                                     if tailSpeed != 1 { a.scaleTimeRange(CMTimeRange(start: t(prev.end), duration: extra.duration), toDuration: t(d)) }
                                     params[pslot]?.setVolumeRamp(fromStartVolume: track.isMuted ? 0 : Float(prev.volume(at: prev.duration)), toEndVolume: 0, timeRange: CMTimeRange(start: t(prev.end), duration: t(d)))
@@ -127,12 +128,20 @@ enum CompositionBuilder {
                 let av = assetCache[asset.id] ?? AVURLAsset(url: proxies[asset.id] ?? asset.url)
                 assetCache[asset.id] = av
                 let segments = TimeMap.segments(clip, assetDuration: asset.duration)
-                if let v = video[slot], let vt = try await av.loadTracks(withMediaType: .video).first {
-                    try TimeMap.insert(segments, of: vt, into: v)
+                // Smooth slow motion: the interpolated render of this clip's range once it is ready; until then the clip
+                // plays as before and the render is started (FrameInterpolation.swift). The sound stays on the original.
+                let smooth = InterpolatedVideo.ready(clip, asset, fps: project.settings.fps)
+                let smoothAV = smooth.map { AVURLAsset(url: $0.url) }
+                if smooth == nil, forPreview, InterpolatedVideo.job(clip, asset, fps: project.settings.fps) != nil {
+                    let (c, a, f) = (clip, asset, project.settings.fps); Task { @MainActor in InterpolatedVideo.shared.schedule(c, a, fps: f) }
+                }
+                if let v = video[slot], let vt = try await (smoothAV ?? av).loadTracks(withMediaType: .video).first {
+                    try TimeMap.insert(smooth.map { s in segments.map { $0.reading(from: s.offset) } } ?? segments, of: vt, into: v)
                     let size = try await vt.load(.naturalSize)
                     let pref = try await vt.load(.preferredTransform)
                     sources.append(LayerSource(trackID: v.trackID, still: nil, naturalSize: size, preferredTransform: pref, clip: clip, effectiveEnd: clip.end, transitionEnd: transitionEnd, outgoingID: outgoingID))
                 }
+                if clip.hasSplitEdit { splitItems.append(.init(clip: clip, trackID: track.id, muted: track.isMuted, duck: duckCurves[track.id], transitionHead: transitionEnd.map { $0 - clip.start }, next: i + 1 < clips.count ? clips[i + 1] : nil)); continue }
                 // Sound may come from another asset (a multicam piece's audio angle); same time map, its own source offset.
                 let audioAsset = clip.audioAssetID.flatMap { project.asset($0) } ?? asset
                 // Voice isolation: the pre-rendered isolated copy of the sound when the cache has one (same timeline, never cached as the asset).
@@ -160,6 +169,8 @@ enum CompositionBuilder {
             if track.kind == .video { layerSources.append(sources) }
             audioParams.append(contentsOf: params.compactMap { $0 })
         }
+
+        audioParams += try await SplitEditAudio.insert(splitItems, into: comp, project: project, proxies: proxies, total: total, kept: &keptSources)
 
         // Composition tracks that got no media (an empty V1, a stills-only track's audio slots) make the export session
         // fail with "Operation Stopped"; drop them and the mix parameters that point at them.

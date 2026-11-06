@@ -688,6 +688,10 @@ enum Interchange {
         if !stab.isEmpty { no.append("Stabilization on \(n(stab.count, "clip"))") }
         no += ColorPipeline.notTransferred(inFile)   // wheels, curves, grade layers, masks, finishing (GradeStack.swift)
         no.append(contentsOf: Effects.notTransferred(p, clips: inFile, edl: format == .edl))   // keys, blend modes, blurs, newer transitions, title animations, HDR
+        // Editing (EditingTools.swift): J/L cuts and smooth slow motion are not written into the file.
+        let split = inFile.filter(\.hasSplitEdit), smooth = inFile.filter { $0.smoothSlowMotion != .off && InterpolatedVideo.slowest($0) < 0.999 }
+        if !split.isEmpty { no.append("J and L cuts on \(n(split.count, "clip")): the sound is cut with the picture") }
+        if !smooth.isEmpty { no.append("Smooth slow motion on \(n(smooth.count, "clip")): plays as repeated frames; turn on the other app's frame blending or optical flow") }
         let keyed = inFile.filter { c in c.animations.contains { $0.key != ClipParam.speed.rawValue && !$0.value.isEmpty } }
         if !keyed.isEmpty { no.append("Keyframes on \(n(keyed.count, "clip")) (animated transform, auto-reframe, color, opacity or volume)") }
         let cropped = inFile.filter { $0.transform.cropLeft != 0 || $0.transform.cropRight != 0 || $0.transform.cropTop != 0 || $0.transform.cropBottom != 0 }

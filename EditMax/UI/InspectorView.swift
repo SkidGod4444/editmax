@@ -460,6 +460,7 @@ struct ClipInspector: View {
                 eqCard
                 ClipAudioSections(document: document, clip: clip, track: track)
                 transitionCard
+                EditingInspectorCards(document: document, clip: clip, track: track)   // split edit, smooth slow motion (EditingInspector.swift)
                 Text("Clip \(clip.id.short)").font(.system(size: 11)).monospacedDigit().foregroundStyle(.tertiary).textSelection(.enabled)
                     .frame(maxWidth: .infinity).padding(.top, 4)
             }

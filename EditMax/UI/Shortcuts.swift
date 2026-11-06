@@ -108,6 +108,9 @@ struct EditorActions {
         case "x": clearInOut(); return true
         case "[": jumpKeyframe(forward: false); return true
         case "]": jumpKeyframe(forward: true); return true
+        case "a", "r", "y", "u": state.editTool = EditTool(key: chars) ?? .select; return true   // select / roll / slip / slide
+        case ",", ".": if let n = SourceActions(document: document, state: state, player: player).edit(overwrite: chars == ".") { DebugLog.event("source-edit-refused", ["why": n]); NSSound.beep() }; return true   // insert / overwrite from the source viewer
+        case "f": SourceActions(document: document, state: state, player: player).matchFrame(); return true   // match frame
         default: return false
         }
     }

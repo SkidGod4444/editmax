@@ -57,6 +57,9 @@ final class PlayerController: ObservableObject {
         ProxyStore.shared.$version.dropFirst().receive(on: DispatchQueue.main)
             .sink { [weak self, weak document] _ in guard let document, document.project.settings.useProxies else { return }; self?.rebuild(document.project, reason: "proxy-version") }
             .store(in: &cancellables)
+        InterpolatedVideo.shared.$version.dropFirst().receive(on: DispatchQueue.main)   // a smooth slow-motion render became ready: play it
+            .sink { [weak self, weak document] v in guard let document else { return }; self?.rebuild(document.project, reason: "interpolated-version-\(v)") }
+            .store(in: &cancellables)
         IsolatedAudio.shared.$version.dropFirst().receive(on: DispatchQueue.main)   // an isolated sound file became ready: play it
             .sink { [weak self, weak document] v in guard let document else { return }; self?.rebuild(document.project, reason: "isolated-audio-version-\(v)") }
             .store(in: &cancellables)

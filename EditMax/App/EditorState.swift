@@ -20,6 +20,8 @@ final class EditorState: ObservableObject {
     @Published var focusMode = false
     /// History tab: the version being shown in the preview instead of the live project (nil = current). Not an edit.
     @Published var viewingVersion: ProjectVersion?
+    /// Timeline edit tool: select (move/trim), roll, slip or slide (TrimTools.swift).
+    @Published var editTool: EditTool = .select
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {

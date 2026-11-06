@@ -27,6 +27,7 @@ struct ToolExecutor {
             var stabilized: Bool?                      // true when stabilize_clip has run on the clip
             var gradeLayers: [ToolExecutor.LayerInfo]? = nil, finish: ClipFinish? = nil   // color layers and finishing, only when set (ColorTools.swift)
             var effects: [String: String]? = nil       // key, blend mode, face / region blur, only when set (EffectsTools.swift)
+            var audioLead: Double?, audioTrail: Double?, smoothSlowMotion: String?   // J/L cut and smooth slow motion, only when set (EditingTools.swift)
         }
         struct KeyframeInfo: Codable { var time: Double, value: Double, ease: String }
         struct MarkerInfo: Codable { var id: String, time: Double, name: String, color: String }
@@ -57,6 +58,7 @@ struct ToolExecutor {
                                    sequence: p.sequence(of: c)?.name,
                                    stabilized: c.stabilization == nil ? nil : true))
                 if !c.grades.isEmpty || c.finish != nil { clips[clips.count - 1].gradeLayers = c.grades.isEmpty ? nil : layersResult(c.id, "").layers; clips[clips.count - 1].finish = c.finish }
+                Self.annotateEditing(&clips[clips.count - 1], c)
             }
         }
         var summary = TimelineSummary(
@@ -73,14 +75,14 @@ struct ToolExecutor {
         return summary
     }
 
-    struct AssetInfo: Codable { var id: String, name: String, kind: String, duration: Double, width: Int?, height: Int?, path: String }
+    struct AssetInfo: Codable { var id: String, name: String, kind: String, duration: Double, width: Int?, height: Int?, path: String; var missing: Bool? = nil }   // missing: the file is not at its path (relink_media)
     static func textOverlaps(_ p: Project) -> [String]? {
         let c = TextLayout.collisions(in: p.texts, canvas: p.settings.canvas)
         return c.isEmpty ? nil : c.map { "'\($0.a.text.prefix(24))' and '\($0.b.text.prefix(24))' overlap \(String(format: "%.1f", $0.start))–\(String(format: "%.1f", $0.end)) s" }
     }
 
     func listAssets() -> [AssetInfo] {
-        project.assets.map { .init(id: $0.id.short, name: $0.name, kind: $0.kind.rawValue, duration: r($0.duration), width: $0.width, height: $0.height, path: $0.path) }
+        project.assets.map { var i = AssetInfo(id: $0.id.short, name: $0.name, kind: $0.kind.rawValue, duration: r($0.duration), width: $0.width, height: $0.height, path: $0.path); i.missing = Relink.isMissing($0) ? true : nil; return i }
     }
 
     // MARK: Assets
@@ -173,6 +175,7 @@ struct ToolExecutor {
                 if let opacity { c.opacity = max(0, min(1, opacity)) }
                 if let name { c.name = name }
             }
+            if speed != nil, let c = p.clip(id)?.clip { try p.checkSplitEditMedia(c) }   // a J/L cut runs at the new speed too
         }
     }
 
@@ -441,11 +444,10 @@ struct ToolExecutor {
     /// Render one frame of the timeline (video tracks only; text/image overlays are composited on top) as PNG data.
     /// The composed frame at a time as an sRGB-tagged CGImage, and the render size.
     func renderFrame(at seconds: Double) async throws -> (CGImage, CGSize) {
+        guard !project.allClips.isEmpty || !project.texts.isEmpty else { throw EditError.invalid("nothing to render at \(seconds) s: the timeline is empty") }
         let out = try await CompositionBuilder.build(project)
         defer { withExtendedLifetime(out) {} }   // its source assets must outlive the render (`Output.sources`)
         guard let vts = try? await out.composition.loadTracks(withMediaType: .video), !vts.isEmpty else { throw EditError.invalid("nothing to render at \(seconds) s: the composition has no video track") }
-        // An empty timeline used to fail here only because the black base video was freed mid-read (now kept: `Output.sources`).
-        guard project.duration > 0 else { throw EditError.invalid("nothing to render at \(seconds) s: the timeline is empty") }
         let gen = AVAssetImageGenerator(asset: out.composition)
         gen.videoComposition = out.videoComposition
         gen.appliesPreferredTrackTransform = true

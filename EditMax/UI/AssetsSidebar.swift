@@ -20,6 +20,7 @@ struct AssetsSidebar: View {
                         .padding(.horizontal, 6).frame(height: 16).background(Color.primary.opacity(0.08), in: Capsule())
                 }
                 Spacer()
+                MediaPanelRelinkButton(document: document)   // shown while a file is missing (RelinkSheet.swift)
                 Button { importing = true } label: {
                     Image(systemName: "plus").font(.system(size: 12, weight: .semibold)).imageScale(.medium)
                         .frame(width: 24, height: 22).contentShape(Rectangle())
@@ -40,6 +41,7 @@ struct AssetsSidebar: View {
                                 Text(asset.name).font(.system(size: 13, weight: .medium)).lineLimit(1).truncationMode(.middle)
                                 HStack(spacing: 6) {
                                     Text(subtitle(asset)).font(.system(size: 11)).foregroundStyle(.secondary).monospacedDigit().lineLimit(1)
+                                    MissingBadge(asset: asset)
                                     if document.project.settings.useProxies, asset.kind == .video, proxies.ready(for: asset) != nil {
                                         Text("PROXY").font(.system(size: 8, weight: .bold)).foregroundStyle(.orange).padding(.horizontal, 4).frame(height: 13).background(Color.orange.opacity(0.18), in: RoundedRectangle(cornerRadius: 3, style: .continuous)).help("Previewing from a 960×540 proxy; the export uses the original")
                                     }
@@ -69,6 +71,7 @@ struct AssetsSidebar: View {
                         .contextMenu {
                             Button("Add to timeline", systemImage: "plus") { add(asset) }
                             Button("Reveal in Finder", systemImage: "folder") { NSWorkspace.shared.activateFileViewerSelecting([asset.url]) }
+                            EditingMediaMenu(document: document, asset: asset)   // relink, source viewer (RelinkSheet.swift)
                             Divider()
                             let uses = document.project.allClips.filter { $0.assetID == asset.id }.count
                             Button(uses == 0 ? "Remove from project" : "Remove from project and \(uses) clip\(uses == 1 ? "" : "s")", systemImage: "trash", role: .destructive) {

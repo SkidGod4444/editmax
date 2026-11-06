@@ -30,6 +30,7 @@ struct EditMaxApp: App {
             }
             ViewCommands()
             EditCommands()
+            EditingCommands()   // relink, consolidate, source viewer (RelinkSheet.swift)
             UpdateCommands()
         }
         Settings { SettingsView() }
@@ -99,6 +100,7 @@ struct EditorRootView: View {
         .onChange(of: fileURL) { _, new in document.fileURL = new }
         .onDisappear { DocumentRegistry.shared.unregister(document); player.pause() }
         .background(WindowFocusObserver { DocumentRegistry.shared.activate(document) })
+        .modifier(EditingSheets(document: document))   // relink on open, consolidate (RelinkSheet.swift)
         .onReceive(NotificationCenter.default.publisher(for: .editmaxCompare)) { _ in
             if DocumentRegistry.shared.active?.id == document.id, document.project.hasColorGrade { player.cycleCompare() }
         }
@@ -229,6 +231,7 @@ struct EditorRootView: View {
                     .padding(10)
                 }
             .overlay { if player.compareMode != .off { CompareOverlay(player: player, aspect: Double(document.project.settings.width) / Double(max(1, document.project.settings.height))) } }
+            .overlay { SourceViewerHost(document: document) }   // last, so the source viewer covers the program's overlays (SourceViewer.swift)
             if player.scopesEnabled { ScopesView(data: player.scopes) }
             if let e = player.buildError { Text(e).font(.caption).foregroundStyle(.red).padding(4) }
         }

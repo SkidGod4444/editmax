@@ -92,6 +92,7 @@ struct TimelineView: View {
             toolButton("scissors.badge.ellipsis", help: "Ripple out everything between the in and out points (I and O set them, X clears)", id: "toolbar.deleteRange", disabled: !actions.hasRange) { actions.deleteRange() }
             toolbarSeparator
             MixerToggleButton()
+            TrimToolPicker(tool: $state.editTool)   // select / roll / slip / slide (TrimTools.swift)
             Spacer(minLength: 8)
             // Zoom: − slider + at the far right.
             HStack(spacing: 4) {
@@ -281,6 +282,7 @@ struct TimelineView: View {
                     ZStack(alignment: .leading) {
                         Color.clear.contentShape(Rectangle()).onTapGesture { location in seek(x: location.x); state.selectedClipIDs = []; state.selectedTextID = nil }
                         ForEach(track.clips) { clip in clipView(clip, track: track) }
+                        if track.kind == .video, track.clips.contains(where: \.hasSplitEdit) { SplitEditLane(clips: track.clips, project: document.project, pps: pps, rowHeight: rowHeight, barHeight: rowHeight - 10, peaks: waveforms.peaks) }
                     }
                     .frame(height: rowHeight)
                     .background(dropLane == track.id ? Color.accentColor.opacity(0.15) : Color.clear)
@@ -451,8 +453,8 @@ struct TimelineView: View {
         let asset = document.project.asset(clip.assetID)
         let x = ToolExecutor(document: document, origin: .user)
         return TimelineBar(id: clip.id, uiID: "clip.\(clip.id.short)", start: clip.start, duration: clip.duration, pps: pps, height: rowHeight - 10,
-                           minStart: clip.start - clip.sourceIn / clip.speed,
-                           maxEnd: clip.start + ((asset?.duration ?? clip.end) - clip.sourceIn) / clip.speed,
+                           minStart: TrimLimitsUI.minStart(clip, asset: asset, project: document.project),
+                           maxEnd: TrimLimitsUI.maxEnd(clip, asset: asset, project: document.project),
                            help: "\(clip.name)  \(Timecode.string(clip.start)) → \(Timecode.string(clip.end))",
                            snaps: snapTimes(excluding: clip.id),
                            onSelect: { drag in select(clip.id, keepGroup: drag) },
@@ -463,7 +465,8 @@ struct TimelineView: View {
                                } else { try? x.moveClip(clip.id.uuidString, to: newStart) }
                            },
                            onTrimStart: { try? x.trimClip(clip.id.uuidString, start: $0, end: nil) },
-                           onTrimEnd: { try? x.trimClip(clip.id.uuidString, start: nil, end: $0) }) {
+                           onTrimEnd: { try? x.trimClip(clip.id.uuidString, start: nil, end: $0) },
+                           editing: BarEditing.make(clip: clip, track: track, document: document, tool: state.editTool, strip: thumbnails.strips[clip.assetID], peaks: waveforms.peaks[clip.assetID] ?? [])) {
             ClipBody(clip: clip, kind: track.kind, selected: selected, height: rowHeight - 10, pps: pps,
                      peaks: waveforms.peaks[clip.assetID] ?? [], strip: thumbnails.strips[clip.assetID])
                 .equatable()
@@ -554,7 +557,7 @@ struct TimelineView: View {
 
 /// The look of a clip: frames on top and a waveform band for video, a full waveform for audio, the name in a pill.
 /// Equatable, so a drag elsewhere on the timeline does not redraw every clip's canvases.
-private struct ClipBody: View, Equatable {
+struct ClipBody: View, Equatable {
     let clip: Clip
     let kind: TrackKind
     let selected: Bool
@@ -684,10 +687,12 @@ private struct TimelineBar<Content: View>: View {
     let onMove: (Double) -> Void
     let onTrimStart: (Double) -> Void
     let onTrimEnd: (Double) -> Void
+    var editing: BarEditing? = nil   // roll / slip / slide (TrimTools.swift); nil = move and trim only
     @ViewBuilder let content: () -> Content
 
     @State private var moveDX: CGFloat = 0
     @State private var trim: (leading: Bool, dx: CGFloat)?
+    @State private var toolDrag: (kind: TrimDragKind, context: TrimDragContext, amount: Double, limited: Bool)?
 
     private var end: Double { start + duration }
     private var dragKey: String { "\(start)|\(duration)|\(pps)|\(minStart)|\(maxEnd)" }
@@ -697,22 +702,69 @@ private struct TimelineBar<Content: View>: View {
         let fullW = CGFloat(duration) * pps
         let trimL: CGFloat = trim?.leading == true ? min(fullW - 8, max(-CGFloat(start - minStart) * pps, trim!.dx)) : 0
         let trimR: CGFloat = trim?.leading == false ? max(-fullW + 8, min(maxEnd.isFinite ? CGFloat(maxEnd - end) * pps : .infinity, trim!.dx)) : 0
-        let w = max(4, fullW - trimL + trimR)
+        // A roll draws like a trim of the dragged edge, a slide like a move (the tools' own amounts, clamped).
+        let toolPx = toolDrag.map { CGFloat($0.amount) * pps } ?? 0
+        let rollL: CGFloat = toolDrag?.kind == .roll(leading: true) ? toolPx : 0, rollR: CGFloat = toolDrag?.kind == .roll(leading: false) ? toolPx : 0
+        let slidePx: CGFloat = toolDrag?.kind == .slide ? toolPx : 0
+        let w = max(4, fullW - trimL + trimR - rollL + rollR)
         content()
             .frame(width: w, height: height)
             .uiFrame(uiID)
             .overlay(alignment: .leading) { handle(leading: true).uiFrame(uiID + ".left") }
             .overlay(alignment: .trailing) { handle(leading: false).uiFrame(uiID + ".right") }
-            .offset(x: CGFloat(start) * pps + trimL + max(-CGFloat(start) * pps, moveDX))
+            .overlay(alignment: .topLeading) {
+                if let d = toolDrag, let e = editing {
+                    TrimFeedback(kind: d.kind, amount: d.amount, limited: d.limited, context: d.context, clip: e.clip, assetDuration: e.assetDuration,
+                                 strip: e.strip, peaks: e.peaks, pps: pps, width: fullW, height: height, shift: rollL + slidePx)
+                }
+            }
+            .offset(x: CGFloat(start) * pps + trimL + rollL + slidePx + max(-CGFloat(start) * pps, moveDX))
+            .zIndex(toolDrag != nil || trim != nil || moveDX != 0 ? 1 : 0)
             .onTapGesture { onSelect(false) }
             .uiTap(uiID, key: dragKey) { onSelect(false) }
             .gesture(DragGesture(minimumDistance: 3)
-                .onChanged { v in if moveDX == 0 { onSelect(true) }; moveDX = snappedMove(v.translation.width) }
-                .onEnded { v in let dx = snappedMove(v.translation.width); moveDX = 0; commitMove(dx) })
-            .uiDrag(uiID, key: dragKey) { dx in onSelect(true); commitMove(snappedMove(dx)) }
-            .uiDrag(uiID + ".left", key: dragKey) { dx in commitTrim(leading: true, dx: snappedTrim(leading: true, dx)) }
-            .uiDrag(uiID + ".right", key: dragKey) { dx in commitTrim(leading: false, dx: snappedTrim(leading: false, dx)) }
+                .onChanged { v in
+                    if let k = editing?.kind(edge: nil) { toolDragChanged(k, dx: v.translation.width); return }
+                    if moveDX == 0 { onSelect(true) }; moveDX = snappedMove(v.translation.width)
+                }
+                .onEnded { v in
+                    if editing?.kind(edge: nil) != nil { toolDragEnded(); return }
+                    let dx = snappedMove(v.translation.width); moveDX = 0; commitMove(dx)
+                })
+            .uiDrag(uiID, key: dragKey + "|\(editing?.tool.rawValue ?? "")") { dx in
+                if let k = editing?.kind(edge: nil) { toolDragChanged(k, dx: dx); toolDragEnded(); return }
+                onSelect(true); commitMove(snappedMove(dx))
+            }
+            .uiDrag(uiID + ".left", key: dragKey + "|\(editing?.tool.rawValue ?? "")") { dx in
+                if let k = editing?.kind(edge: true) { toolDragChanged(k, dx: dx); toolDragEnded(); return }
+                commitTrim(leading: true, dx: snappedTrim(leading: true, dx))
+            }
+            .uiDrag(uiID + ".right", key: dragKey + "|\(editing?.tool.rawValue ?? "")") { dx in
+                if let k = editing?.kind(edge: false) { toolDragChanged(k, dx: dx); toolDragEnded(); return }
+                commitTrim(leading: false, dx: snappedTrim(leading: false, dx))
+            }
             .help(help).pointer()
+    }
+
+    /// A roll, slip or slide drag: limits read once at the start, the amount clamped to them (the tag says so).
+    private func toolDragChanged(_ kind: TrimDragKind, dx: CGFloat) {
+        guard let e = editing else { return }
+        if toolDrag == nil { onSelect(true) }
+        let context = toolDrag?.kind == kind ? toolDrag!.context : e.context(kind)
+        var raw = e.amount(kind, dx: dx, pps: pps)
+        if kind != .slip, snapping {   // the moving edge snaps like a trim
+            let edge: Double = kind == .roll(leading: true) ? start : kind == .slide ? start : end
+            let cand = edge + raw
+            if let s = snaps.first(where: { abs(CGFloat($0 - cand) * pps) < snapPx }) { raw = s - edge }
+            else if kind == .slide, let s = snaps.first(where: { abs(CGFloat($0 - (end + raw)) * pps) < snapPx }) { raw = s - end }
+        }
+        let c = BarEditing.clamp(raw, context.limits)
+        toolDrag = (kind, context, c.value, c.limited || context.refusal != nil)
+    }
+    private func toolDragEnded() {
+        guard let d = toolDrag else { return }
+        toolDrag = nil
+        if d.context.refusal == nil { editing?.commit(d.kind, d.amount) }
     }
 
     private var snapPx: CGFloat { 8 }
@@ -753,14 +805,20 @@ private struct TimelineBar<Content: View>: View {
     }
 
     private func handle(leading: Bool) -> some View {
-        let active = trim?.leading == leading
+        let active = trim?.leading == leading || toolDrag?.kind == .roll(leading: leading)
         return Rectangle().fill(active ? Color.white.opacity(0.9) : Color.white.opacity(0.001))
             .frame(width: active ? 3 : 8)
             .contentShape(Rectangle().inset(by: -2))
             .onHover { inside in if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() } }
             // Measured in the window's space: the handle itself moves with the live trim, which would halve its own translation.
             .gesture(DragGesture(minimumDistance: 2, coordinateSpace: .global)
-                .onChanged { v in trim = (leading, snappedTrim(leading: leading, v.translation.width)) }
-                .onEnded { v in let dx = snappedTrim(leading: leading, v.translation.width); trim = nil; commitTrim(leading: leading, dx: dx) })
+                .onChanged { v in
+                    if let k = editing?.kind(edge: leading) { toolDragChanged(k, dx: v.translation.width); return }
+                    trim = (leading, snappedTrim(leading: leading, v.translation.width))
+                }
+                .onEnded { v in
+                    if editing?.kind(edge: leading) != nil { toolDragEnded(); return }
+                    let dx = snappedTrim(leading: leading, v.translation.width); trim = nil; commitTrim(leading: leading, dx: dx)
+                })
     }
 }

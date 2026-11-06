@@ -41,21 +41,24 @@ extension Project {
         for ti in tracks.indices {
             var out: [Clip] = []
             for var c in tracks[ti].clips {
-                if c.end <= start { out.append(c); continue }                       // before: untouched
-                if c.start >= end { c.start -= gap; out.append(c); continue }       // after: shifted
+                if c.end <= start { c.trimSound(before: start); out.append(c); continue }            // before: untouched (an L cut's sound stops at the range)
+                if c.start >= end { c.trimSound(after: end); c.start -= gap; out.append(c); continue }  // after: shifted (a J cut's sound starts after the range)
                 if c.start >= start && c.end <= end { continue }                    // inside: gone
+                let original = c   // a J/L cut's sound is cut by the same range (`cutSoundHead/Tail`)
                 if c.start < start && c.end > end {                                 // spans: split into two
                     var right = c; right.id = UUID()
                     right.sourceIn = c.sourceIn + (end - c.start) * c.speed
                     right.duration = c.end - end
                     right.start = start
                     c.duration = start - c.start
+                    c.cutSoundTail(at: start, from: original); right.cutSoundHead(at: end, from: original)
                     out.append(c); out.append(right); continue
                 }
-                if c.start < start { c.duration = start - c.start; out.append(c); continue }   // overlaps the start: trimmed
+                if c.start < start { c.duration = start - c.start; c.cutSoundTail(at: start, from: original); out.append(c); continue }   // overlaps the start: trimmed
                 // overlaps the end: head trimmed, then shifted to where the range began
                 let cut = end - c.start
                 c.sourceIn += cut * c.speed; c.duration -= cut; c.start = start
+                c.cutSoundHead(at: end, from: original)
                 out.append(c)
             }
             tracks[ti].clips = out.filter { $0.duration > 0.01 }.sorted { $0.start < $1.start }

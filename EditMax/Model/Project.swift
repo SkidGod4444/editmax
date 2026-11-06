@@ -220,6 +220,13 @@ struct Clip: Codable, Identifiable, Equatable {
     var effects = ClipEffects()
     /// Sound-only crossfade from the clip before (audio tracks; see `AudioCrossfades`); nil = a plain cut.
     var audioCrossfade: AudioCrossfade? = nil
+    // MARK: Editing (split edits, smooth slow motion)
+    /// Split edit (J/L cut): the sound starts `audioLead` s before the picture and ends `audioTrail` s after it, playing
+    /// the source's media beyond the picture's in/out (timeline seconds; negative = after / before the picture). 0 = with it.
+    var audioLead: Double = 0
+    var audioTrail: Double = 0
+    /// Frames made in between for a clip slower than 1× (`FrameInterpolation`); off plays the source frames as today.
+    var smoothSlowMotion: SlowMotionMode = .off
     var end: Double { start + duration }
     /// Where the clip's media ends in the asset: with a speed ramp, the integral of speed over the clip.
     var sourceOut: Double { sourceIn + sourceOffset(at: duration) }
@@ -256,6 +263,9 @@ struct Clip: Codable, Identifiable, Equatable {
         finish = try c.decodeIfPresent(ClipFinish.self, forKey: .finish)
         effects = try c.decodeIfPresent(ClipEffects.self, forKey: .effects) ?? ClipEffects()
         audioCrossfade = try c.decodeIfPresent(AudioCrossfade.self, forKey: .audioCrossfade)
+        audioLead = try c.decodeIfPresent(Double.self, forKey: .audioLead) ?? 0
+        audioTrail = try c.decodeIfPresent(Double.self, forKey: .audioTrail) ?? 0
+        smoothSlowMotion = try c.decodeIfPresent(SlowMotionMode.self, forKey: .smoothSlowMotion) ?? .off
     }
 
     /// The two clips a split at `local` seconds produces; the right one gets a new id and no transition or fade-in.
@@ -271,6 +281,7 @@ struct Clip: Codable, Identifiable, Equatable {
         right.shiftKeyframes(by: -local)
         right.transitionIn = nil; right.audioCrossfade = nil
         right.fadeIn = 0; left.fadeOut = 0
+        left.cutSoundTail(at: start + local, from: self); right.cutSoundHead(at: start + local, from: self)   // a J/L cut stays at its own edge
         if let mc = multicam {
             var l = mc, r = mc
             l.cuts = mc.cuts.filter { $0.time < local }
@@ -566,7 +577,7 @@ struct Project: Codable, Equatable {
     }
 
     var duration: Double {
-        let clipEnd = tracks.flatMap(\.clips).map(\.end).max() ?? 0
+        let clipEnd = tracks.flatMap(\.clips).map { max($0.end, $0.soundEnd) }.max() ?? 0   // an L cut's sound can run past the last picture
         let textEnd = texts.map(\.end).max() ?? 0
         return max(clipEnd, textEnd)
     }
@@ -728,7 +739,7 @@ extension Project {
     /// An insert at a time is a ripple insert, as in every NLE, and like `rippleDelete` it ripples every track so
     /// nothing drifts out of sync: a clip that straddles `time` is split there, and every clip, text and marker from
     /// `time` on moves right by `length`. Nothing is ever stacked or hidden.
-    private mutating func makeRoom(on _: Int, at time: Double, length: Double) {
+    mutating func makeRoom(on _: Int, at time: Double, length: Double) {   // internal: insert_edit (SourceEdits.swift)
         for ti in tracks.indices {
             if let ci = tracks[ti].clips.firstIndex(where: { $0.start < time - 0.01 && $0.end > time + 0.01 }) {
                 let (l, r) = tracks[ti].clips[ci].split(atLocal: time - tracks[ti].clips[ci].start)
@@ -780,6 +791,7 @@ extension Project {
         c.start = s
         c.duration = e - s
         c.shiftKeyframes(by: -delta)
+        try checkSplitEditMedia(c)   // a J/L cut's sound needs media past the new in/out too
         tracks[ti].clips[ci] = c
     }
 

@@ -170,11 +170,16 @@ struct ToolExecutor {
     func setClipProperties(_ clip: String, speed: Double? = nil, volume: Double? = nil, opacity: Double? = nil, name: String? = nil) throws {
         let id = try resolveClip(clip)
         if let speed, speed <= 0 { throw EditError.invalid("speed must be > 0") }
-        try document.apply("Edit clip properties", origin: origin, coalesce: coalesce) { p in
+        // Speed in hundredths: a slider drag would otherwise store 3.2109839×, which no one can read or type back.
+        let speed = speed.map { max(0.01, ($0 * 100).rounded() / 100) }
+        let volume = volume.map { max(0, min(2, $0)) }, opacity = opacity.map { max(0, min(1, $0)) }
+        let named = [speed.map { "Speed \(ProjectDiff.fmt($0))×" }, volume.map { "Volume \(Self.percent($0))" }, opacity.map { "Opacity \(Self.percent($0))" },
+                     name.map { _ in "Rename clip" }].compactMap { $0 }
+        try document.apply(named.count == 1 ? named[0] : "Edit clip properties", origin: origin, coalesce: coalesce, key: "Edit clip properties") { p in
             try p.updateClip(id) { c in
                 if let speed { let src = c.duration * c.speed; c.speed = speed; c.duration = src / speed }
-                if let volume { c.volume = max(0, min(2, volume)) }
-                if let opacity { c.opacity = max(0, min(1, opacity)) }
+                if let volume { c.volume = volume }
+                if let opacity { c.opacity = opacity }
                 if let name { c.name = name }
             }
             if speed != nil, let c = p.clip(id)?.clip { try p.checkSplitEditMedia(c) }   // a J/L cut runs at the new speed too
@@ -480,7 +485,13 @@ struct ToolExecutor {
 
     func setClipTransform(_ clip: String, scale: Double?, x: Double?, y: Double?, rotation: Double?, cropLeft: Double?, cropRight: Double?, cropTop: Double?, cropBottom: Double?, reset: Bool) throws {
         let id = try resolveClip(clip)
-        try document.apply("Transform clip", origin: origin, coalesce: coalesce) { p in
+        let p100 = { (v: Double) in Self.percent(v) }
+        let named = [scale.map { "Scale \(p100(max(0.05, min(10, $0))))" }, x.map { "Position X \(p100($0))" }, y.map { "Position Y \(p100($0))" },
+                     rotation.map { "Rotation \(Int($0.rounded()))°" }, cropLeft.map { "Crop left \(p100($0))" }, cropRight.map { "Crop right \(p100($0))" },
+                     cropTop.map { "Crop top \(p100($0))" }, cropBottom.map { "Crop bottom \(p100($0))" }].compactMap { $0 }
+        let label = reset ? "Reset transform" : named.count == 1 ? named[0] : "Transform clip"
+        // Reset is a button: its own undo step, never folded into the drag before it.
+        try document.apply(label, origin: origin, coalesce: coalesce && !reset, key: "Transform clip") { p in
             try p.updateClip(id) { c in
                 if reset { c.transform = .identity }
                 if let scale { c.transform.scale = max(0.05, min(10, scale)) }
@@ -507,7 +518,13 @@ struct ToolExecutor {
             guard Looks.isBuiltin(lut) || FileManager.default.fileExists(atPath: lut) else { throw EditError.notFound("look '\(lut)': use one of \(Looks.builtin.joined(separator: ", ")) or the path of a .cube file") }
             guard Looks.cube(for: lut) != nil else { throw EditError.invalid("could not read the LUT at \(lut) (needs LUT_3D_SIZE and N³ rgb lines)") }
         }
-        try document.apply("Color clip", origin: origin, coalesce: coalesce) { p in
+        let named = [exposure.map { "Exposure \(String(format: "%+.1f", $0))" }, contrast.map { "Contrast \(Self.percent($0))" }, saturation.map { "Saturation \(Self.percent($0))" },
+                     temperature.map { "Temperature \(Int($0.rounded()))" }, tint.map { "Tint \(Int($0.rounded()))" }, shadows.map { "Shadows \(Int(($0 * 100).rounded()))" },
+                     midtones.map { "Midtones \(Int(($0 * 100).rounded()))" }, highlights.map { "Highlights \(Int(($0 * 100).rounded()))" },
+                     vibrance.map { "Vibrance \(Int(($0 * 100).rounded()))" }, lutMix.map { "Look mix \(Self.percent($0))" }].compactMap { $0 }
+        let label = reset ? "Reset color" : (named.count == 1 && lut == nil && inputLut == nil) ? named[0] : "Color clip"
+        // Reset is a button: its own undo step, never folded into the drag before it.
+        try document.apply(label, origin: origin, coalesce: coalesce && !reset, key: "Color clip") { p in
             try p.updateClip(id) { c in
                 if reset { c.color = .identity }
                 if let exposure { c.color.exposure = max(-4, min(4, exposure)) }
@@ -537,7 +554,7 @@ struct ToolExecutor {
             guard IsolatedAudio.isAvailable else { throw EditError.invalid(IsolatedAudio.unavailableMessage) }
             if let c = project.clip(id)?.clip, let a = IsolatedAudio.audioAsset(of: c, in: project), a.sequenceID != nil { throw EditError.invalid(IsolatedAudio.sequenceMessage) }
         }
-        try document.apply("Clip audio", origin: origin, coalesce: coalesce) { p in
+        try document.apply(reset ? "Reset clip audio" : "Clip audio", origin: origin, coalesce: coalesce && !reset, key: "Clip audio") { p in   // Reset is a button: its own step
             try p.updateClip(id) { c in
                 if reset { c.audio.clearCleanup() }   // EQ, high-pass, gate, isolation; the dynamics have their own controls
                 if let low { c.audio.lowGain = max(-18, min(18, low)) }
@@ -622,7 +639,12 @@ struct ToolExecutor {
 
     func setClipFades(_ clip: String, fadeIn: Double?, fadeOut: Double?) throws {
         let id = try resolveClip(clip)
-        try document.apply("Fade clip", origin: origin, coalesce: coalesce) { p in
+        let label = switch (fadeIn, fadeOut) {
+        case (let i?, nil): "Fade in \(ProjectDiff.fmt((max(0, i) * 10).rounded() / 10)) s"
+        case (nil, let o?): "Fade out \(ProjectDiff.fmt((max(0, o) * 10).rounded() / 10)) s"
+        default: "Fade clip"
+        }
+        try document.apply(label, origin: origin, coalesce: coalesce, key: "Fade clip") { p in
             try p.updateClip(id) { c in
                 if let fadeIn { c.fadeIn = max(0, min(c.duration, fadeIn)) }
                 if let fadeOut { c.fadeOut = max(0, min(c.duration, fadeOut)) }
@@ -900,7 +922,9 @@ struct ToolExecutor {
     }
 
     /// Folds clips into one nested sequence: they leave the timeline (their tracks keep their names inside the
-    /// sequence, times start at 0) and one clip playing the sequence takes their place from the earliest start.
+    /// sequence, times start at 0) and one clip playing the sequence takes their place from the earliest start, on the
+    /// track of the earliest clip. Nothing else moves: no other clip, text or marker, on any track. When a clip that is
+    /// not nested sits inside the span on that track, the nest goes on a new track right under it instead.
     /// The render happens before this returns, so the preview plays at once.
     func nestClips(_ clips: [String], name: String?) async throws -> SequenceInfo {
         let ids = try clips.map(resolveClip)
@@ -926,20 +950,23 @@ struct ToolExecutor {
         // A sequence with no picture is an audio asset, so its clip lands on an audio track.
         let hasPicture = sub.tracks.contains { $0.kind == .video && !$0.clips.isEmpty }
         let asset = Asset(name: seq.name, path: url.path, kind: hasPicture ? .sequence : .audio, duration: sub.duration, width: hasPicture ? sub.settings.width : nil, height: hasPicture ? sub.settings.height : nil, sequenceID: seq.id)
-        let hostTrack = picked.sorted { $0.clip.start < $1.clip.start }.first { $0.track.kind == .video }?.track.id
-        var newClip: Clip!
-        try document.apply("Nest \(picked.count) clip\(picked.count == 1 ? "" : "s") into \(seq.name)", origin: origin) { p in
+        let kind: TrackKind = hasPicture ? .video : .audio
+        let hostTrack = picked.sorted { $0.clip.start < $1.clip.start }.first { $0.track.kind == kind }?.track.id
+        let newClip = Clip(assetID: asset.id, name: asset.name, start: minStart, duration: maxEnd - minStart)
+        document.apply("Nest \(picked.count) clip\(picked.count == 1 ? "" : "s") into \(seq.name)", origin: origin) { p in
             _ = p.removeClips(ids)
             p.sequences.append(seq)
             p.assets.append(asset)
-            newClip = try p.insertClip(assetID: asset.id, trackID: hostTrack, at: minStart, sourceIn: 0, duration: maxEnd - minStart)
+            // Not an insert: an insert at a time ripples every track, and the nest only takes the place of its clips.
+            p.placeWithoutRipple(newClip, preferring: hostTrack, kind: kind)
         }
         var info = sequenceInfo(seq); info.clip = newClip.id.short
         return info
     }
 
     /// Puts a nested sequence's clips back on the timeline in place of the clip that plays it (the whole sequence,
-    /// from the clip's start; tracks are matched by name and created when missing). The sequence is dropped when
+    /// from the clip's start; tracks are matched by name and created when missing). The clips keep their own ids when
+    /// those are free, so nest then unnest gives back exactly the clips that went in. The sequence is dropped when
     /// nothing else plays it.
     func unnestClip(_ clip: String) throws -> Int {
         let id = try resolveClip(clip)
@@ -952,7 +979,11 @@ struct ToolExecutor {
                 if let existing = p.tracks.first(where: { $0.name == st.name && $0.kind == st.kind }) { tid = existing.id }
                 else { tid = p.addTrack(name: st.name, kind: st.kind).id }
                 let ti = try p.trackIndex(tid)
-                for sc in st.clips { var nc = sc; nc.id = UUID(); nc.start += c.start; p.tracks[ti].clips.append(nc); count += 1 }
+                for sc in st.clips {
+                    var nc = sc
+                    if p.clip(sc.id) != nil { nc.id = UUID() }   // a second unnest of the same sequence: a copy needs ids of its own
+                    nc.start += c.start; p.tracks[ti].clips.append(nc); count += 1
+                }
                 p.tracks[ti].clips.sort { $0.start < $1.start }
             }
             for a in seq.project.assets where p.asset(a.id) == nil { p.assets.append(a) }
@@ -1008,4 +1039,6 @@ struct ToolExecutor {
     func saveTemplate(_ name: String) throws -> String { try Templates.save(project, as: name).path }
 
     private func r(_ x: Double) -> Double { (x * 1000).rounded() / 1000 }
+    /// "80%" for 0.8, as the inspector shows it.
+    static func percent(_ v: Double) -> String { "\(Int((v * 100).rounded()))%" }
 }

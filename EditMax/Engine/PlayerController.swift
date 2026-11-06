@@ -165,5 +165,11 @@ final class PlayerController: ObservableObject {
         player.seek(to: t, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in self?.sampleScopes() }
         currentTime = max(0, seconds)
     }
-    func step(frames: Int, fps: Double) { pause(); seek(to: currentTime + Double(frames) / max(1, fps)) }
+    /// Moves by whole frames from the frame the playhead is on. Counted in frames, not by adding 1/fps to the time: the
+    /// player reports times a hair off the grid (0.99833 for 1.0) and the sums drift, so ten steps used to land on 2.998.
+    func step(frames: Int, fps: Double) {
+        pause()
+        let rate = max(1, fps)
+        seek(to: max(0, (currentTime * rate).rounded() + Double(frames)) / rate)
+    }
 }

@@ -644,6 +644,10 @@ extension Project {
         return matches.count == 1 ? matches[0] : nil
     }
 
+    /// Where an edit with no track named goes, as in other editors: V1, the base video track (the bottom video row, under
+    /// every other picture), or A1, the top audio row.
+    func defaultTrack(of kind: TrackKind) -> Track? { kind == .video ? tracks.last { $0.kind == .video } : tracks.first { $0.kind == .audio } }
+    /// The top track of a kind (row order). Edits with no track named use `defaultTrack(of:)`.
     func firstTrack(of kind: TrackKind) -> Track? { tracks.first { $0.kind == kind } }
 
     /// End of the last clip on a track (0 if empty).
@@ -706,17 +710,46 @@ extension Project {
         return n
     }
 
+    /// A new track, as in Premiere, Resolve and Final Cut: a video track goes on top of the video tracks (V2 above V1,
+    /// so its picture covers V1's: row 0 is drawn last), an audio track below the audio tracks.
     mutating func addTrack(name: String? = nil, kind: TrackKind) -> Track {
-        let n = tracks.filter { $0.kind == kind }.count + 1
-        let t = Track(name: name ?? "\(kind == .video ? "V" : "A")\(n)", kind: kind)
-        // Video stays above audio: a new video track goes in just above the first audio track (audio tracks append).
-        if kind == .video, let firstAudio = tracks.firstIndex(where: { $0.kind == .audio }) {
-            tracks.insert(t, at: firstAudio)
-            if let row = textLaneRow, row >= firstAudio { textLaneRow = row + 1 }
-        } else {
-            tracks.append(t)
-        }
+        let top = tracks.firstIndex { $0.kind == .video } ?? 0
+        return insertTrack(name: name, kind: kind, at: kind == .video ? top : tracks.count)
+    }
+
+    /// Inserts a track at a row of `tracks` (0 = top). The Text lane keeps its place among the other rows: it moves down
+    /// one when the new track goes above it, and a track added right under it stays under it.
+    @discardableResult
+    mutating func insertTrack(name: String? = nil, kind: TrackKind, at index: Int) -> Track {
+        let t = Track(name: name ?? freeTrackName(kind), kind: kind)
+        let i = max(0, min(tracks.count, index))
+        tracks.insert(t, at: i)
+        if let row = textLaneRow, row > i { textLaneRow = row + 1 }
         return t
+    }
+
+    /// "V2", "A3"…: one more than the tracks of that kind, skipping names already taken (after a track was removed).
+    func freeTrackName(_ kind: TrackKind) -> String {
+        let letter = kind == .video ? "V" : "A"
+        var n = tracks.filter { $0.kind == kind }.count + 1
+        while tracks.contains(where: { $0.name == "\(letter)\(n)" }) { n += 1 }
+        return "\(letter)\(n)"
+    }
+
+    /// Puts `clip` at its own start and length without moving anything else (a nest takes the place of the clips it
+    /// folds): on `preferred` when that span is free there; otherwise on a new track right under it, so the clips that
+    /// stay on `preferred` keep playing over it and everything else stacks as before. Returns the track used.
+    @discardableResult
+    mutating func placeWithoutRipple(_ clip: Clip, preferring preferred: UUID?, kind: TrackKind) -> UUID {
+        let host = preferred.flatMap { id in tracks.firstIndex { $0.id == id && $0.kind == kind } }
+            ?? defaultTrack(of: kind).flatMap { d in tracks.firstIndex { $0.id == d.id } }
+        let ti: Int
+        if let host, !tracks[host].clips.contains(where: { $0.start < clip.end - 0.001 && $0.end > clip.start + 0.001 }) { ti = host }
+        else if let host { ti = host + 1; insertTrack(kind: kind, at: ti) }
+        else { _ = addTrack(kind: kind); ti = tracks.firstIndex { $0.kind == kind }! }
+        tracks[ti].clips.append(clip)
+        tracks[ti].clips.sort { $0.start < $1.start }
+        return tracks[ti].id
     }
 
     /// Insert a clip for `assetID`. `at == nil` appends after the last clip on the track.
@@ -725,7 +758,7 @@ extension Project {
                              sourceIn: Double = 0, duration: Double? = nil) throws -> Clip {
         guard let asset = asset(assetID) else { throw EditError.notFound("asset \(assetID)") }
         let kind: TrackKind = asset.kind == .audio ? .audio : .video
-        let tid = trackID ?? firstTrack(of: kind)?.id ?? addTrack(kind: kind).id
+        let tid = trackID ?? defaultTrack(of: kind)?.id ?? addTrack(kind: kind).id
         let ti = try trackIndex(tid)
         if asset.kind == .audio, tracks[ti].kind == .video { throw EditError.invalid("\(asset.name) has no picture; put it on an audio track") }
         guard sourceIn < asset.duration - 0.001 else { throw EditError.invalid("sourceIn \(sourceIn) is past the end of \(asset.name) (\(asset.duration) s)") }
@@ -835,8 +868,10 @@ extension Project {
         let ti = try trackIndex(trackID)
         var cursor = 0.0
         for ci in tracks[ti].clips.indices {
-            tracks[ti].clips[ci].start = cursor
-            cursor += tracks[ti].clips[ci].duration
+            // A clip already in place keeps its exact start: summing durations drifts in the last bits, and that drift
+            // would make "close gaps" on a track with no gaps look like an edit.
+            if abs(tracks[ti].clips[ci].start - cursor) > 1e-9 { tracks[ti].clips[ci].start = cursor }
+            cursor = tracks[ti].clips[ci].end
         }
     }
 

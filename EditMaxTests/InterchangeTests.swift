@@ -31,6 +31,7 @@ final class InterchangeTests: XCTestCase {
     /// and at half volume. Above: a half-size clip at 2× speed. Below: the fixture's sound on A1. A title, a marker.
     private func sampleProject() throws {
         let base = try x.addTrack(kind: "video", name: "Base")
+        _ = try x.moveTrack(base.name, toRow: 1)   // a new track goes on top; this sample keeps it under V1
         let a = try x.insertClip(asset: "base.mp4", track: base.name, duration: 1.5)
         let b = try x.insertClip(asset: "base.mp4", track: base.name, sourceIn: 0.5, duration: 1)
         _ = try x.setTransition(b.id.short, kind: "crossDissolve", duration: 0.4)

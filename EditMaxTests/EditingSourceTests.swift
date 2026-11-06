@@ -24,7 +24,7 @@ final class EditingSourceTests: XCTestCase {
     }
     override class func tearDown() { if let m = media { try? FileManager.default.removeItem(at: m) }; media = nil }
     private func message(_ e: Error) -> String { (e as? LocalizedError)?.errorDescription ?? "\(e)" }
-    private var v1: [Clip] { p.tracks[0].clips }
+    private var v1: [Clip] { p.tracks.first { $0.name == "V1" }!.clips }   // a new video track goes above V1, so not tracks[0]
     /// Puts a clip on a track at a time without moving anything (test setup; insertClip(at:) is a ripple insert).
     private func place(on track: UUID, at start: Double, sourceIn: Double, duration: Double) -> Clip {
         let c = Clip(assetID: asset.id, name: "Other", start: start, duration: duration, sourceIn: sourceIn)
@@ -60,13 +60,13 @@ final class EditingSourceTests: XCTestCase {
         let base = try x.insertClip(asset: "Interview", sourceIn: 0, duration: 6)
         let other = p.addTrackCopy(kind: .video, in: doc)
         let up = place(on: other, at: 0, sourceIn: 0, duration: 6)
-        let r = try x.pointEdit(overwrite: true, asset: "Interview", sourceIn: 5, sourceOut: nil, timelineIn: 2, timelineOut: 3, track: p.tracks[0].id.uuidString)
+        let r = try x.pointEdit(overwrite: true, asset: "Interview", sourceIn: 5, sourceOut: nil, timelineIn: 2, timelineOut: 3, track: "V1")
         XCTAssertEqual(r.replaced, [base.name]); XCTAssertNil(r.rippled)
         XCTAssertEqual(v1.map(\.start), [0, 2, 3]); XCTAssertEqual(v1.map(\.end), [2, 3, 6])
         XCTAssertEqual(v1[1].sourceIn, 5); XCTAssertEqual(v1[2].sourceIn, 3, accuracy: 1e-9, "the right piece keeps its own media")
         XCTAssertEqual(p.clip(up.id)?.clip.start, 0); XCTAssertEqual(p.clip(up.id)?.clip.duration, 6, "the other track is untouched")
         // Over the end of the timeline: nothing to replace, nothing moves.
-        let tail = try x.pointEdit(overwrite: true, asset: "Interview", sourceIn: 0, sourceOut: 1, timelineIn: 7, timelineOut: nil, track: p.tracks[0].id.uuidString)
+        let tail = try x.pointEdit(overwrite: true, asset: "Interview", sourceIn: 0, sourceOut: 1, timelineIn: 7, timelineOut: nil, track: "V1")
         XCTAssertNil(tail.replaced); XCTAssertEqual(v1.last?.start, 7)
     }
 
@@ -97,6 +97,7 @@ final class EditingSourceTests: XCTestCase {
         // Another clip covering the same time on a higher row wins.
         let top = p.tracks[0].id
         let lower = p.addTrackCopy(kind: .video, in: doc)
+        doc.apply("Move track", origin: .agent) { p in _ = p.moveTrack(lower, toIndex: 1) }   // a new track goes on top; this one goes under V1
         _ = place(on: lower, at: 0, sourceIn: 6, duration: 2)
         XCTAssertEqual(p.tracks.firstIndex { $0.id == top }, 0, "the new track is below")
         XCTAssertEqual(try x.matchFrame(clip: nil, time: 1).clip.id, fast.id.short)

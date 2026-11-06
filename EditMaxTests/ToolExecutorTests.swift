@@ -84,7 +84,7 @@ final class ToolExecutorTests: XCTestCase {
         XCTAssertThrowsError(try x.removeMarker("ghost"))
         _ = try x.addTrack(kind: "video", name: nil)
         _ = try x.addTrack(kind: "audio", name: "VO")
-        XCTAssertEqual(doc.project.tracks.map(\.name), ["V1", "V2", "A1", "VO"])
+        XCTAssertEqual(doc.project.tracks.map(\.name), ["V2", "V1", "A1", "VO"])
         XCTAssertThrowsError(try x.addTrack(kind: "midi", name: nil))
     }
 

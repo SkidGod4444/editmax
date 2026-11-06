@@ -73,26 +73,91 @@ final class EditMaxDocument: ReferenceFileDocument, ObservableObject {
     var undoLabel: String? { undoStack.last?.label }
     var redoLabel: String? { redoStack.last?.label }
 
-    private var lastApply: (label: String, at: Date)?
+    /// The coalescing run the newest undo step belongs to (a slider drag in progress), nil when the next edit starts a new step.
+    struct CoalesceRun {
+        var key: String
+        var origin: EditOrigin
+        var at: Date
+        /// Everything the run has changed so far (`ProjectDiff.changedPaths`).
+        var paths: Set<String>
+        /// The mouse press (down, drags, up) the run's newest edit came in on, if any (`NSEvent.eventNumber`).
+        var press: Int? = nil
+    }
+    private var run: CoalesceRun?
+    static let coalesceWindow: TimeInterval = 1.5
 
     /// Apply a change. A snapshot of the pre-change state is stored with `label` so it can be restored.
-    /// `coalesce` folds a run of same-labeled edits within 1.5 s (a slider drag) into one undo step and one History entry.
-    func apply(_ label: String, origin: EditOrigin, coalesce: Bool = false, _ body: (inout Project) throws -> Void) rethrows {
+    /// An edit that leaves the project exactly as it was records nothing: no History entry, no undo step, and redo survives
+    /// (a text field writing back the name it shows, closing gaps where there are none, the same transition twice).
+    /// `coalesce` folds a run of edits to the same control within 1.5 s (a slider drag) into one undo step and one History
+    /// entry; `key` names the kind of edit for that when the label carries a value ("Opacity 80%"), and the step takes the
+    /// newest label.
+    func apply(_ label: String, origin: EditOrigin, coalesce: Bool = false, key: String? = nil, _ body: (inout Project) throws -> Void) rethrows {
+        var next = project
+        try body(&next)
+        guard next != project else { return }
         let before = project.withoutHistory
-        let merge = coalesce && lastApply?.label == label && undoStack.last?.label == label && Date().timeIntervalSince(lastApply!.at) < 1.5
-        try commit(label, origin: origin, record: !merge, body)
+        let key = key ?? label
+        var merge = false, paths: Set<String> = []
+        let press = coalesce ? Self.currentPress : nil
+        if coalesce {
+            let after = next.withoutHistory
+            paths = ProjectDiff.changedPaths(from: before, to: after)
+            if let top = undoStack.last {
+                merge = Self.continues(run, key: key, origin: origin, paths: paths, now: Date(), backToStart: after == top.project,
+                                       clickRelease: press?.release == true && press?.number != run?.press)
+            }
+        }
+        if merge {
+            // One step for the whole drag, named after where it ended.
+            undoStack[undoStack.count - 1].label = label
+            if let i = next.history.indices.last { next.history[i].label = label }
+            run!.at = Date(); run!.paths.formUnion(paths); run!.press = press?.number
+        }
+        commit(label, origin: origin, record: !merge, next: next, before: before)
         if !merge {
             undoStack.append((label, before))
             if undoStack.count > Self.maxUndo { undoStack.removeFirst(undoStack.count - Self.maxUndo) }
+            run = coalesce ? CoalesceRun(key: key, origin: origin, at: Date(), paths: paths, press: press?.number) : nil
         }
         redoStack.removeAll()
-        lastApply = (label, Date())
+    }
+
+    /// Whether a coalescing edit continues the run before it (one undo step) or starts its own. It continues only when it
+    /// is the same kind of edit from the same origin within the window, changes the same control (its changed paths sit
+    /// inside the run's, or the run's inside its own: a dot dragged first sideways and then diagonally), does not bring the
+    /// project back to where the run began (a double-click reset after a drag is a step of its own, so ⌘Z brings the
+    /// dragged value back), and is not the release of a click of its own (a button or a double-click, `currentPress`).
+    static func continues(_ run: CoalesceRun?, key: String, origin: EditOrigin, paths: Set<String>, now: Date, backToStart: Bool, clickRelease: Bool) -> Bool {
+        guard let run, run.key == key, run.origin == origin, now.timeIntervalSince(run.at) < coalesceWindow,
+              !backToStart, !clickRelease, !paths.isEmpty, !run.paths.isEmpty else { return false }
+        func related(_ a: String, _ b: String) -> Bool { a == b || a.hasPrefix(b + "/") || b.hasPrefix(a + "/") }
+        let inside = paths.allSatisfy { p in run.paths.contains { related(p, $0) } }
+        let around = run.paths.allSatisfy { p in paths.contains { related(p, $0) } }
+        return inside || around
+    }
+
+    /// The mouse press AppKit is handling, and whether this is its release. A release starts a step of its own (a button
+    /// press, a double-click on a value) unless it ends the press the run came in on: a slider sends its last value on the
+    /// mouse-up of its own drag. A stale event (an agent's call long after the last click) says nothing about the edit, so
+    /// only a fresh one counts. Only mouse events are read, because `eventNumber` is not defined for the others.
+    private static var currentPress: (number: Int, release: Bool)? {
+        guard let app = NSApp, let e = app.currentEvent, ProcessInfo.processInfo.systemUptime - e.timestamp < 0.5 else { return nil }
+        switch e.type {
+        case .leftMouseDown, .leftMouseDragged, .rightMouseDown, .rightMouseDragged, .otherMouseDown, .otherMouseDragged: return (e.eventNumber, false)
+        case .leftMouseUp, .rightMouseUp, .otherMouseUp: return (e.eventNumber, true)
+        default: return nil
+        }
     }
 
     private func commit(_ label: String, origin: EditOrigin, record: Bool = true, _ body: (inout Project) throws -> Void) rethrows {
-        let before = project.withoutHistory
         var next = project
         try body(&next)
+        commit(label, origin: origin, record: record, next: next, before: project.withoutHistory)
+    }
+
+    private func commit(_ label: String, origin: EditOrigin, record: Bool, next: Project, before: Project) {
+        var next = next
         if record {
             // Labels may quote the user's content (a title, a phrase); the log keeps the action, not the words.
             let safe = label.replacingOccurrences(of: "\"[^\"]*\"", with: "\"…\"", options: .regularExpression)
@@ -116,6 +181,7 @@ final class EditMaxDocument: ReferenceFileDocument, ObservableObject {
 
     func undo() {
         guard let last = undoStack.popLast() else { return }
+        run = nil   // a drag after ⌘Z is a new step, never part of the one just undone
         let current = project.withoutHistory
         commit("Undo \(last.label)", origin: .user) { p in
             let history = p.history, transcripts = p.transcripts, motionPaths = p.motionPaths, faceTracks = p.faceTracks
@@ -126,6 +192,7 @@ final class EditMaxDocument: ReferenceFileDocument, ObservableObject {
 
     func redo() {
         guard let next = redoStack.popLast() else { return }
+        run = nil
         let current = project.withoutHistory
         commit("Redo \(next.label)", origin: .user) { p in
             let history = p.history, transcripts = p.transcripts, motionPaths = p.motionPaths, faceTracks = p.faceTracks

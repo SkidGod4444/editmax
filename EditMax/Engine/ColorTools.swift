@@ -49,9 +49,10 @@ extension ToolExecutor {
         }
     }
 
-    /// Changes the ClipColor of a target in one recorded edit (slider callers coalesce).
-    func editColor(_ clipID: UUID, _ t: GradeTarget, label: String, _ body: @escaping (inout ClipColor) -> Void) throws {
-        try document.apply(label, origin: origin, coalesce: coalesce) { p in
+    /// Changes the ClipColor of a target in one recorded edit (slider callers coalesce; `reset` is a button press and
+    /// always its own undo step).
+    func editColor(_ clipID: UUID, _ t: GradeTarget, label: String, reset: Bool = false, _ body: @escaping (inout ClipColor) -> Void) throws {
+        try document.apply(label, origin: origin, coalesce: coalesce && !reset) { p in
             try p.updateClip(clipID) { c in
                 switch t {
                 case .primary: body(&c.color)
@@ -74,7 +75,10 @@ extension ToolExecutor {
 
     /// Stores the whole wheel set (nil when untouched, so an ungraded clip stays identical to before).
     func setWheels(_ clipID: UUID, target t: GradeTarget, _ wheels: ColorWheels) throws {
-        try editColor(clipID, t, label: "Color wheels") { $0.wheels = wheels.isIdentity ? nil : wheels }
+        // A wheel put back to neutral is the card's Reset or a double-click, never part of a drag.
+        let old = document.project.clip(clipID).flatMap { color(of: $0.clip, t).wheels } ?? ColorWheels()
+        let reset = ColorWheels.Name.allCases.contains { !old[$0].isIdentity && wheels[$0].isIdentity }
+        try editColor(clipID, t, label: "Color wheels", reset: reset) { $0.wheels = wheels.isIdentity ? nil : wheels }
     }
 
     func setColorWheels(_ clip: String, layer: String?, wheel: String, r: Double?, g: Double?, b: Double?, master: Double?, toward: String?, amount: Double?, reset: Bool) throws -> WheelsResult {
@@ -125,7 +129,10 @@ extension ToolExecutor {
     }
 
     func setCurves(_ clipID: UUID, target t: GradeTarget, _ curves: ColorCurves) throws {
-        try editColor(clipID, t, label: "Curves") { $0.curves = curves.isIdentity ? nil : curves }
+        // A curve emptied (its Reset) is a step of its own, never part of the drag before it.
+        let old = document.project.clip(clipID).flatMap { color(of: $0.clip, t).curves } ?? ColorCurves()
+        let reset = ColorCurves.Name.allCases.contains { !old[$0].isEmpty && curves[$0].isEmpty }
+        try editColor(clipID, t, label: "Curves", reset: reset) { $0.curves = curves.isIdentity ? nil : curves }
     }
 
     /// Checks one curve's points and returns them sorted.
@@ -514,7 +521,8 @@ extension ToolExecutor {
 
     /// Stores a clip's finishing (nil when everything is at its default, so the clip is saved and renders as before).
     func setFinish(_ clipID: UUID, _ f: ClipFinish) throws {
-        try document.apply("Finishing", origin: origin, coalesce: coalesce) { p in try p.updateClip(clipID) { $0.finish = f == ClipFinish() ? nil : f } }
+        let reset = f == ClipFinish()   // the card's Reset: its own undo step
+        try document.apply("Finishing", origin: origin, coalesce: coalesce && !reset) { p in try p.updateClip(clipID) { $0.finish = reset ? nil : f } }
     }
 
     func setClipFinish(_ clip: String, values: [String: Double], reset: Bool) throws -> FinishResult {

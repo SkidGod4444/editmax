@@ -68,7 +68,7 @@ final class ProjectModelTests: XCTestCase {
         _ = p.addTrack(kind: .audio)
         _ = p.addTrack(kind: .video)
         let kinds = p.tracks.map(\.kind)
-        XCTAssertEqual(p.tracks.map(\.name), ["V1", "V2", "V3", "A1", "A2"])
+        XCTAssertEqual(p.tracks.map(\.name), ["V3", "V2", "V1", "A1", "A2"], "each new video track goes on top, over the ones before it")
         XCTAssertLessThan(kinds.lastIndex(of: .video)!, kinds.firstIndex(of: .audio)!)
     }
 

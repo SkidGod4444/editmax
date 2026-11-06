@@ -93,9 +93,19 @@ extension ToolExecutor {
         }
     }
 
+    /// With neighbour trim, the touching neighbour's sound edge facing this clip (its trail before us, its lead after us)
+    /// once our edge goes from `ours` to `new`; nil leaves it alone. Moving our edge moves theirs so the sounds meet at
+    /// the new audio cut. Putting our edge back to 0 (Reset, a double-click) only gives back sound a trim took from the
+    /// neighbour (its edge is the mirror of ours, cut short); a J or L cut of the neighbour's own is never removed.
+    static func trimmedNeighbourEdge(_ theirs: Double, ours: Double, new: Double) -> Double? {
+        if abs(new) > 1e-9 { return -new }
+        return theirs < -1e-9 && abs(theirs + ours) < 1e-6 ? 0 : nil
+    }
+
     /// Sets how far the clip's sound starts before (`lead`) and runs after (`trail`) its picture. `neighbour`
     /// overlap (default) plays both sounds where they meet; trim moves the touching neighbour's sound edge too, so
     /// the sounds meet at the new audio cut instead of overlapping (a negative value then extends the neighbour's sound).
+    /// Setting an edge to 0 with trim never removes the neighbour's own J or L cut (`trimmedNeighbourEdge`).
     func setSplitEdit(_ clip: String, lead: Double?, trail: Double?, neighbour: String?) throws -> SplitEditResult {
         let id = try resolveClip(clip)
         guard let (track, c) = proj.clip(id) else { throw EditError.notFound("clip '\(clip)'") }
@@ -121,25 +131,26 @@ extension ToolExecutor {
         try document.apply("Set split edit", origin: origin, coalesce: coalesce) { p in
             try p.updateClip(id) { $0.audioLead = newLead; $0.audioTrail = newTrail }
             guard trimNeighbour else { return }
-            if lead != nil, let prev = p.clipBefore(c, on: track), p.track(track.id)?.clips.contains(where: { $0.id == prev.id }) == true {
-                var t = prev; t.audioTrail = -newLead
+            if lead != nil, let prev = p.clipBefore(c, on: track), p.track(track.id)?.clips.contains(where: { $0.id == prev.id }) == true,
+               let edge = Self.trimmedNeighbourEdge(prev.audioTrail, ours: c.audioLead, new: newLead) {
+                var t = prev; t.audioTrail = edge
                 if t.soundDuration < minLen { throw EditError.invalid("a lead of \(EditFormat.s(newLead)) s would leave \(prev.name)'s sound shorter than one frame") }
-                if -newLead > 1e-9 {
+                if edge > 1e-9 {
                     var pp = prev; pp.audioLead = 0; pp.audioTrail = 0
                     let r = p.mediaRoom(pp).tail
-                    if -newLead > r + 1e-4 { throw EditError.invalid("\(prev.name) has only \(EditFormat.s(r)) s of media after its out point to fill a sound gap of \(EditFormat.s(-newLead)) s") }
+                    if edge > r + 1e-4 { throw EditError.invalid("\(prev.name) has only \(EditFormat.s(r)) s of media after its out point to fill a sound gap of \(EditFormat.s(edge)) s") }
                 }
-                try p.updateClip(prev.id) { $0.audioTrail = -newLead }; changed.append(prev.id)
+                try p.updateClip(prev.id) { $0.audioTrail = edge }; changed.append(prev.id)
             }
-            if trail != nil, let next = p.clipAfter(c, on: track) {
-                var t = next; t.audioLead = -newTrail
+            if trail != nil, let next = p.clipAfter(c, on: track), let edge = Self.trimmedNeighbourEdge(next.audioLead, ours: c.audioTrail, new: newTrail) {
+                var t = next; t.audioLead = edge
                 if t.soundDuration < minLen { throw EditError.invalid("a trail of \(EditFormat.s(newTrail)) s would leave \(next.name)'s sound shorter than one frame") }
-                if -newTrail > 1e-9 {
+                if edge > 1e-9 {
                     var nn = next; nn.audioLead = 0; nn.audioTrail = 0
                     let r = p.mediaRoom(nn).head
-                    if -newTrail > r + 1e-4 { throw EditError.invalid("\(next.name) has only \(EditFormat.s(r)) s of media before its in point to fill a sound gap of \(EditFormat.s(-newTrail)) s") }
+                    if edge > r + 1e-4 { throw EditError.invalid("\(next.name) has only \(EditFormat.s(r)) s of media before its in point to fill a sound gap of \(EditFormat.s(edge)) s") }
                 }
-                try p.updateClip(next.id) { $0.audioLead = -newTrail }; changed.append(next.id)
+                try p.updateClip(next.id) { $0.audioLead = edge }; changed.append(next.id)
             }
         }
         let p = proj
@@ -401,7 +412,7 @@ extension ToolExecutor {
             if a.kind == .audio, tr.kind == .video { throw EditError.invalid("\(a.name) has no picture; put it on an audio track") }
             if a.kind != .audio, tr.kind == .audio { throw EditError.invalid("\(tr.name) is an audio track; \(a.name) has a picture, put it on a video track") }
             tid = t
-        } else if let t = p.tracks.first(where: { $0.kind == kind }) { tid = t.id }
+        } else if let t = p.defaultTrack(of: kind) { tid = t.id }   // V1 or A1, as an insert with no track
         else { tid = UUID() }   // made below
         var tin = timelineIn
         if tin == nil, timelineOut == nil || [sourceIn, sourceOut].compactMap({ $0 }).count < 2 { tin = UIRegistry.shared.playheads[document.id]?() }

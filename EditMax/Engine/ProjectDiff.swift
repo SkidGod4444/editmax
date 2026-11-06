@@ -41,7 +41,9 @@ enum ProjectDiff {
         else if a.texts != b.texts { parts.append("text changed") }
         if a.markers != b.markers { parts.append("markers") }
         if a.sequences != b.sequences { parts.append("sequences") }
-        if parts.isEmpty, a != b { parts.append("project reset") }
+        // The newest entry is compared with the live project, which also holds the analysis caches (transcripts, motion
+        // paths) that snapshots leave out; those are not an edit, so they never make a "project reset".
+        if parts.isEmpty, a.withoutHistory != b.withoutHistory { parts.append("project reset") }
         var s = parts.joined(separator: "; ")
         if s.count > 220 { s = String(s.prefix(217)) + "…" }
         return s
@@ -69,6 +71,61 @@ enum ProjectDiff {
         if m.displayStyle == .optional { return m.children.first.map { show($0.value) } ?? "none" }
         return String(describing: v)
     }
+    // MARK: Which properties an edit changed
+
+    /// The properties that differ between two states, as paths such as `clip:<id>/color/saturation`,
+    /// `track:<id>/mix/gain`, `text:<id>/y` or `settings/fps`. A clip, text, marker or track added, removed or reordered
+    /// shows as its list (`track:<id>/clips`, `texts`). Undo coalescing compares these, so a drag of one slider stays one
+    /// step while the next slider, even under the same label, starts its own.
+    static func changedPaths(from a: Project, to b: Project) -> Set<String> {
+        var out = Set<String>()
+        func json<T: Encodable>(_ v: T) -> Any? {
+            guard let data = try? pathEncoder.encode([v]), let arr = try? JSONSerialization.jsonObject(with: data) as? [Any] else { return nil }
+            return arr.first
+        }
+        /// Walks two JSON values and collects the paths of the leaves that differ.
+        func walk(_ x: Any, _ y: Any, _ path: String) {
+            let join = { (k: String) in path.isEmpty ? k : "\(path)/\(k)" }
+            if let dx = x as? [String: Any], let dy = y as? [String: Any] {
+                for k in Set(dx.keys).union(dy.keys) {
+                    guard let vx = dx[k], let vy = dy[k] else { out.insert(join(k)); continue }
+                    walk(vx, vy, join(k))
+                }
+            } else if let ax = x as? [Any], let ay = y as? [Any] {
+                guard ax.count == ay.count else { out.insert(path); return }
+                for i in ax.indices { walk(ax[i], ay[i], join(String(i))) }
+            } else if !(x as AnyObject).isEqual(y as AnyObject) {
+                out.insert(path)
+            }
+        }
+        func diff<T: Encodable>(_ x: T, _ y: T, _ prefix: String) {
+            guard let jx = json(x), let jy = json(y) else { out.insert(prefix); return }
+            walk(jx, jy, prefix)
+        }
+        func keyed<T: Identifiable & Encodable & Equatable>(_ x: [T], _ y: [T], list: String, prefix: String) where T.ID == UUID {
+            guard x != y else { return }
+            guard x.map(\.id) == y.map(\.id) else { out.insert(list); return }
+            for (u, v) in zip(x, y) where u != v { diff(u, v, "\(prefix):\(u.id.uuidString.lowercased())") }
+        }
+        if a.tracks.map(\.id) != b.tracks.map(\.id) { out.insert("tracks") }
+        else {
+            for (s, t) in zip(a.tracks, b.tracks) where s != t {
+                let id = "track:\(s.id.uuidString.lowercased())"
+                var s0 = s, t0 = t; s0.clips = []; t0.clips = []
+                if s0 != t0 { diff(s0, t0, id) }
+                keyed(s.clips, t.clips, list: "\(id)/clips", prefix: "clip")
+            }
+        }
+        keyed(a.texts, b.texts, list: "texts", prefix: "text")
+        keyed(a.markers, b.markers, list: "markers", prefix: "marker")
+        // Everything else (settings, assets, mix, sequences, name, the caches) is compared as one value.
+        var ra = a, rb = b
+        ra.tracks = []; rb.tracks = []; ra.texts = []; rb.texts = []; ra.markers = []; rb.markers = []; ra.history = []; rb.history = []
+        if ra != rb { diff(ra, rb, "") }
+        return out
+    }
+    private static let pathEncoder: JSONEncoder = { let e = JSONEncoder(); e.dateEncodingStrategy = .iso8601; return e }()
+
     static func fmt(_ d: Double) -> String { d == d.rounded() ? String(Int(d)) : String(format: "%.2f", d).replacingOccurrences(of: #"\.?0+$"#, with: "", options: .regularExpression) }
     static func tc(_ t: Double) -> String { String(format: "%d:%05.2f", Int(t) / 60, t - Double(Int(t) / 60 * 60)) }
 }

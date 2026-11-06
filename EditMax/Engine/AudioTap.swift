@@ -3,8 +3,9 @@ import AVFoundation
 import MediaToolbox
 import Accelerate
 
-/// Per-clip audio processing: a three-band EQ (low shelf, mid peak, high shelf), a high-pass filter and a noise gate.
-/// Gains in dB (0 = untouched), frequencies in Hz (0 = off), the gate threshold in dBFS (0 = off).
+/// Per-clip audio processing: a three-band EQ (low shelf, mid peak, high shelf), a high-pass filter and a noise gate,
+/// then hum removal, a de-esser, a compressor, a gain, a pan and a limiter (see `DynamicsChain` for the order).
+/// Gains in dB (0 = untouched), frequencies in Hz (0 = off), the gate threshold in dBFS (0 = off); nil = processor off.
 struct ClipAudio: Codable, Equatable {
     var lowGain: Double = 0
     var midGain: Double = 0
@@ -13,12 +14,28 @@ struct ClipAudio: Codable, Equatable {
     var gate: Double = 0
     /// Voice isolation amount, 0 = off … 1 = speech only. Pre-rendered per asset by `IsolatedAudio`, never run in the tap.
     var voiceIsolation: Double = 0
-    /// Nothing for the tap to process (EQ, high-pass, gate). Isolation does not count: it is rendered ahead of time.
-    var isIdentity: Bool { lowGain == 0 && midGain == 0 && highGain == 0 && highPass == 0 && gate == 0 }
+    /// Mains hum notches (50/60 Hz and harmonics), run with the EQ.
+    var hum: HumSettings? = nil
+    var deEsser: DeEsserSettings? = nil
+    var compressor: CompressorSettings? = nil
+    /// Clip gain in dB after the compressor, before the limiter (what normalize_loudness sets for one clip).
+    var gain: Double = 0
+    /// Stereo balance −1 … 1 (stereo sources only: a mono file reaches the tap as one channel).
+    var pan: Double = 0
+    var limiter: LimiterSettings? = nil
+    /// Nothing for the tap to process. Isolation does not count: it is rendered ahead of time.
+    var isIdentity: Bool { !hasCleanup && !hasDynamics }
+    /// EQ, high-pass or gate set (the processors the tap has always run).
+    var hasCleanup: Bool { lowGain != 0 || midGain != 0 || highGain != 0 || highPass != 0 || gate != 0 }
+    /// Hum removal, de-esser, compressor, gain, pan or limiter set.
+    var hasDynamics: Bool { hum != nil || deEsser != nil || compressor != nil || gain != 0 || pan != 0 || limiter != nil }
     /// Every setting at its default, isolation included.
     var isDefault: Bool { self == ClipAudio() }
     var needsIsolation: Bool { voiceIsolation > 0.001 }
     static let identity = ClipAudio()
+    static let gainRange = -24.0...24, panRange = -1.0...1
+    /// Back to no EQ, high-pass, gate or isolation; the rest (hum, de-esser, dynamics, gain, pan) stays.
+    mutating func clearCleanup() { lowGain = 0; midGain = 0; highGain = 0; highPass = 0; gate = 0; voiceIsolation = 0 }
 
     init() {}
     init(from decoder: Decoder) throws {
@@ -29,6 +46,12 @@ struct ClipAudio: Codable, Equatable {
         highPass = try c.decodeIfPresent(Double.self, forKey: .highPass) ?? 0
         gate = try c.decodeIfPresent(Double.self, forKey: .gate) ?? 0
         voiceIsolation = try c.decodeIfPresent(Double.self, forKey: .voiceIsolation) ?? 0
+        hum = try c.decodeIfPresent(HumSettings.self, forKey: .hum)
+        deEsser = try c.decodeIfPresent(DeEsserSettings.self, forKey: .deEsser)
+        compressor = try c.decodeIfPresent(CompressorSettings.self, forKey: .compressor)
+        gain = try c.decodeIfPresent(Double.self, forKey: .gain) ?? 0
+        pan = try c.decodeIfPresent(Double.self, forKey: .pan) ?? 0
+        limiter = try c.decodeIfPresent(LimiterSettings.self, forKey: .limiter)
     }
 }
 
@@ -77,70 +100,168 @@ struct Biquad {
     }
 }
 
-/// The state behind one audio tap: which clip's settings apply when, and the filters per channel.
+/// The state behind one audio tap: which clip's settings apply when, the filters per channel, and the dynamics strip.
+/// Everything the audio thread touches is allocated in `prepare` (the tap's prepare callback); `run` never allocates,
+/// locks or grows an array.
 final class AudioTapContext {
-    struct Span { let start: Double, end: Double, audio: ClipAudio }
+    struct Span {
+        let start: Double, end: Double, audio: ClipAudio
+        /// The clip's volume envelope as (timeline seconds, volume) breakpoints. AVFoundation applies it after the tap,
+        /// so the limiters scale what they detect by it to hold their ceiling for what is heard. Empty = 1.
+        var envelope: [(Double, Double)] = []
+    }
     let spans: [Span]
-    var sampleRate = 48000.0
-    var channels = 2
-    var current: ClipAudio? = nil
-    var filters: [[Biquad]] = []    // per channel: [low, mid, high, highPass] (only the active ones are run)
+    let strip: TrackStrip
+    let meter: MeterSlot?
+    private let starts: [Double], ends: [Double], audios: [ClipAudio]
+    private let envOffset: [Int], envCount: [Int]
+    private let envTimes: UnsafeMutablePointer<Double>, envValues: UnsafeMutablePointer<Double>
+    private(set) var sampleRate = 48000.0
+    private(set) var channels = 2
+    private(set) var current: ClipAudio? = nil
+    private var currentSpan = -2
+    private var filters: UnsafeMutablePointer<Biquad>? = nil    // per channel: [low, mid, high, highPass]
+    private var frame: UnsafeMutablePointer<Double>? = nil
+    private var hum: HumFilter? = nil
+    private var chain: DynamicsChain? = nil
+    private var latency = 0.0
+    private var nextTime = -1.0
     var gateEnv = 0.0, gateGain = 1.0
 
-    init(spans: [Span]) { self.spans = spans }
+    init(spans: [Span], strip: TrackStrip = TrackStrip(), meter: MeterSlot? = nil) {
+        self.spans = spans; self.strip = strip; self.meter = meter
+        starts = spans.map(\.start); ends = spans.map(\.end); audios = spans.map(\.audio)
+        var offs: [Int] = [], counts: [Int] = [], total = 0
+        for s in spans { offs.append(total); counts.append(s.envelope.count); total += s.envelope.count }
+        envOffset = offs; envCount = counts
+        envTimes = .allocate(capacity: max(1, total)); envValues = .allocate(capacity: max(1, total))
+        var k = 0
+        for s in spans { for (t, v) in s.envelope { envTimes[k] = t; envValues[k] = v; k += 1 } }
+    }
+    deinit {
+        envTimes.deallocate(); envValues.deallocate()
+        filters?.deallocate(); frame?.deallocate()
+    }
 
-    func settings(at t: Double) -> ClipAudio? { spans.first { $0.start - 0.001 <= t && t < $0.end + 0.001 }?.audio }
+    func settings(at t: Double) -> ClipAudio? { let i = spanIndex(at: t); return i >= 0 ? audios[i] : nil }
+    private func spanIndex(at t: Double) -> Int {
+        for i in 0..<starts.count where starts[i] - 0.001 <= t && t < ends[i] + 0.001 { return i }
+        return -1
+    }
+    /// The span's volume envelope at `t` (1 outside any span or without breakpoints).
+    private func envelope(_ span: Int, at t: Double) -> Double {
+        guard span >= 0, envCount[span] > 0 else { return 1 }
+        let o = envOffset[span], n = envCount[span]
+        if t <= envTimes[o] { return envValues[o] }
+        var k = 1
+        while k < n {
+            if t <= envTimes[o + k] {
+                let t0 = envTimes[o + k - 1], t1 = envTimes[o + k]
+                return t1 > t0 ? envValues[o + k - 1] + (envValues[o + k] - envValues[o + k - 1]) * (t - t0) / (t1 - t0) : envValues[o + k]
+            }
+            k += 1
+        }
+        return envValues[o + n - 1]
+    }
+
+    /// Allocates the filters and the dynamics chain for the format the tap will see (the source track's own: a mono
+    /// file is one channel, at its own sample rate).
+    func prepare(sampleRate: Double, channels: Int) {
+        self.sampleRate = sampleRate; self.channels = max(1, channels)
+        filters?.deallocate(); frame?.deallocate()
+        let f = UnsafeMutablePointer<Biquad>.allocate(capacity: self.channels * 4); f.initialize(repeating: Biquad(), count: self.channels * 4)
+        let fr = UnsafeMutablePointer<Double>.allocate(capacity: self.channels); fr.initialize(repeating: 0, count: self.channels)
+        filters = f; frame = fr
+        hum = HumFilter(channels: self.channels)
+        chain = DynamicsChain(channels: self.channels, sampleRate: sampleRate, strip: strip)
+        latency = strip.latencyMs(fs: sampleRate) / 1000
+        current = nil; currentSpan = -2; nextTime = -1; gateEnv = 0; gateGain = 1
+    }
 
     func configure(_ a: ClipAudio) {
         current = a
-        filters = (0..<channels).map { _ in
-            [Biquad.lowShelf(sampleRate, f: 200, gainDB: a.lowGain), Biquad.peak(sampleRate, f: 1000, gainDB: a.midGain),
-             Biquad.highShelf(sampleRate, f: 6000, gainDB: a.highGain), a.highPass > 0 ? Biquad.highPass(sampleRate, f: min(a.highPass, sampleRate * 0.45)) : Biquad()]
+        guard let filters else { return }
+        for ch in 0..<channels {
+            filters[ch * 4 + 0] = Biquad.lowShelf(sampleRate, f: 200, gainDB: a.lowGain)
+            filters[ch * 4 + 1] = Biquad.peak(sampleRate, f: 1000, gainDB: a.midGain)
+            filters[ch * 4 + 2] = Biquad.highShelf(sampleRate, f: 6000, gainDB: a.highGain)
+            filters[ch * 4 + 3] = a.highPass > 0 ? Biquad.highPass(sampleRate, f: min(a.highPass, sampleRate * 0.45)) : Biquad()
         }
+        hum?.configure(a.hum, fs: sampleRate)
+        chain?.configure(a)
     }
 
-    /// Runs the active filters and the gate over one buffer of float samples (interleaved or planar).
-    func process(_ list: UnsafeMutablePointer<AudioBufferList>, frames: Int, interleaved: Bool) {
-        guard let a = current, !a.isIdentity else { return }
+    /// One buffer of float samples (interleaved or planar) starting at timeline second `time`.
+    func run(_ list: UnsafeMutablePointer<AudioBufferList>, frames: Int, interleaved: Bool, time t: Double) {
+        guard let filters, let frame, let hum, let chain, frames > 0 else { return }
+        // A jump in time (a seek, a loop): no envelope, delay line or filter state carries across it.
+        if nextTime >= 0, abs(t - nextTime) > 0.02 {
+            chain.reset(); hum.reset(); gateEnv = 0; gateGain = 1
+            for i in 0..<(channels * 4) { filters[i].x1 = 0; filters[i].x2 = 0; filters[i].y1 = 0; filters[i].y2 = 0 }
+        }
+        nextTime = t + Double(frames) / sampleRate
+        let idx = spanIndex(at: t)
+        let a = idx >= 0 ? audios[idx] : ClipAudio.identity
+        if idx != currentSpan || current != a { configure(a); currentSpan = idx }
+        let cleanup = a.hasCleanup, humOn = hum.isActive, dyn = !chain.isIdle(for: a)
+        guard cleanup || humOn || dyn || meter != nil else { return }
         let runLow = a.lowGain != 0, runMid = a.midGain != 0, runHigh = a.highGain != 0, runHP = a.highPass > 0
-        let buffers = UnsafeMutableAudioBufferListPointer(list)
         let gateOn = a.gate < 0
         let thr = pow(10, a.gate / 20)
         let attack = exp(-1 / (0.005 * sampleRate)), release = exp(-1 / (0.08 * sampleRate))
         let gainAttack = exp(-1 / (0.003 * sampleRate)), gainRelease = exp(-1 / (0.05 * sampleRate))
-        for frame in 0..<frames {
-            var peak = 0.0
-            for ch in 0..<channels {
-                let ptr: UnsafeMutablePointer<Float>
-                if interleaved { guard let d = buffers[0].mData else { continue }; ptr = d.assumingMemoryBound(to: Float.self) + frame * channels + ch }
-                else { guard ch < buffers.count, let d = buffers[ch].mData else { continue }; ptr = d.assumingMemoryBound(to: Float.self) + frame }
-                var x = Double(ptr.pointee)
-                if runHP { x = filters[ch][3].process(x) }
-                if runLow { x = filters[ch][0].process(x) }
-                if runMid { x = filters[ch][1].process(x) }
-                if runHigh { x = filters[ch][2].process(x) }
-                peak = max(peak, abs(x))
-                ptr.pointee = Float(x)
+        let post0 = envelope(idx, at: t + latency), post1 = envelope(idx, at: nextTime + latency)
+        let buffers = UnsafeMutableAudioBufferListPointer(list)
+        let C = channels
+        let nb = buffers.count
+        var bufferPeak = 0.0
+        for n in 0..<frames {
+            // Gather one frame.
+            for ch in 0..<C {
+                if interleaved { frame[ch] = buffers[0].mData.map { Double($0.assumingMemoryBound(to: Float.self)[n * C + ch]) } ?? 0 }
+                else { frame[ch] = ch < nb ? (buffers[ch].mData.map { Double($0.assumingMemoryBound(to: Float.self)[n]) } ?? 0) : 0 }
             }
-            if gateOn {
-                gateEnv = peak > gateEnv ? attack * gateEnv + (1 - attack) * peak : release * gateEnv + (1 - release) * peak
-                let target = gateEnv >= thr ? 1.0 : 0.05   // closed gate = −26 dB, not silence, so it never pumps hard
-                gateGain = target > gateGain ? gainAttack * gateGain + (1 - gainAttack) * target : gainRelease * gateGain + (1 - gainRelease) * target
-                for ch in 0..<channels {
-                    let ptr: UnsafeMutablePointer<Float>
-                    if interleaved { guard let d = buffers[0].mData else { continue }; ptr = d.assumingMemoryBound(to: Float.self) + frame * channels + ch }
-                    else { guard ch < buffers.count, let d = buffers[ch].mData else { continue }; ptr = d.assumingMemoryBound(to: Float.self) + frame }
-                    ptr.pointee *= Float(gateGain)
+            if cleanup || humOn {
+                var peak = 0.0
+                for ch in 0..<C {
+                    var x = frame[ch]
+                    if runHP { x = filters[ch * 4 + 3].process(x) }
+                    if humOn { x = hum.process(x, channel: ch) }
+                    if runLow { x = filters[ch * 4 + 0].process(x) }
+                    if runMid { x = filters[ch * 4 + 1].process(x) }
+                    if runHigh { x = filters[ch * 4 + 2].process(x) }
+                    peak = max(peak, abs(x))
+                    frame[ch] = x
+                }
+                if gateOn {
+                    gateEnv = peak > gateEnv ? attack * gateEnv + (1 - attack) * peak : release * gateEnv + (1 - release) * peak
+                    let target = gateEnv >= thr ? 1.0 : 0.05   // closed gate = −26 dB, not silence, so it never pumps hard
+                    gateGain = target > gateGain ? gainAttack * gateGain + (1 - gainAttack) * target : gainRelease * gateGain + (1 - gainRelease) * target
+                    for ch in 0..<C { frame[ch] *= gateGain }
                 }
             }
+            let post = post0 + (post1 - post0) * Double(n) / Double(frames)
+            if dyn { chain.process(frame, post: post) }
+            // Scatter it back.
+            for ch in 0..<C {
+                let v = frame[ch]
+                bufferPeak = max(bufferPeak, abs(v) * post)
+                if interleaved { buffers[0].mData?.assumingMemoryBound(to: Float.self)[n * C + ch] = Float(v) }
+                else if ch < nb { buffers[ch].mData?.assumingMemoryBound(to: Float.self)[n] = Float(v) }
+            }
+        }
+        if let meter {
+            let r = chain.reductions
+            meter.post(peak: Float(bufferPeak), reduction: Float(max(r.compressor, r.deEsser, r.busCompressor)))
         }
     }
 }
 
 enum AudioTap {
-    /// A tap for one composition audio track, running the clip settings of whatever clip is playing at each buffer's time.
-    static func make(spans: [AudioTapContext.Span]) -> MTAudioProcessingTap? {
-        let ctx = AudioTapContext(spans: spans)
+    /// A tap for one composition audio track, running the clip settings of whatever clip is playing at each buffer's
+    /// time, then the track's strip (fader, bus, master).
+    static func make(spans: [AudioTapContext.Span], strip: TrackStrip = TrackStrip(), meter: MeterSlot? = nil) -> MTAudioProcessingTap? {
+        let ctx = AudioTapContext(spans: spans, strip: strip, meter: meter)
         var callbacks = MTAudioProcessingTapCallbacks(
             version: kMTAudioProcessingTapCallbacksVersion_0,
             clientInfo: Unmanaged.passRetained(ctx).toOpaque(),
@@ -148,9 +269,7 @@ enum AudioTap {
             finalize: { tap in Unmanaged<AudioTapContext>.fromOpaque(MTAudioProcessingTapGetStorage(tap)).release() },
             prepare: { tap, maxFrames, format in
                 let c = Unmanaged<AudioTapContext>.fromOpaque(MTAudioProcessingTapGetStorage(tap)).takeUnretainedValue()
-                c.sampleRate = format.pointee.mSampleRate
-                c.channels = Int(format.pointee.mChannelsPerFrame)
-                if let cur = c.current { c.configure(cur) }
+                c.prepare(sampleRate: format.pointee.mSampleRate, channels: Int(format.pointee.mChannelsPerFrame))
             },
             unprepare: { _ in },
             process: { tap, numberFrames, flags, bufferListInOut, numberFramesOut, flagsOut in
@@ -159,10 +278,8 @@ enum AudioTap {
                 guard status == noErr else { return }
                 let c = Unmanaged<AudioTapContext>.fromOpaque(MTAudioProcessingTapGetStorage(tap)).takeUnretainedValue()
                 let t = range.start.seconds
-                let wanted = c.settings(at: t.isFinite ? t : 0) ?? .identity
-                if c.current != wanted { c.configure(wanted) }
                 let interleaved = UnsafeMutableAudioBufferListPointer(bufferListInOut).count == 1 && c.channels > 1
-                c.process(bufferListInOut, frames: Int(numberFramesOut.pointee), interleaved: interleaved)
+                c.run(bufferListInOut, frames: Int(numberFramesOut.pointee), interleaved: interleaved, time: t.isFinite ? t : 0)
             })
         var tap: MTAudioProcessingTap?
         let err = MTAudioProcessingTapCreate(kCFAllocatorDefault, &callbacks, kMTAudioProcessingTapCreationFlag_PostEffects, &tap)

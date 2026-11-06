@@ -119,8 +119,9 @@ struct ToolExecutor {
     }
     func resolveTrack(_ text: String?) throws -> UUID? {
         guard let text, !text.isEmpty else { return nil }
-        if let id = Project.resolve(text, in: project.tracks.map(\.id)) { return id }
+        // The name first: "A1" is also valid hex, and would otherwise pick a track whose id happens to start with a1.
         if let t = project.tracks.first(where: { $0.name.lowercased() == text.lowercased() }) { return t.id }
+        if let id = Project.resolve(text, in: project.tracks.map(\.id)) { return id }
         throw EditError.notFound("track '\(text)'")
     }
 
@@ -441,7 +442,10 @@ struct ToolExecutor {
     /// The composed frame at a time as an sRGB-tagged CGImage, and the render size.
     func renderFrame(at seconds: Double) async throws -> (CGImage, CGSize) {
         let out = try await CompositionBuilder.build(project)
+        defer { withExtendedLifetime(out) {} }   // its source assets must outlive the render (`Output.sources`)
         guard let vts = try? await out.composition.loadTracks(withMediaType: .video), !vts.isEmpty else { throw EditError.invalid("nothing to render at \(seconds) s: the composition has no video track") }
+        // An empty timeline used to fail here only because the black base video was freed mid-read (now kept: `Output.sources`).
+        guard project.duration > 0 else { throw EditError.invalid("nothing to render at \(seconds) s: the timeline is empty") }
         let gen = AVAssetImageGenerator(asset: out.composition)
         gen.videoComposition = out.videoComposition
         gen.appliesPreferredTrackTransform = true
@@ -528,7 +532,7 @@ struct ToolExecutor {
         }
         try document.apply("Clip audio", origin: origin, coalesce: coalesce) { p in
             try p.updateClip(id) { c in
-                if reset { c.audio = .identity }
+                if reset { c.audio.clearCleanup() }   // EQ, high-pass, gate, isolation; the dynamics have their own controls
                 if let low { c.audio.lowGain = max(-18, min(18, low)) }
                 if let mid { c.audio.midGain = max(-18, min(18, mid)) }
                 if let high { c.audio.highGain = max(-18, min(18, high)) }

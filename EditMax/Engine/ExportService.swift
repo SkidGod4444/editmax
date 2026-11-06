@@ -34,6 +34,7 @@ enum ExportService {
         if preset.isMaster { return try await exportMaster(project, to: url, preset: preset, progress: progress, depth: depth) }
         try await IsolatedAudio.shared.ensureAll(project)   // voice-isolated sound is rendered per asset before the build looks for it
         let out = try await CompositionBuilder.build(project, depth: depth)   // titles, stills, color and transitions all come from the compositor
+        defer { withExtendedLifetime(out) {} }   // its source assets must outlive the render (`Output.sources`)
 
         let presetName: String = {
             switch preset {
@@ -79,6 +80,7 @@ enum ExportService {
     static func exportMaster(_ project: Project, to url: URL, preset: Preset, progress: ((Double) -> Void)? = nil, depth: Int = 0) async throws -> Result {
         try await IsolatedAudio.shared.ensureAll(project)
         let out = try await CompositionBuilder.build(project, depth: depth, compositor: EditMaxCompositor10.self)
+        defer { withExtendedLifetime(out) {} }   // its source assets must outlive the render (`Output.sources`)
         let reader = try AVAssetReader(asset: out.composition)
         reader.timeRange = CMTimeRange(start: .zero, duration: out.duration)
         let videoTracks = try await out.composition.loadTracks(withMediaType: .video)

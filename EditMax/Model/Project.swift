@@ -218,6 +218,8 @@ struct Clip: Codable, Identifiable, Equatable {
     var finish: ClipFinish? = nil
     /// Green-screen key, blend mode, face and region blur (all off by default).
     var effects = ClipEffects()
+    /// Sound-only crossfade from the clip before (audio tracks; see `AudioCrossfades`); nil = a plain cut.
+    var audioCrossfade: AudioCrossfade? = nil
     var end: Double { start + duration }
     /// Where the clip's media ends in the asset: with a speed ramp, the integral of speed over the clip.
     var sourceOut: Double { sourceIn + sourceOffset(at: duration) }
@@ -253,6 +255,7 @@ struct Clip: Codable, Identifiable, Equatable {
         grades = try c.decodeIfPresent([GradeLayer].self, forKey: .grades) ?? []
         finish = try c.decodeIfPresent(ClipFinish.self, forKey: .finish)
         effects = try c.decodeIfPresent(ClipEffects.self, forKey: .effects) ?? ClipEffects()
+        audioCrossfade = try c.decodeIfPresent(AudioCrossfade.self, forKey: .audioCrossfade)
     }
 
     /// The two clips a split at `local` seconds produces; the right one gets a new id and no transition or fade-in.
@@ -266,7 +269,7 @@ struct Clip: Codable, Identifiable, Equatable {
         right.start = start + local
         right.duration = duration - local
         right.shiftKeyframes(by: -local)
-        right.transitionIn = nil
+        right.transitionIn = nil; right.audioCrossfade = nil
         right.fadeIn = 0; left.fadeOut = 0
         if let mc = multicam {
             var l = mc, r = mc
@@ -455,6 +458,8 @@ struct Track: Codable, Identifiable, Equatable {
     var isHidden = false
     /// Automatic ducking under another track's clips (audio tracks and video tracks with sound alike).
     var duck: Ducking? = nil
+    /// Fader, pan, solo and bus (see `Mixer`).
+    var mix = TrackMix()
 
     init(id: UUID = UUID(), name: String, kind: TrackKind, clips: [Clip] = [], isMuted: Bool = false, isHidden: Bool = false, duck: Ducking? = nil) {
         self.id = id; self.name = name; self.kind = kind; self.clips = clips; self.isMuted = isMuted; self.isHidden = isHidden; self.duck = duck
@@ -469,6 +474,7 @@ struct Track: Codable, Identifiable, Equatable {
         isMuted = try c.decodeIfPresent(Bool.self, forKey: .isMuted) ?? false
         isHidden = try c.decodeIfPresent(Bool.self, forKey: .isHidden) ?? false
         duck = try c.decodeIfPresent(Ducking.self, forKey: .duck)
+        mix = try c.decodeIfPresent(TrackMix.self, forKey: .mix) ?? TrackMix()
     }
 }
 
@@ -535,6 +541,8 @@ struct Project: Codable, Equatable {
     var faceTracks: [String: [FaceTrack]]? = nil
     /// Nested sequences (timelines folded into one clip); assets of kind `.sequence` point at them.
     var sequences: [Sequence] = []
+    /// Master gain and limiter, and the buses (see `Mixer`).
+    var mix = ProjectMix()
     var history: [HistoryEntry] = []
 
     init() {}
@@ -553,6 +561,7 @@ struct Project: Codable, Equatable {
         motionPaths = try c.decodeIfPresent([String: [Stabilization.Sample]].self, forKey: .motionPaths)
         faceTracks = try? c.decodeIfPresent([String: [FaceTrack]].self, forKey: .faceTracks)
         sequences = try c.decodeIfPresent([Sequence].self, forKey: .sequences) ?? []
+        mix = try c.decodeIfPresent(ProjectMix.self, forKey: .mix) ?? ProjectMix()
         history = try c.decodeIfPresent([HistoryEntry].self, forKey: .history) ?? []
     }
 

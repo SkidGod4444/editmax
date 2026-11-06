@@ -204,6 +204,45 @@ enum EditMaxTools {
                                   "in": str("In animation (default wipe)"), "out": str("Out animation (default fade)"), "text": str("Id prefix of a lower third to edit instead of adding one"), "project": projectArg], required: ["name"])),
         Tool(name: "set_project_color", description: "The project's output colour: sdr (Rec.709, the default; frames pass through unmanaged, exactly as before), hlg or pq (HDR in Rec.2020). In an HDR project the preview and the hevc10 / ProRes masters are HDR (HLG or PQ tags; PQ also carries mastering-display metadata), SDR sources sit at reference white (203 nits) and HLG / PQ sources (iPhone HDR video) keep their highlights; H.264 exports and capture_frame stay SDR with HDR sources tone-mapped. Grades, LUTs and the key work in 0-1 and clip HDR highlights in the clips that use them.",
              inputSchema: schema(["color": str("sdr | hlg | pq"), "project": projectArg], required: ["color"])),
+        // MARK: Audio
+        Tool(name: "set_clip_compressor", description: "Compress a clip's sound: above `threshold` dBFS the level rises only 1/`ratio` as fast, with a soft knee, attack and release times and makeup gain. Stereo-linked peak detection, runs after EQ, high-pass, gate, hum removal and de-esser, before clip gain and the limiter. Turning it on without settings uses threshold -18, ratio 3, attack 10 ms, release 150 ms, knee 6 dB, makeup 0. Out-of-range values are refused. enabled false removes it. Returns the clip's whole audio settings and what changed.",
+             inputSchema: schema(["clip": str("Clip id prefix or name"), "enabled": .object(["type": "boolean", "description": "true turns it on (defaults for anything not given), false removes it"]),
+                                  "threshold": num("dBFS, -60 to 0"), "ratio": num("1 to 20 (e.g. 3 = 3:1)"), "attack": num("ms, 0.1 to 200"), "release": num("ms, 10 to 2000"),
+                                  "knee": num("dB, 0 (hard) to 24"), "makeup": num("dB added after compression, -12 to 24"), "project": projectArg], required: ["clip"])),
+        Tool(name: "set_clip_limiter", description: "True-peak look-ahead limiter on a clip, last in the clip's chain (after compressor and clip gain): nothing in the clip passes `ceiling` dBTP, measured 4× oversampled, after the clip's volume and fades. `lookahead` ms of delay lets the gain come down before a peak arrives; every clip on the track is delayed by the same amount so nothing shifts between clips. Defaults: ceiling -1 dBTP, release 100 ms, look-ahead 1.5 ms. enabled false removes it.",
+             inputSchema: schema(["clip": str("Clip id prefix or name"), "enabled": .object(["type": "boolean", "description": "true turns it on, false removes it"]),
+                                  "ceiling": num("dBTP, -24 to 0 (default -1)"), "release": num("ms, 1 to 1000 (default 100)"), "lookahead": num("ms, 0 to 5 (default 1.5)"), "project": projectArg], required: ["clip"])),
+        Tool(name: "set_clip_deesser", description: "Tame harsh s and sh sounds in a voice: the band above `frequency` Hz (Linkwitz-Riley crossover) is turned down while it stands out from the whole voice (more than 15 dB under it is left alone), by up to 18 dB at amount 1. Runs after the gate and before the compressor. Defaults: amount 0.5, frequency 6000 Hz (try 4500-5500 for a low voice, 7000-8000 for a bright one). enabled false removes it.",
+             inputSchema: schema(["clip": str("Clip id prefix or name"), "enabled": .object(["type": "boolean", "description": "true turns it on, false removes it"]),
+                                  "amount": num("0 to 1 (default 0.5)"), "frequency": num("Hz, 3000 to 12000 (default 6000)"), "project": projectArg], required: ["clip"])),
+        Tool(name: "set_clip_hum_removal", description: "Remove mains hum: narrow notches (Q 30) at 50 or 60 Hz and its harmonics, run with the EQ. frequency auto (the default when first turned on) listens to the clip's own sound, compares 50/100/150/200 Hz with 60/120/180/240 Hz against the spectrum beside them, and stores the stronger; the numbers come back in the note. amount 1 = full notch, 0.5 = -6 dB at each centre. enabled false removes it.",
+             inputSchema: schema(["clip": str("Clip id prefix or name"), "enabled": .object(["type": "boolean", "description": "true turns it on, false removes it"]),
+                                  "frequency": str("auto, 50 or 60"), "amount": num("0 to 1 (default 1)"), "harmonics": int("Notches including the fundamental, 1 to 8 (default 4)"), "project": projectArg], required: ["clip"])),
+        Tool(name: "set_clip_mix", description: "A clip's gain in dB (after its compressor, before its limiter; -24 to 24) and pan (-1 left, 0 centre, 1 right; balance law: the far side fades, the near side stays at full level). Panning a clip whose file has mono sound is refused: AVFoundation spreads one channel to both speakers after the clip's processing.",
+             inputSchema: schema(["clip": str("Clip id prefix or name"), "gain": num("dB, -24 to 24"), "pan": num("-1 to 1"), "project": projectArg], required: ["clip"])),
+        Tool(name: "set_audio_crossfade", description: "Crossfade the sound into a clip on an audio track from the clip that ends where it starts: the outgoing clip plays on past the cut for `duration` seconds while it fades out and this one fades in. equal_power (sin/cos, constant loudness, the default) suits unrelated sounds; linear (constant amplitude) suits two parts of the same recording. Needs media past the outgoing clip's out point; a longer duration is shortened to what is there, with a note. Video tracks use set_transition. remove true takes it off.",
+             inputSchema: schema(["clip": str("The incoming clip: id prefix or name"), "duration": num("Seconds, 0.02 to 10 (default 0.5)"), "curve": str("equal_power (default) or linear"),
+                                  "remove": .object(["type": "boolean", "description": "Remove the crossfade"]), "project": projectArg], required: ["clip"])),
+        Tool(name: "set_track_mix", description: "A track's fader: gain in dB (-60 to 12), pan (-1 to 1; mono clips are not panned, listed in the note), solo (while any track is soloed every other track is silent), mute, and bus (a bus name or id, or none for straight to the master). Returns the track's mix after the change.",
+             inputSchema: schema(["track": str("Track name or id"), "gain": num("dB, -60 to 12"), "pan": num("-1 to 1"), "solo": .object(["type": "boolean", "description": "Solo on or off"]),
+                                  "mute": .object(["type": "boolean", "description": "Mute on or off"]), "bus": str("Bus name or id, or none"), "project": projectArg], required: ["track"])),
+        Tool(name: "set_bus", description: "Create or change a bus (a group of tracks: dialogue, music…): gain in dB, mute, a compressor and a limiter. A name no bus has creates the bus; route tracks to it with set_track_mix. The gain is exact; the compressor and limiter run once per member track on that track alone (AVFoundation sums the tracks itself, with no stage after the sum), so they react to each track's level, not the bus total. compressor/limiter are objects of settings, e.g. {\"threshold\": -20, \"ratio\": 4} or {} for the defaults.",
+             inputSchema: schema(["bus": str("Bus name or id (a new name creates it)"), "rename": str("New name"), "gain": num("dB, -60 to 12"), "mute": .object(["type": "boolean", "description": "Mute the bus (its tracks fall silent)"]),
+                                  "compressor": .object(["type": "object", "description": "threshold, ratio, attack, release, knee, makeup (same ranges as set_clip_compressor)"]),
+                                  "remove_compressor": .object(["type": "boolean", "description": "Remove the bus compressor"]),
+                                  "limiter": .object(["type": "object", "description": "ceiling, release, lookahead (same ranges as set_clip_limiter)"]),
+                                  "remove_limiter": .object(["type": "boolean", "description": "Remove the bus limiter"]),
+                                  "remove": .object(["type": "boolean", "description": "Delete the bus; its tracks go straight to the master"]), "project": projectArg], required: ["bus"])),
+        Tool(name: "set_master", description: "The master: gain in dB (-24 to 24) and a true-peak limiter ({ceiling, release, lookahead}, {} for -1 dBTP). The limiter runs once per track (no stage after AVFoundation's sum), so tracks peaking together can pass it; normalize_loudness sets both and checks the summed true peak of the real mix.",
+             inputSchema: schema(["gain": num("dB, -24 to 24"), "limiter": .object(["type": "object", "description": "ceiling (dBTP, -24 to 0), release (ms), lookahead (ms)"]),
+                                  "remove_limiter": .object(["type": "boolean", "description": "Remove the master limiter"]), "project": projectArg])),
+        Tool(name: "inspect_mix", description: "The mixer: every track's gain, pan, mute, solo, bus and how many clips have processing; the buses with their settings and tracks; the master gain and limiter; and how buses and the master are run.",
+             inputSchema: schema(["project": projectArg])),
+        Tool(name: "measure_loudness", description: "Measure loudness offline the way the export renders the sound (48 kHz stereo, every clip setting, fader, bus and master): integrated loudness in LUFS (ITU-R BS.1770-4: K-weighting, 400 ms blocks, gates at -70 LUFS and -10 LU), true peak in dBTP (4× oversampled), sample peak and RMS in dBFS, loudness range in LU, loudest momentary and short-term loudness, and how far it is from -14 (YouTube), -16 (Apple, podcasts) and -23 (EBU R128). clip measures that clip alone (no track fader, bus or master).",
+             inputSchema: schema(["clip": str("Clip id prefix or name (default: the whole mix)"), "project": projectArg])),
+        Tool(name: "normalize_loudness", description: "Make the sound a target loudness in one call: measures, sets the master gain and a master true-peak limiter (or, with clip, that clip's gain and limiter), measures again until it is within 0.1 LU, and lowers the gain if the mixed true peak passes the ceiling. Returns before and after measurements, the gain and every measuring step. One undo step. Refused while a track is soloed. target: youtube (-14, default), apple or podcast (-16), ebu (-23), or a number of LUFS.",
+             inputSchema: schema(["target": str("youtube, apple, podcast, ebu or a number such as -14"), "ceiling": num("True-peak ceiling in dBTP, -9 to 0 (default -1)"),
+                                  "clip": str("Clip id prefix or name: normalize that clip alone (default: the whole mix)"), "project": projectArg])),
         // MARK: Color
     ] + colorTools
 
@@ -569,6 +608,32 @@ enum EditMaxTools {
             return try payload(try x.addLowerThird(name: try req("name"), role: s("role"), template: s("template"), start: d("start"), duration: d("duration"), x: d("x"), y: d("y"), accent: s("accent"), color: s("color"), fontSize: d("font_size"), inKind: s("in"), outKind: s("out"), text: s("text")))
         case "set_project_color":
             return try payload(try x.setProjectColor(try req("color")))
+        // MARK: Audio
+        case "set_clip_compressor":
+            return try payload(try x.setClipCompressor(try req("clip"), enabled: a["enabled"]?.boolValue, threshold: d("threshold"), ratio: d("ratio"), attack: d("attack"), release: d("release"), knee: d("knee"), makeup: d("makeup")))
+        case "set_clip_limiter":
+            return try payload(try x.setClipLimiter(try req("clip"), enabled: a["enabled"]?.boolValue, ceiling: d("ceiling"), release: d("release"), lookahead: d("lookahead")))
+        case "set_clip_deesser":
+            return try payload(try x.setClipDeEsser(try req("clip"), enabled: a["enabled"]?.boolValue, amount: d("amount"), frequency: d("frequency")))
+        case "set_clip_hum_removal":
+            return try payload(try await x.setClipHumRemoval(try req("clip"), enabled: a["enabled"]?.boolValue, frequency: s("frequency") ?? d("frequency").map { String(Int($0)) }, amount: d("amount"), harmonics: i("harmonics")))
+        case "set_clip_mix":
+            return try payload(try await x.setClipMix(try req("clip"), gain: d("gain"), pan: d("pan")))
+        case "set_audio_crossfade":
+            return try payload(try x.setAudioCrossfade(try req("clip"), duration: d("duration"), curve: s("curve"), remove: b("remove")))
+        case "set_track_mix":
+            return try payload(try await x.setTrackMix(try req("track"), gain: d("gain"), pan: d("pan"), solo: a["solo"]?.boolValue, mute: a["mute"]?.boolValue, bus: s("bus")))
+        case "set_bus":
+            return try payload(try x.setBus(try req("bus"), rename: s("rename"), gain: d("gain"), mute: a["mute"]?.boolValue, compressor: try numbers(a["compressor"], "compressor"), removeCompressor: b("remove_compressor"),
+                                            limiter: try numbers(a["limiter"], "limiter"), removeLimiter: b("remove_limiter"), remove: b("remove")))
+        case "set_master":
+            return try payload(try x.setMaster(gain: d("gain"), limiter: try numbers(a["limiter"], "limiter"), removeLimiter: b("remove_limiter")))
+        case "inspect_mix":
+            return try payload(x.inspectMix())
+        case "measure_loudness":
+            return try payload(try await x.measureLoudness(clip: s("clip")))
+        case "normalize_loudness":
+            return try payload(try await x.normalizeLoudness(target: s("target") ?? d("target").map { String($0) }, ceiling: d("ceiling"), clip: s("clip")))
         default: throw MCPError.methodNotFound("Unknown tool \(name)")
         }
     }

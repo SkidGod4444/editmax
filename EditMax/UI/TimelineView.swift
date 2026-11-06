@@ -90,6 +90,8 @@ struct TimelineView: View {
             }
             toolbarSeparator
             toolButton("scissors.badge.ellipsis", help: "Ripple out everything between the in and out points (I and O set them, X clears)", id: "toolbar.deleteRange", disabled: !actions.hasRange) { actions.deleteRange() }
+            toolbarSeparator
+            MixerToggleButton()
             Spacer(minLength: 8)
             // Zoom: − slider + at the far right.
             HStack(spacing: 4) {

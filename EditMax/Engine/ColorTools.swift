@@ -250,6 +250,7 @@ extension ToolExecutor {
 
     private static func frameOnce(of project: Project, at seconds: Double) async throws -> CGImage {
         let out = try await CompositionBuilder.build(project)
+        defer { withExtendedLifetime(out) {} }   // its source assets must outlive the render (`Output.sources`)
         let gen = AVAssetImageGenerator(asset: out.composition)
         gen.videoComposition = out.videoComposition
         gen.appliesPreferredTrackTransform = true

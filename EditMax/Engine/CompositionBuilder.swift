@@ -15,6 +15,9 @@ enum CompositionBuilder {
         let audioMix: AVMutableAudioMix
         let renderSize: CGSize
         let duration: CMTime
+        /// The source assets the composition reads from. A composition does not keep them alive, and a reader whose
+        /// sources were freed fails with -11800/-12780: hold the Output for as long as the composition is read.
+        var sources: [AVAsset] = []
     }
 
     static let timescale: CMTimeScale = 600
@@ -23,6 +26,7 @@ enum CompositionBuilder {
     /// tracks (A/B): consecutive clips alternate between them, which is what lets a transition overlap the clip before it.
     /// `forPreview` swaps in proxy files where the project asks for them and they exist; the export never does.
     static func build(_ project: Project, forPreview: Bool = false, depth: Int = 0, compositor: AVVideoCompositing.Type = EditMaxCompositor.self) async throws -> Output {
+        let project = Mixer.soloApplied(project)   // solo and muted buses become plain track mutes
         var proxies: [UUID: URL] = (forPreview && project.settings.useProxies) ? await MainActor.run { Dictionary(uniqueKeysWithValues: project.assets.compactMap { a in ProxyStore.shared.ready(for: a).map { (a.id, $0) } }) } : [:]
         // Nested sequences play their cached render (rendered now when the cache has none for the current content).
         for a in project.assets where a.sequenceID != nil {
@@ -35,15 +39,18 @@ enum CompositionBuilder {
         var layerSources: [[LayerSource]] = []    // per visible video track, top row first
         var audioParams: [AVMutableAudioMixInputParameters] = []
         var assetCache: [UUID: AVURLAsset] = [:]
+        var keptSources: [AVURLAsset] = []
         var stillCache: [UUID: CIImage] = [:]
         let t = { (s: Double) in CMTime(seconds: s, preferredTimescale: timescale) }
 
         // Base track: a tiny black movie under everything, so stills and titles render without any video clip.
-        // The asset is held until the track is inserted: an AVAssetTrack does not keep its AVAsset alive, and inserting
-        // a track whose asset ARC has already freed fails at random with -11800 / -12780 (it did, in every render test).
+        // The asset is kept alive with the clip sources for as long as the composition lives (`Output.sources`): an
+        // AVAssetTrack does not keep its AVAsset alive, and inserting or reading a track whose asset ARC has already
+        // freed fails at random with -11800 / -12780 (it did, in every render test).
         if let blankAsset = try? AVURLAsset(url: BlankVideo.url()),
            let base = comp.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid),
            let blankTrack = try? await blankAsset.loadTracks(withMediaType: .video).first {
+            keptSources.append(blankAsset)
             let one = CMTimeRange(start: .zero, duration: CMTime(value: 1, timescale: 1))
             try withExtendedLifetime(blankAsset) { try base.insertTimeRange(one, of: blankTrack, at: .zero) }
             base.scaleTimeRange(CMTimeRange(start: .zero, duration: one.duration), toDuration: total)
@@ -66,11 +73,9 @@ enum CompositionBuilder {
             var sources: [LayerSource] = []
             // Multicam clips play as one plain piece per angle interval.
             let clips = track.clips.flatMap { $0.multicamPieces(in: project) }.map { project.hydrated($0) }.sorted { $0.start < $1.start }
-            // EQ/gate: one tap per slot, only when a clip on it asks for processing (plain projects never touch a tap).
-            for slot in 0..<2 {
-                let spans = clips.enumerated().filter { $0.offset % 2 == slot && !$0.element.audio.isIdentity }.map { AudioTapContext.Span(start: $0.element.start, end: $0.element.end, audio: $0.element.audio) }
-                if !spans.isEmpty, let tap = AudioTap.make(spans: spans) { params[slot]?.audioTapProcessor = tap }
-            }
+            // Audio crossfades on this track, and each clip's volume envelope for its tap (attached after the loop).
+            let xfades = AudioCrossfades.plan(clips, track: track, project: project)
+            var envelopes: [UUID: [(Double, Float)]] = [:]
             for (i, clip) in clips.enumerated() {
                 guard let asset = project.asset(clip.assetID) else { continue }
                 let slot = i % 2
@@ -133,7 +138,7 @@ enum CompositionBuilder {
                 // Voice isolation: the pre-rendered isolated copy of the sound when the cache has one (same timeline, never cached as the asset).
                 let isolated = clip.audio.needsIsolation ? IsolatedAudio.readyURL(for: audioAsset, amount: clip.audio.voiceIsolation) : nil
                 let aav = isolated.map { AVURLAsset(url: $0) } ?? (audioAsset.id == asset.id ? av : (assetCache[audioAsset.id] ?? AVURLAsset(url: proxies[audioAsset.id] ?? audioAsset.url)))
-                if isolated == nil { assetCache[audioAsset.id] = aav }
+                if isolated == nil { assetCache[audioAsset.id] = aav } else { keptSources.append(aav) }
                 if clip.audio.needsIsolation { DebugLog.event("audio-source", ["preview": forPreview, "clip": clip.name, "isolation": clip.audio.voiceIsolation, "isolated": isolated != nil, "file": (isolated ?? proxies[audioAsset.id] ?? audioAsset.url).lastPathComponent]) }
                 var aclip = clip; if let s = clip.audioSourceIn { aclip.sourceIn = s }
                 let asegments = audioAsset.id == asset.id && clip.audioSourceIn == nil ? segments : TimeMap.segments(aclip, assetDuration: audioAsset.duration)
@@ -141,13 +146,17 @@ enum CompositionBuilder {
                     try TimeMap.insert(asegments, of: atr, into: a)
                     // One volume envelope per clip: keyframes × fades × the transition's crossfade, as back-to-back ramps.
                     let head = transitionEnd.map { $0 - clip.start } ?? clip.fadeIn
-                    let env = VolumeEnvelope.points(clip, muted: track.isMuted, headFade: head, duck: duckCurves[track.id])
+                    let env = xfades.envelope(clip, muted: track.isMuted, headFade: head, duck: duckCurves[track.id])
+                    envelopes[clip.id] = env
                     prm.setVolume(env.first?.1 ?? volume, at: t(clip.start))
                     for (p0, p1) in zip(env, env.dropFirst()) where p1.0 > p0.0 + 0.0005 {
                         prm.setVolumeRamp(fromStartVolume: p0.1, toEndVolume: p1.1, timeRange: CMTimeRange(start: t(clip.start + p0.0), end: t(clip.start + p1.0)))
                     }
+                    try xfades.extendTail(of: clip, audioAsset: audioAsset, source: atr, into: a, params: prm, muted: track.isMuted, duck: duckCurves[track.id])
                 }
             }
+            // Clip processing and the track's strip (fader, bus, master): one tap per slot, only when something asks for it.
+            AudioMixPlan.attachTaps(params, clips: clips, track: track, project: project, envelopes: envelopes, crossfades: xfades, forPreview: forPreview)
             if track.kind == .video { layerSources.append(sources) }
             audioParams.append(contentsOf: params.compactMap { $0 })
         }
@@ -204,7 +213,7 @@ enum CompositionBuilder {
 
         let mix = AVMutableAudioMix()
         mix.inputParameters = audioParams
-        return Output(composition: comp, videoComposition: videoComp, audioMix: mix, renderSize: renderSize, duration: total)
+        return Output(composition: comp, videoComposition: videoComp, audioMix: mix, renderSize: renderSize, duration: total, sources: Array(assetCache.values) + keptSources)
     }
 
     /// Aspect-fit a source track into the render size, honouring the source's preferred transform (rotation).

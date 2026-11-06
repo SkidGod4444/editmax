@@ -32,6 +32,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// True when the app is the host of the unit tests: no splash, no Home, no untitled document handling.
     static let isTesting = NSClassFromString("XCTestCase") != nil || ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
 
+    /// A test run hosts its tests inside a copy of the app: keep that copy out of the Dock and the app switcher, so a
+    /// test run never looks like a second EditMax.
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        if Self.isTesting { NSApp.setActivationPolicy(.accessory) }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         if Self.isTesting { return }
         InteractionLog.install()

@@ -33,7 +33,7 @@ struct EditMaxApp: App {
             UpdateCommands()
         }
         Settings { SettingsView() }
-        MenuBarExtra(isInserted: $showMenuBarIcon) {
+        MenuBarExtra(isInserted: AppDelegate.isTesting ? .constant(false) : $showMenuBarIcon) {   // no icon while tests run
             MenuBarMenu()
         } label: {
             Image(nsImage: MenuBarIcon.image).renderingMode(.template).accessibilityLabel("EditMax")
@@ -148,7 +148,7 @@ struct EditorRootView: View {
                 InspectorView(document: document).frame(minWidth: 280, idealWidth: 360, maxWidth: 560)
             }
             .frame(minHeight: 320)
-            TimelineView(document: document, player: player).frame(minHeight: 200, idealHeight: 280)
+            MixerSplit(document: document, player: player) { TimelineView(document: document, player: player) }.frame(minHeight: 200, idealHeight: 280)
         }
     }
 

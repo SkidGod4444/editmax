@@ -678,8 +678,9 @@ enum Interchange {
         let input = inFile.filter { $0.color.inputLut != nil }
         if !input.isEmpty { no.append("Input LUTs on \(n(input.count, "log clip")): apply the same LUT in Resolve") }
         if format == .fcpxml {
-            let fx = clips.filter { !$0.audio.isDefault }
+            let fx = clips.filter { $0.audio.hasCleanup || $0.audio.needsIsolation }
             if !fx.isEmpty { no.append("EQ, high-pass, gate or voice isolation on \(n(fx.count, "clip"))") }
+            no.append(contentsOf: Mixer.notTransferred(p))
             let ducked = p.tracks.filter { $0.duck != nil }
             if !ducked.isEmpty { no.append("Auto-ducking on \(ducked.map(\.name).joined(separator: ", "))") }
         }

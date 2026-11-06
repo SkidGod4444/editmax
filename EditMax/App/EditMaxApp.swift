@@ -28,6 +28,7 @@ struct EditMaxApp: App {
             ViewCommands()
             EditCommands()
         }
+        Settings { SettingsView() }
     }
 }
 

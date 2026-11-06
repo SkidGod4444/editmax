@@ -44,6 +44,7 @@ targets:
         CFBundleDisplayName: EditMax
         CFBundleIconFile: AppIcon
         CFBundleShortVersionString: "0.1.0"
+        NSHumanReadableCopyright: "© 2026 Saidev Dhal"
         CFBundleVersion: "3"
         LSMinimumSystemVersion: "15.0"
         NSHighResolutionCapable: true

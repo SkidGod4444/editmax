@@ -84,11 +84,13 @@ final class CodemaxUpdater: ObservableObject {
         refreshStatus()
         let now = ProcessInfo.processInfo.environment["EDITMAX_UPDATE_NOW"] == "1"
         let s = Self.loadState()
-        let due = now || (s.lastCheck.map { Date().timeIntervalSince($0) >= Self.checkEvery } ?? true)
+        let auto = AppSettings.bool(AppSettings.Key.autoUpdate, default: true)
+        let due = now || (auto && (s.lastCheck.map { Date().timeIntervalSince($0) >= Self.checkEvery } ?? true))
         DispatchQueue.main.asyncAfter(deadline: .now() + (now ? 0.5 : 20)) { [weak self] in if due { self?.check(reason: now ? "env" : "launch") } }
         timer = Timer.scheduledTimer(withTimeInterval: 60 * 60, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
+                guard AppSettings.bool(AppSettings.Key.autoUpdate, default: true) else { return }
                 if Self.loadState().lastCheck.map({ Date().timeIntervalSince($0) >= Self.checkEvery }) ?? true { self.check(reason: "timer") }
             }
         }

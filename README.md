@@ -2,14 +2,12 @@
 
 <img src="docs/icon-256.png" width="128" align="right" alt="EditMax icon">
 
-Native macOS agentic video editor (Swift / SwiftUI / AVFoundation). Working name chosen 2026-11-05.
+Native macOS agentic video editor (Swift / SwiftUI / AVFoundation) by Saidev Dhal. Working name chosen 2026-11-05.
 
-Inspired by Palmier Pro's architecture (an editor that exposes itself to coding agents over a local MCP server),
-with these deliberate differences:
+EditMax exposes itself to coding agents over a local MCP server, by design:
 
-- **Agent-agnostic, no bundled runtime.** Palmier ships a 143 MB OpenCode binary and needs an account.
-  EditMax exposes its tools over MCP to any client (Claude Code, Codex, Cursor, Claude Desktop) and has an
-  in-app chat that drives the coding agents you already use (Claude Code, Codex, OpenCode, Cursor, Grok,
+- **Agent-agnostic.** EditMax exposes its tools over MCP to any client (Claude Code, Codex, Cursor, Claude Desktop)
+  and has an in-app chat that drives the coding agents you already use (Claude Code, Codex, OpenCode, Cursor, Grok,
   Antigravity) through the bundled `codemax` runtime, with their own logins. An Anthropic API key is optional.
   No account, no backend.
 - **Labeled snapshot before every edit**, by user or agent, with one-click restore (History tab and
@@ -133,7 +131,7 @@ Working:
 - codemax auto-update: the latest GitHub release is installed on its own after a health check, rolled back when it breaks
 - Debug logs (`~/Library/Application Support/EditMax/logs/`) and “Export diagnostics…” in the Agents tab
 
-- Transcript editing (Descript-style): `search_transcript` finds a phrase in the speech with its times, `cut_transcript`
+- Transcript editing: `search_transcript` finds a phrase in the speech with its times, `cut_transcript`
   removes a phrase (by occurrence), a word range or a time span and ripples every track; the clip inspector's Transcript
   section shows the clip's words (click a word, then another, to select a span; Cut selection). Transcripts stay valid after
   a ripple because they are stored per asset and mapped through the clip's source offset.
@@ -156,6 +154,21 @@ Working:
 Not yet built: asset copying into a project bundle (assets are referenced by path + security bookmark), an embedded MP4
 chapter track (chapters are a sidecar text file).
 
+## Settings
+
+⌘, (or Settings… at the bottom of Home's sidebar) opens a standard preferences window; `EditMax/UI/SettingsView.swift`,
+values in `EditMax/App/AppSettings.swift`. Nothing lives only there: every control writes a UserDefaults key or a
+keychain item that the rest of the app reads.
+
+- General: library folder (`libraryDirectory`, default Movies ▸ EditMax Projects), splash at launch (`showSplash`),
+  appearance (`appearance`: System / Light / Dark), Liquid Glass on or off (`useLiquidGlass`, after a relaunch).
+- Assistant: the chat defaults the chat header also edits (`chatBackend`, `chatAgent`, `chatProvider`, `chatModel`).
+  Settings posts `editmaxChatDefaultsChanged`; open chats re-read them unless a turn is running.
+- API Keys: one keychain item per provider slot; saving posts `editmaxKeysChanged` so open chats hand the sidecar the
+  new keys. The log records the slot only.
+- Agent Runtime: bundled / running / latest, Check Now, automatic checks (`autoUpdateRuntime`; Check Now still works).
+- Advanced: MCP port (`mcpPort`, after a relaunch), token (show / copy), config path, Reveal Logs, Export Diagnostics.
+
 ## Build
 
 Requires Xcode 27 and `xcodegen` (`brew install xcodegen`). Re-run `xcodegen generate` after adding files.
@@ -166,6 +179,12 @@ used only on the control layer: the window toolbar (Home / Focus / Export, nativ
 preview's overlay buttons, the export HUD and version banner, the transport pills in focus and full-screen mode, the
 inspector tab strip, the chat's input bar and suggestion chips, Home's format chips and New project button, the splash
 card. Panels, inspectors, the timeline strip and lists stay opaque, standard controls; nothing is glass on glass.
+Home is an `NSSplitViewController`: the sidebar is an `NSSplitViewItem(sidebarWithViewController:)`, which is
+AppKit's official sidebar treatment (Liquid Glass on macOS 26, the translucent sidebar material before), and the
+window is non-opaque with a `.underWindowBackground` behind-window material under the projects pane
+(`BehindWindowMaterial` in Glass.swift), so the desktop shows through the way Finder's does. Only official API:
+`glassEffect` / `GlassEffectContainer` / `.glass` button styles through Glass.swift, `NSVisualEffectView` for the
+window-level materials, the native toolbar for the editor.
 Selected glass controls (inspector tab, Home chip, active preview-overlay button) share one tint,
 `Color.glassSelection`, so the accent reads as the same blue everywhere. `-noglass` on the command line forces the pre-26 material path on any Mac, so the fallback can be checked here; a real
 macOS 15 run is still needed before shipping (this Mac runs 27).

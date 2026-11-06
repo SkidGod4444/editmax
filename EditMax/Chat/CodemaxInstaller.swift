@@ -71,7 +71,7 @@ final class CodemaxInstaller: ObservableObject {
         let existing = whichOnLoginShell("codemax")
         if let existing, existing != link.path, !ours {
             st.existingOnPath = existing
-            st.message = "Agent runtime \(st.bundledVersion ?? "")\(updatedNote) is bundled. Your own codemax command at \(existing) is left alone."
+            st.message = "Agent runtime \(st.bundledVersion ?? "")\(updatedNote) is bundled. Your own copy at \(existing) is left alone."
             return st
         }
         do {

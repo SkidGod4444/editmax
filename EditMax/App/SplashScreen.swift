@@ -156,7 +156,7 @@ private struct SplashView: View {
             .padding(.bottom, 16)   // the version sits below; the group rides a little above centre
             VStack {
                 Spacer()
-                Text("Version \(Self.version)")
+                Text("Version \(Self.version) · by Saidev Dhal")
                     .font(.system(size: 10.5, weight: .medium)).monospacedDigit().foregroundStyle(.tertiary)
                     .opacity(stage(t, 0.8, 0.4))
                     .padding(.bottom, 20)

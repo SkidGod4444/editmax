@@ -29,6 +29,9 @@ final class HomeWindow {
             w.title = "EditMax"
             w.titlebarAppearsTransparent = true
             w.titleVisibility = .hidden
+            // See-through: the sidebar is glass over the desktop and the content a frosted pane (BehindWindowMaterial).
+            w.isOpaque = false
+            w.backgroundColor = .clear
             w.isReleasedWhenClosed = false
             w.minSize = NSSize(width: 760, height: 480)
             w.setFrameAutosaveName("EditMaxHome")
@@ -37,40 +40,57 @@ final class HomeWindow {
         }
         // A fresh view each time: ordering a window out does not fire onDisappear, so a kept view would leave Home's
         // ids registered with the UI driver while the editor is up.
-        window?.contentView = NSHostingView(rootView: HomeView())
+        if let w = window {
+            let frame = w.frame
+            let model = HomeModel()
+            let split = NSSplitViewController()
+            let sideVC = NSHostingController(rootView: HomeView(part: .sidebar, model: model))
+            let mainVC = NSHostingController(rootView: HomeView(part: .projects, model: model))
+            sideVC.sizingOptions = []; mainVC.sizingOptions = []   // the window keeps its own frame; SwiftUI does not size it
+            let side = NSSplitViewItem(sidebarWithViewController: sideVC)
+            side.minimumThickness = 250; side.maximumThickness = 250; side.canCollapse = false
+            side.titlebarSeparatorStyle = .none
+            let main = NSSplitViewItem(viewController: mainVC)
+            main.titlebarSeparatorStyle = .none
+            split.addSplitViewItem(side); split.addSplitViewItem(main)
+            split.view.frame = NSRect(origin: .zero, size: frame.size)
+            w.contentViewController = split
+            w.setFrame(frame, display: false)
+        }
         ProjectLibrary.shared.refresh()
         window?.makeKeyAndOrderFront(nil)   // orders within EditMax's own layer; never activates the app
         DebugLog.event("home-show", ["windowNumber": window?.windowNumber ?? -1])
     }
 
-    func hide() { window?.orderOut(nil); window?.contentView = nil }
+    func hide() { window?.orderOut(nil); window?.contentViewController = nil }
 }
 
 struct HomeView: View {
+    /// Home is an NSSplitViewController (the sidebar item gets AppKit's official sidebar treatment: Liquid Glass on
+    /// macOS 26, the translucent sidebar material before), so the sidebar and the projects pane are two hosting
+    /// controllers over one model.
+    enum Part { case sidebar, projects }
+    let part: Part
+    @ObservedObject var model: HomeModel
     @ObservedObject private var library = ProjectLibrary.shared
-    @State private var search = ""
-    @State private var template: Templates.Info = Templates.list().first!
-    @State private var trashing: ProjectLibrary.Entry?
-    @State private var problem: String?
 
     private var filtered: [ProjectLibrary.Entry] {
-        let q = search.trimmingCharacters(in: .whitespaces).lowercased()
+        let q = model.search.trimmingCharacters(in: .whitespaces).lowercased()
         return q.isEmpty ? library.entries : library.entries.filter { $0.name.lowercased().contains(q) }
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            sidebar.frame(width: 250)
-            Divider()
-            projects
+        Group {
+            switch part {
+            case .sidebar: sidebar
+            case .projects: projects.background(BehindWindowMaterial(material: .underWindowBackground).ignoresSafeArea())
+            }
         }
-        .frame(minWidth: 760, minHeight: 480)
-        .background(Color(nsColor: .windowBackgroundColor))
-        .confirmationDialog("Move “\(trashing?.name ?? "")” to the Trash?", isPresented: Binding(get: { trashing != nil }, set: { if !$0 { trashing = nil } }), titleVisibility: .visible) {
-            Button("Move to Trash", role: .destructive) { if let e = trashing { do { try library.trash(e) } catch { problem = error.localizedDescription } }; trashing = nil }
-            Button("Cancel", role: .cancel) { trashing = nil }
+        .confirmationDialog("Move “\(model.trashing?.name ?? "")” to the Trash?", isPresented: Binding(get: { model.trashing != nil }, set: { if !$0 { model.trashing = nil } }), titleVisibility: .visible) {
+            Button("Move to Trash", role: .destructive) { if let e = model.trashing { do { try library.trash(e) } catch { model.problem = error.localizedDescription } }; model.trashing = nil }
+            Button("Cancel", role: .cancel) { model.trashing = nil }
         } message: { Text("The project file is moved to the Trash; its media stays where it is.") }
-        .alert("EditMax", isPresented: Binding(get: { problem != nil }, set: { if !$0 { problem = nil } })) { Button("OK") { problem = nil } } message: { Text(problem ?? "") }
+        .alert("EditMax", isPresented: Binding(get: { model.problem != nil }, set: { if !$0 { model.problem = nil } })) { Button("OK") { model.problem = nil } } message: { Text(model.problem ?? "") }
         .onAppear { library.refresh() }
     }
 
@@ -90,8 +110,8 @@ struct HomeView: View {
                 let chips = Templates.list().filter(\.builtin)
                 FlowLayout(spacing: 6) {
                     ForEach(chips) { t in
-                        let on = t.name == template.name
-                        Button(shortName(t)) { template = t }
+                        let on = t.name == model.template.name
+                        Button(shortName(t)) { model.template = t }
                             .buttonStyle(.plain)
                             .focusable(false)
                             .font(.system(size: 11, weight: .medium))
@@ -100,10 +120,10 @@ struct HomeView: View {
                             .foregroundStyle(on ? Color.white : Color.primary)
                             .pointer()
                             .help("\(t.name): \(t.width)×\(t.height) at \(Int(t.fps)) fps")
-                            .uiFrame("home.template.\(slug(t))").uiTap("home.template.\(slug(t))") { template = t }
+                            .uiFrame("home.template.\(slug(t))").uiTap("home.template.\(slug(t))") { model.template = t }
                     }
                 }
-                Text("\(template.width)×\(template.height) · \(Int(template.fps)) fps").font(.caption).foregroundStyle(.secondary)
+                Text("\(model.template.width)×\(model.template.height) · \(Int(model.template.fps)) fps").font(.caption).foregroundStyle(.secondary)
                 Button { newProject() } label: {
                     Label("New project", systemImage: "plus").frame(maxWidth: .infinity)
                 }
@@ -116,39 +136,41 @@ struct HomeView: View {
                     .buttonStyle(.plain).focusable(false).pointer().uiFrame("home.open").uiTap("home.open") { openPanel() }
                 Button { NSWorkspace.shared.activateFileViewerSelecting([ProjectLibrary.directory]) } label: { Label("Show library in Finder", systemImage: "arrow.up.forward.square").frame(maxWidth: .infinity, alignment: .leading) }
                     .buttonStyle(.plain).focusable(false).pointer().uiFrame("home.finder")
+                SettingsLink { Label("Settings…", systemImage: "gearshape").frame(maxWidth: .infinity, alignment: .leading) }
+                    .buttonStyle(.plain).focusable(false).pointer().uiFrame("home.settings")
             }
             .font(.system(size: 13))
 
             Spacer()
-            Text("Projects live in Movies ▸ EditMax Projects. A draft is a project you have not named yet.")
+            Text("Projects live in Movies ▸ EditMax Projects. A draft is a project you have not named yet.\nEditMax by Saidev Dhal.")
                 .font(.caption2).foregroundStyle(.tertiary).fixedSize(horizontal: false, vertical: true)
         }
         .padding(22)
-        .background(.regularMaterial)
+        .frame(maxHeight: .infinity, alignment: .top)
     }
 
     private var projects: some View {
         VStack(spacing: 0) {
             HStack {
-                Text(search.isEmpty ? "Projects" : "Results").font(.system(size: 22, weight: .bold, design: .rounded))
+                Text(model.search.isEmpty ? "Projects" : "Results").font(.system(size: 22, weight: .bold, design: .rounded))
                 Text("\(filtered.count)").font(.system(size: 12, weight: .semibold).monospacedDigit()).foregroundStyle(.secondary)
                     .padding(.horizontal, 7).padding(.vertical, 2).background(Color.primary.opacity(0.08), in: Capsule())
                 Spacer()
-                TextField("Search", text: $search).textFieldStyle(.roundedBorder).frame(width: 220).uiFrame("home.search")
+                TextField("Search", text: $model.search).textFieldStyle(.roundedBorder).frame(width: 220).uiFrame("home.search")
             }
             .padding(.horizontal, 26).padding(.top, 40).padding(.bottom, 12)
             if filtered.isEmpty {
                 Spacer()
                 VStack(spacing: 10) {
                     Image(systemName: "film.stack").font(.system(size: 44)).foregroundStyle(.tertiary)
-                    Text(library.entries.isEmpty ? "No projects yet" : "Nothing matches “\(search)”").font(.headline)
+                    Text(library.entries.isEmpty ? "No projects yet" : "Nothing matches “\(model.search)”").font(.headline)
                     if library.entries.isEmpty { Text("Pick a format on the left and create your first project.").font(.callout).foregroundStyle(.secondary) }
                 }
                 Spacer()
             } else {
                 ScrollView {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 220, maximum: 300), spacing: 18)], spacing: 18) {
-                        ForEach(filtered) { e in ProjectCard(entry: e, thumbnail: library.thumbnails[e.id], onOpen: { library.open(e.url) }, onTrash: { trashing = e }) }
+                        ForEach(filtered) { e in ProjectCard(entry: e, thumbnail: library.thumbnails[e.id], onOpen: { library.open(e.url) }, onTrash: { model.trashing = e }) }
                     }
                     .padding(.horizontal, 26).padding(.bottom, 26)
                 }
@@ -157,7 +179,7 @@ struct HomeView: View {
     }
 
     private func newProject() {
-        do { library.open(try library.create(template: template)) } catch { problem = error.localizedDescription }
+        do { library.open(try library.create(template: model.template)) } catch { model.problem = error.localizedDescription }
     }
 
     private func openPanel() {
@@ -179,6 +201,14 @@ struct HomeView: View {
         }
     }
     private func slug(_ t: Templates.Info) -> String { shortName(t).replacingOccurrences(of: ":", with: "-").replacingOccurrences(of: ".", with: "_").lowercased() }
+}
+
+@MainActor
+final class HomeModel: ObservableObject {
+    @Published var search = ""
+    @Published var template: Templates.Info = Templates.list().first!
+    @Published var trashing: ProjectLibrary.Entry?
+    @Published var problem: String?
 }
 
 private struct ProjectCard: View {

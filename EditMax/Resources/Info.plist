@@ -43,6 +43,8 @@
 	<string>15.0</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>© 2026 Saidev Dhal</string>
 	<key>UTExportedTypeDeclarations</key>
 	<array>
 		<dict>

@@ -27,10 +27,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The splash floats above every window, so it only shows for a launch the user made: Launch Services activates the
     /// app right after launch; a background launch (`open -g`, the agent's test relaunches) never does, and gets none.
     func applicationDidBecomeActive(_ notification: Notification) {
-        if Date().timeIntervalSince(launchedAt) < 2 { SplashScreen.shared.show(); SplashScreen.shared.dismissWhenReady() }
+        if Date().timeIntervalSince(launchedAt) < 2, AppSettings.bool(AppSettings.Key.showSplash, default: true) { SplashScreen.shared.show(); SplashScreen.shared.dismissWhenReady() }
     }
     func applicationDidFinishLaunching(_ notification: Notification) {
         InteractionLog.install()
+        AppSettings.shared.applyAppearance()
         SplashScreen.renderIfRequested()
         if ProcessInfo.processInfo.arguments.contains("-splash-preview") { SplashScreen.shared.show(); SplashScreen.shared.dismissWhenReady() }
         // No NSApp.activate here: a normal launch is activated by Launch Services, and a background launch (`open -g`)

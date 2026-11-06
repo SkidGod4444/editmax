@@ -6,7 +6,7 @@ import SwiftUI
 /// chips); panels, lists and inspectors stay opaque, standard controls.
 /// `-noglass` on the command line forces the pre-26 material path on any system, so the fallback can be seen here.
 enum GlassCompat {
-    static let forceFallback = ProcessInfo.processInfo.arguments.contains("-noglass")
+    static let forceFallback = ProcessInfo.processInfo.arguments.contains("-noglass") || !AppSettings.bool(AppSettings.Key.liquidGlass, default: true)
 }
 
 extension View {
@@ -66,6 +66,22 @@ extension Color {
     /// strength that reads as the same light blue on every surface. Tinting glass at a low opacity turns the accent
     /// into a different, darker blue on each background, so every selected glass control uses this one value.
     static let glassSelection = Color.accentColor.opacity(0.85)
+}
+
+/// A window-level material: blurs what is behind the window (the desktop, other windows), the way Finder's sidebar and
+/// content do. The window must be non-opaque with a clear background. `.sidebar` is Liquid Glass on macOS 26 and the
+/// translucent sidebar before it; `.underWindowBackground` is the frosted content area. Kept active so the window
+/// reads the same when it is not key.
+struct BehindWindowMaterial: NSViewRepresentable {
+    var material: NSVisualEffectView.Material
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let v = NSVisualEffectView()
+        v.material = material
+        v.blendingMode = .behindWindow
+        v.state = .active
+        return v
+    }
+    func updateNSView(_ v: NSVisualEffectView, context: Context) { v.material = material }
 }
 
 /// True on macOS 26 and later: lets a view pick a lighter treatment where glass already supplies depth.

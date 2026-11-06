@@ -33,7 +33,10 @@ final class ProjectLibrary: ObservableObject {
     private var thumbnailsInFlight: Set<String> = []
 
     static var directory: URL {
-        let dir = FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask)[0].appendingPathComponent("EditMax Projects")
+        // Settings ▸ General can point the library elsewhere; the default is Movies ▸ EditMax Projects.
+        let chosen = UserDefaults.standard.string(forKey: AppSettings.Key.library) ?? ""
+        let dir = chosen.isEmpty ? FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask)[0].appendingPathComponent("EditMax Projects")
+                                 : URL(fileURLWithPath: chosen)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }

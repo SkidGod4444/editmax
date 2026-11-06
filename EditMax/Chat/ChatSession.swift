@@ -76,6 +76,12 @@ final class ChatSession: ObservableObject {
     let document: EditMaxDocument
     private var task: Task<Void, Never>?
 
+    /// Every live session, so Settings can show the agents and providers the runtime reported.
+    private static let live = NSHashTable<ChatSession>.weakObjects()
+    static var anyAgents: [CodemaxRunner.AgentInfo]? { live.allObjects.map(\.agents).first { !$0.isEmpty } }
+    static var anyProviders: [CodemaxRunner.ProviderInfo]? { live.allObjects.map(\.providers).first { !$0.isEmpty } }
+    private var observers: [NSObjectProtocol] = []
+
     init(document: EditMaxDocument) {
         self.document = document
         backend = UserDefaults.standard.string(forKey: "chatBackend").flatMap(Backend.init(rawValue:)) ?? .agent
@@ -86,6 +92,30 @@ final class ChatSession: ObservableObject {
         runner.onEvent = { [weak self] ev in self?.handle(ev) }
         apiRunner.onEvent = { [weak self] ev in self?.handle(ev) }
         refreshAgents()
+        if backend == .apiKey { refreshProviders() }
+        Self.live.add(self)
+        // Settings edits the same defaults; pick them up here, and hand the sidecar new keys.
+        observers.append(NotificationCenter.default.addObserver(forName: .editmaxChatDefaultsChanged, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.reloadDefaults() }
+        })
+        observers.append(NotificationCenter.default.addObserver(forName: .editmaxKeysChanged, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.keysChanged() }
+        })
+    }
+
+    /// Settings changed a chat default: follow it unless a turn is running on the old choice.
+    private func reloadDefaults() {
+        guard !isRunning else { return }
+        let d = UserDefaults.standard
+        if let b = d.string(forKey: "chatBackend").flatMap(Backend.init(rawValue:)), b != backend { let old = backend; backend = b; switchBackend(from: old, to: b) }
+        if let a = d.string(forKey: "chatAgent"), a != agent { agent = a }
+        if let p = d.string(forKey: "chatProvider"), p != provider { provider = p }
+        let m = d.string(forKey: "chatModel") ?? ""
+        if m != model { model = m }
+    }
+    private func keysChanged() {
+        keysVersion += 1
+        configuredAPI = nil
         if backend == .apiKey { refreshProviders() }
     }
 

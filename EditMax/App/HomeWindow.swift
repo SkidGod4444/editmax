@@ -10,6 +10,8 @@ final class HomeWindow {
     private var window: NSWindow?
     private var bag: Set<AnyCancellable> = []
     private var hadDocuments = false
+    /// True while a launch that opens a project waits for its window (`waitForLaunchProject`).
+    private(set) var waitingForLaunchProject = false
 
     private init() {
         DocumentRegistry.shared.$documents
@@ -18,7 +20,7 @@ final class HomeWindow {
             .sink { [weak self] docs in
                 guard let self else { return }
                 if !docs.isEmpty { hadDocuments = true; hide() }
-                else if hadDocuments { hadDocuments = false; show() }
+                else if hadDocuments { hadDocuments = false; if !waitingForLaunchProject { show() } }
             }
             .store(in: &bag)
     }
@@ -71,6 +73,57 @@ final class HomeWindow {
         savedFrame = w.frame
         w.orderOut(nil); w.contentViewController = nil
         DebugLog.event("home-hide")
+    }
+
+    // MARK: launch
+
+    /// What Home does when the app finishes launching.
+    enum LaunchPlan: Equatable {
+        /// A plain launch (Dock, Launchpad, Spotlight): Home is the launch screen, up at once.
+        case showNow
+        /// A launch that opens a project (double-clicked in the Finder, a path on the command line) or restores the
+        /// windows that were open at quit. The project window arrives a moment after launch; Home put up first flashed
+        /// up and away, so it waits for the project instead.
+        case waitForProject
+        /// A project is already open.
+        case nothing
+    }
+
+    /// `isDefaultLaunch` is AppKit's `launchIsDefaultUserInfoKey`: false when the app was launched to open a file or
+    /// to restore saved windows.
+    nonisolated static func launchPlan(isDefaultLaunch: Bool, projectOpen: Bool, projectInArguments: Bool) -> LaunchPlan {
+        if projectOpen { return .nothing }
+        return isDefaultLaunch && !projectInArguments ? .showNow : .waitForProject
+    }
+
+    /// A project counts once it has a file or edits: the empty untitled document DocumentGroup opens on its own is
+    /// closed 0.3 s after launch.
+    static var projectOpen: Bool {
+        NSDocumentController.shared.documents.contains { $0.fileURL != nil || $0.isDocumentEdited }
+    }
+
+    /// For `.waitForProject`: Home comes up only if no project has opened after `seconds` (a file that fails to open, a
+    /// restore with nothing in it), and never over the splash. While it waits, the automatic "no project, so Home"
+    /// paths stand aside. Returns true when it put Home up.
+    @discardableResult
+    func waitForLaunchProject(seconds: Double = 2, poll: Double = 0.05,
+                              projectOpen: (() -> Bool)? = nil,
+                              show: (() -> Void)? = nil) async -> Bool {
+        waitingForLaunchProject = true
+        defer { waitingForLaunchProject = false }
+        let end = Date().addingTimeInterval(seconds)
+        while !(projectOpen?() ?? HomeWindow.projectOpen) {
+            if Date() >= end {
+                DebugLog.event("home-launch-wait", ["project": false])
+                if let show { show() } else {
+                    SplashScreen.shared.afterDismiss { if !HomeWindow.projectOpen, !HomeWindow.shared.isVisible { HomeWindow.shared.show() } }
+                }
+                return true
+            }
+            try? await Task.sleep(for: .seconds(poll))
+        }
+        DebugLog.event("home-launch-wait", ["project": true])
+        return false
     }
 }
 

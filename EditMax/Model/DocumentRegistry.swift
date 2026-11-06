@@ -21,7 +21,8 @@ final class DocumentRegistry: ObservableObject {
         // The last project window closed: back to Home, unless the app is on its way out.
         if documents.isEmpty, !AppDelegate.isTesting {   // tests register documents too; Home never shows for them
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                if self.documents.isEmpty, !AppDelegate.quitting, !HomeWindow.shared.isVisible { HomeWindow.shared.show() }
+                // Not while a launch is still waiting for the project it opens: that wait shows Home itself if none comes.
+                if self.documents.isEmpty, !AppDelegate.quitting, !HomeWindow.shared.isVisible, !HomeWindow.shared.waitingForLaunchProject { HomeWindow.shared.show() }
             }
         }
     }

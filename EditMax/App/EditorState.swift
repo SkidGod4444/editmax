@@ -50,11 +50,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if ProcessInfo.processInfo.arguments.contains("-splash-preview") { SplashScreen.shared.show(); SplashScreen.shared.dismissWhenReady() }
         // No NSApp.activate here: a normal launch is activated by Launch Services, and a background launch (`open -g`)
         // must stay in the background.
-        // Home (the project library) is the launch screen. It is put up right away so the document machinery never sees
-        // an app without windows (that is what makes it present an Open panel); opening a file at launch skips it.
-        if NSDocumentController.shared.documents.isEmpty && !ProcessInfo.processInfo.arguments.contains(where: { $0.hasSuffix(".emx") || $0.hasSuffix(".editmax") }) {
-            SplashScreen.shared.afterDismiss { if NSDocumentController.shared.documents.isEmpty { HomeWindow.shared.show() } }
-            if !SplashScreen.shared.isShowing { HomeWindow.shared.show() }
+        // Home (the project library) is the launch screen. On a plain launch it is put up right away so the document
+        // machinery never sees an app without windows (that is what makes it present an Open panel). A launch that opens
+        // or restores a project waits for that project instead, and shows Home only if none arrives (no flash of Home).
+        let isDefault = notification.userInfo?[NSApplication.launchIsDefaultUserInfoKey] as? Bool ?? true
+        let plan = HomeWindow.launchPlan(isDefaultLaunch: isDefault, projectOpen: !NSDocumentController.shared.documents.isEmpty,
+                                         projectInArguments: ProcessInfo.processInfo.arguments.contains(where: { $0.hasSuffix(".emx") || $0.hasSuffix(".editmax") }))
+        DebugLog.event("launch-plan", ["default": isDefault, "plan": "\(plan)"])
+        switch plan {
+        case .showNow: SplashScreen.shared.afterDismiss { if NSDocumentController.shared.documents.isEmpty { HomeWindow.shared.show() } }
+        case .waitForProject: Task { await HomeWindow.shared.waitForLaunchProject() }
+        case .nothing: break
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
             // DocumentGroup opens an empty untitled document on its own (the delegate is not asked); close it and show
@@ -62,7 +68,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let docs = NSDocumentController.shared.documents
             DebugLog.event("launch-docs", ["count": docs.count, "untitled": docs.filter { $0.fileURL == nil }.count, "edited": docs.filter(\.isDocumentEdited).count])
             for d in docs where d.fileURL == nil && !d.isDocumentEdited { d.close() }
-            // With a splash up, Home waits until it has faded: the splash plays, then the app opens.
+            // With a splash up, Home waits until it has faded: the splash plays, then the app opens. (A launch waiting for
+            // its project leaves this to the wait.)
+            guard plan == .showNow else { return }
             SplashScreen.shared.afterDismiss { if NSDocumentController.shared.documents.isEmpty { HomeWindow.shared.show() } }
         }
         // The notch drawer comes up once the splash has gone. The splash starts within 2 s of launch or not at all

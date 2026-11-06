@@ -32,6 +32,10 @@ The timeline draws the extra sound as green tongues under the clip, labelled "J 
 - `soundClip()` builds the synthetic sound clip. Keyframes are shifted, and its source in is `audioIn - sourceOffset(lead)`.
 - `cutSoundHead` / `cutSoundTail` serve `Clip.split` and `rippleDelete`.
 - `checkSplitEditMedia` guards trims and speed changes.
+- `SplitEditAudio.insert` puts the sounds on composition tracks of their own, one owner track per lane, and gives each
+  lane that track's strip (fader, pan, bus, master) and the clip's own chain in one tap
+  (`testSplitEditSoundFollowsItsTracksFader`). These lanes have no meter, so the mixer's meters do not show J/L-cut
+  sound while it plays. J and L cuts are not written into FCPXML or EDL; the hand-off report lists them.
 
 In `CompositionBuilder`, a clip with a split edit skips the plain audio slot. `SplitEditAudio.insert` then lays each split sound on its own audio composition lane, scheduled greedily by interval, with the same volume envelope, ducking and EQ taps. The transition tail goes through `next`.
 

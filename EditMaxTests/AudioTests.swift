@@ -300,6 +300,23 @@ final class AudioMixTests: XCTestCase {
         for _ in 0..<10 { let m = try await mix(); XCTAssertEqual(S.peakDB(m[0]), -20, accuracy: 0.01) }
     }
 
+    func testSplitEditSoundFollowsItsTracksFader() async throws {
+        // A J cut's sound plays on a lane of its own (`SplitEditAudio`); that lane must carry its track's strip, or a
+        // fader move would leave the J-cut sound at full level. Most of this timeline is the J-cut clip's sound, so a
+        // lane without the strip would drop the mix by about 3 LU, not 12.
+        let fixture = Bundle(for: Self.self).url(forResource: "base", withExtension: "mp4")!
+        _ = try await x.importMedia(paths: [fixture.path])
+        _ = try x.insertClip(asset: "base.mp4", duration: 0.6)
+        let b = try x.insertClip(asset: "base.mp4", sourceIn: 0.8, duration: 1.2)
+        _ = try x.setSplitEdit(b.id.short, lead: 0.5, trail: nil, neighbour: nil)
+        XCTAssertTrue(doc.project.clip(b.id)!.clip.hasSplitEdit)
+        let before = try await x.measureLoudness(clip: nil).integrated!
+        let track = doc.project.clip(b.id)!.track
+        _ = try await x.setTrackMix(track.id.short, gain: -12, pan: nil, solo: nil, mute: nil, bus: nil)
+        let after = try await x.measureLoudness(clip: nil).integrated!
+        XCTAssertEqual(after - before, -12, accuracy: 0.3, "J-cut sound follows the track fader")
+    }
+
     func testTapSeesTheSourceFormatAndGainAppliesThroughTheMix() async throws {
         let tone = S.sine(1000, seconds: 2, dbfs: -20)
         let c = try await add("tone.wav", [tone, tone])

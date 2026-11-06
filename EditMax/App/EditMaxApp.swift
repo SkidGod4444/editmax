@@ -119,7 +119,7 @@ struct EditorRootView: View {
         .background(WindowFocusObserver { DocumentRegistry.shared.activate(document) })
         .modifier(EditingSheets(document: document))   // relink on open, consolidate (RelinkSheet.swift)
         .onReceive(NotificationCenter.default.publisher(for: .editmaxCompare)) { _ in
-            if DocumentRegistry.shared.active?.id == document.id, document.project.hasColorGrade { player.cycleCompare() }
+            if DocumentRegistry.shared.active?.id == document.id, document.project.hasColorGrade { player.toggleCompare() }
         }
         .onChange(of: document.project.hasColorGrade) { _, graded in if !graded, player.compareMode != .off { player.compareMode = .off } }
         .onReceive(NotificationCenter.default.publisher(for: .editmaxFocusMode)) { _ in
@@ -192,81 +192,10 @@ struct EditorRootView: View {
         }
     }
 
-    /// The picture with its overlays (empty state, version banner, scopes / full screen / focus buttons), scopes and build errors.
+    /// The picture with its overlays (empty state, version banner, scopes / full screen / focus buttons), scopes and build
+    /// errors (PreviewView.swift).
     private var previewArea: some View {
-        VStack(spacing: 0) {
-            PreviewView(controller: player, canFullScreen: !noClips)
-                .overlay {
-                    if document.project.allClips.isEmpty {
-                        VStack(spacing: 8) {
-                            Image(nsImage: NSApp.applicationIconImage).resizable().interpolation(.high).frame(width: 72, height: 72).opacity(0.55)
-                            Text("Drop a clip on the timeline to see it here").font(.system(size: 12)).foregroundStyle(.secondary)
-                        }
-                        .allowsHitTesting(false)
-                    }
-                }
-                .overlay(alignment: .top) {
-                    if let v = state.viewingVersion, !v.isCurrent {
-                        HStack(spacing: 8) {
-                            Image(systemName: "clock.arrow.circlepath")
-                            Text("Viewing version: \(v.label) · \(v.date.formatted(date: .omitted, time: .shortened))").lineLimit(1)
-                            Button("Back to current") { state.viewingVersion = nil; player.view(nil) }.controlSize(.small).pointer().uiFrame("preview.versionBack")
-                                .uiTap("preview.versionBack") { state.viewingVersion = nil; player.view(nil) }
-                            Button("Restore") { state.viewingVersion = nil; player.view(nil); try? document.restore(version: v, origin: .user) }.controlSize(.small).buttonStyle(.borderedProminent).pointer().uiFrame("preview.versionRestore")
-                                .uiTap("preview.versionRestore", key: v.id) { state.viewingVersion = nil; player.view(nil); try? document.restore(version: v, origin: .user) }
-                        }
-                        .font(.system(size: 12)).foregroundStyle(.white)
-                        .padding(.horizontal, 12).padding(.vertical, 7)
-                        .liquidGlass(tint: .orange.opacity(0.75))
-                        .padding(10)
-                        .uiFrame("preview.versionBanner")
-                    }
-                }
-                .overlay(alignment: .topTrailing) {
-                    // The floating control layer over the picture: one glass group, icon-only, tinted when active.
-                    GlassGroup(spacing: 6) {
-                        HStack(spacing: 6) {
-                            overlayButton("waveform.path.ecg", active: player.scopesEnabled,
-                                          help: player.scopesEnabled ? "Hide the scopes" : "Show the scopes (waveform and histogram)") { player.scopesEnabled.toggle() }
-                                .uiFrame("preview.scopes")
-                            overlayButton(player.compareMode == .off ? "rectangle.lefthalf.inset.filled" : player.compareMode == .split ? "rectangle.split.2x1.fill" : "rectangle.fill",
-                                          active: player.compareMode != .off,
-                                          help: !document.project.hasColorGrade ? "Before / after compares the color grade; no clip is graded yet" : player.compareMode == .off ? "Before / after the color grade: split the picture at a divider you can drag, then the whole picture before, then off" : "Next before / after mode") { player.cycleCompare() }
-                                .disabled(!document.project.hasColorGrade)
-                                .uiFrame("preview.compare").uiTap("preview.compare") { if document.project.hasColorGrade { player.cycleCompare() } }
-                            overlayButton("arrow.up.left.and.arrow.down.right", active: false,
-                                          help: noClips ? "Add a clip to the timeline to view it full screen" : "Show the preview full screen (⇧⌘F, or double-click the preview; Esc leaves)") { toggleFullScreen() }
-                                .disabled(noClips)
-                                .uiFrame("preview.fullscreen").uiTap("preview.fullscreen") { toggleFullScreen() }
-                            overlayButton(state.focusMode ? "rectangle.3.group" : "rectangle.split.2x1", active: state.focusMode,
-                                          help: state.focusMode ? "Back to the full editor (⌥⌘F)" : "Focus: just the player and the chat (⌥⌘F)") {
-                                state.focusMode.toggle(); if state.focusMode, state.chat == nil { state.chat = ChatSession(document: document) }
-                            }
-                            .uiFrame("preview.focus").uiTap("preview.focus") { state.focusMode.toggle() }
-                        }
-                    }
-                    .padding(10)
-                }
-            .overlay { if player.compareMode != .off { CompareOverlay(player: player, aspect: Double(document.project.settings.width) / Double(max(1, document.project.settings.height))) } }
-            .overlay { SourceViewerHost(document: document) }   // last, so the source viewer covers the program's overlays (SourceViewer.swift)
-            if player.scopesEnabled { ScopesView(data: player.scopes) }
-            if let e = player.buildError { Text(e).font(.caption).foregroundStyle(.red).padding(4) }
-        }
-    }
-
-    /// One floating glass button over the picture. `.pointer()` sits inside `.disabled` at the call site.
-    private func overlayButton(_ symbol: String, active: Bool, help: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 12, weight: .semibold))
-                .frame(width: 30, height: 26)
-                .foregroundStyle(active ? Color.white : .primary)
-                .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        }
-        .buttonStyle(.plain).focusable(false)
-        .liquidGlass(in: RoundedRectangle(cornerRadius: 8, style: .continuous), tint: active ? Color.glassSelection : nil, interactive: true)
-        .help(help)
-        .pointer()
+        ProgramMonitor(document: document, player: player, state: state) { toggleFullScreen() }
     }
 
     /// No clips on any track: nothing to show full screen, so every entry point (button, menu, double-click) stays off.
@@ -275,7 +204,7 @@ struct EditorRootView: View {
     /// Opens the full-screen preview only when there is something to show; closing it always works.
     private func toggleFullScreen() {
         guard FullScreenPreview.shared.isShowing || !noClips else { return }
-        FullScreenPreview.shared.toggle(player, keys: EditorActions(document: document, state: state, player: player).handle)
+        FullScreenPreview.shared.toggle(player, keys: EditorActions(document: document, state: state, player: player).handle, fps: document.project.settings.fps)
     }
 
     private func exportVideo() {

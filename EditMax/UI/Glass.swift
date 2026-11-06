@@ -6,7 +6,9 @@ import SwiftUI
 /// chips); panels, lists and inspectors stay opaque, standard controls.
 /// `-noglass` on the command line forces the pre-26 material path on any system, so the fallback can be seen here.
 enum GlassCompat {
-    static let forceFallback = ProcessInfo.processInfo.arguments.contains("-noglass") || !AppSettings.bool(AppSettings.Key.liquidGlass, default: true)
+    /// Settable so the offscreen previews in the tests can draw the fallback: real glass is composited by the window
+    /// server and comes out blank (or white, when tinted) in an offscreen render.
+    nonisolated(unsafe) static var forceFallback = ProcessInfo.processInfo.arguments.contains("-noglass") || !AppSettings.bool(AppSettings.Key.liquidGlass, default: true)
 }
 
 extension View {

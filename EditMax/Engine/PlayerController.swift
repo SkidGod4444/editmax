@@ -15,11 +15,12 @@ final class PlayerController: ObservableObject {
     @Published private(set) var buildError: String?
     @Published private(set) var lastOutput: CompositionBuilder.Output?
     /// Scopes (waveform + histogram) of the frame on screen, sampled while `scopesEnabled`.
-    @Published var scopesEnabled = false { didSet { if scopesEnabled { attachScopes(); sampleScopes() } else { scopes = nil } } }
+    @Published var scopesEnabled = false { didSet { if scopesEnabled { attachScopes(); sampleScopesWhenReady(redraw: true) } else { scopeWait?.cancel(); scopes = nil } } }
     @Published private(set) var scopes: ScopeData?
     private var videoOutput: AVPlayerItemVideoOutput?
     private let scopeQueue = DispatchQueue(label: "io.openhorizon.editmax.scopes", qos: .utility)
     private var scopeBusy = false
+    private var scopeWait: Task<Void, Never>?
 
     private var timeObserver: Any?
     private var rebuildTask: Task<Void, Never>?
@@ -94,7 +95,7 @@ final class PlayerController: ObservableObject {
                 buildError = nil
                 if scopesEnabled { attachScopes() }
                 if keep.isValid, keep.seconds < out.duration.seconds { await item.seek(to: keep, toleranceBefore: .zero, toleranceAfter: .zero) }
-                if scopesEnabled { try? await Task.sleep(for: .milliseconds(150)); sampleScopes() }
+                if scopesEnabled { sampleScopesWhenReady(redraw: false) }
             } catch {
                 DebugLog.error("player-rebuild-failed", error, ["reason": reason])
                 buildError = error.localizedDescription
@@ -110,15 +111,34 @@ final class PlayerController: ObservableObject {
         videoOutput = out
     }
 
-    /// Pulls the frame at the current time and computes the scopes off the main thread (one at a time).
-    func sampleScopes() {
-        guard scopesEnabled, !scopeBusy, let out = videoOutput else { return }
+    /// Pulls the frame at the current time and computes the scopes off the main thread (one at a time). False when the
+    /// output has no new frame for that time yet.
+    @discardableResult func sampleScopes() -> Bool {
+        guard scopesEnabled, !scopeBusy, let out = videoOutput else { return false }
         let t = player.currentTime()
-        guard let buf = out.copyPixelBuffer(forItemTime: t, itemTimeForDisplay: nil) else { return }
+        guard let buf = out.copyPixelBuffer(forItemTime: t, itemTimeForDisplay: nil) else { return false }
         scopeBusy = true
         scopeQueue.async { [weak self] in
             let data = ScopeSampler.sample(buf)
             DispatchQueue.main.async { self?.scopeBusy = false; if let data { self?.scopes = data } }
+        }
+        return true
+    }
+
+    /// A video output only receives the frames rendered after it was added, and a paused player renders nothing new, so
+    /// scopes opened while paused stayed empty until the playhead moved. `redraw` renders the frame on screen again
+    /// (paused only); then the output is polled until that frame arrives (a new item's first frame, a redraw), up to 2 s.
+    private func sampleScopesWhenReady(redraw: Bool) {
+        scopeWait?.cancel()
+        if redraw, !isRunning, let item = player.currentItem, let vc = item.videoComposition {
+            item.videoComposition = (vc.mutableCopy() as? AVMutableVideoComposition) ?? vc
+        }
+        scopeWait = Task { [weak self] in
+            for _ in 0..<50 {
+                try? await Task.sleep(for: .milliseconds(40))
+                guard let self, !Task.isCancelled, self.scopesEnabled else { return }
+                if self.sampleScopes() { return }
+            }
         }
     }
 
@@ -137,7 +157,11 @@ final class PlayerController: ObservableObject {
         player.rate = dir * speed; rate = dir * speed; isPlaying = true
     }
     /// Before/after view (see `CompareMode`); the divider position is a fraction of the frame width.
-    @Published var compareMode: CompareMode = .off { didSet { CompareState.shared.mode = compareMode; redrawIfPaused() } }
+    @Published var compareMode: CompareMode = .off {
+        didSet { CompareState.shared.mode = compareMode; if let s = CompareStyle(compareMode) { compareStyle = s }; redrawIfPaused() }
+    }
+    /// The way before/after compares when it is turned on: the last one shown (split at a divider until another is chosen).
+    @Published private(set) var compareStyle: CompareStyle = .split
     @Published var compareSplit: Double = 0.5 { didSet { CompareState.shared.split = compareSplit; redrawIfPaused() } }
 
     /// The compositor reads the compare state on every frame, so while the video plays the next frame already shows the
@@ -151,13 +175,17 @@ final class PlayerController: ObservableObject {
         redrawScheduled = true
         DispatchQueue.main.async { [weak self] in guard let self else { return }; self.redrawScheduled = false; self.redraw() }
     }
-    func cycleCompare() { compareMode = compareMode == .off ? .split : compareMode == .split ? .before : .off }
+    /// The preview button and ⌥⌘B: before/after on, the way it was last shown, or off. Two states, so the button's look
+    /// (tinted or not) always says whether the picture is the graded one.
+    func toggleCompare() { compareMode = compareMode == .off ? compareStyle.mode : .off }
+    /// The button's menu: compare this way (turns before/after on).
+    func showCompare(_ style: CompareStyle) { compareMode = style.mode }
 
     /// Re-render the frame on screen while paused (a compositor setting changed, not the composition).
     private func redraw() {
         guard let item = player.currentItem, let vc = item.videoComposition else { return }
         item.videoComposition = (vc.mutableCopy() as? AVMutableVideoComposition) ?? vc
-        if scopesEnabled { Task { try? await Task.sleep(for: .milliseconds(120)); sampleScopes() } }
+        if scopesEnabled { sampleScopesWhenReady(redraw: false) }
     }
 
     func seek(to seconds: Double) {
@@ -171,5 +199,19 @@ final class PlayerController: ObservableObject {
         pause()
         let rate = max(1, fps)
         seek(to: max(0, (currentTime * rate).rounded() + Double(frames)) / rate)
+    }
+}
+
+/// How before/after shows the grade while it is on.
+enum CompareStyle: String, CaseIterable {
+    case split    // before left of a divider you can drag, after right of it
+    case before   // the whole picture without the grade
+    var mode: CompareMode { self == .split ? .split : .before }
+    init?(_ mode: CompareMode) {
+        switch mode {
+        case .off: return nil
+        case .split: self = .split
+        case .before: self = .before
+        }
     }
 }

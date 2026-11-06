@@ -251,7 +251,9 @@ It is hosted on Vercel with the project's root directory set to `web`. Vercel bu
 is no workflow for it. Asset paths start at `/`, so host it at the root of a domain, not under a sub-path. The
 Download button looks up the newest release's DMG through the GitHub API: publishing a release updates it. Page views go
 to [Vercel Web Analytics](https://vercel.com/docs/analytics) (`<Analytics />` in `web/src/app/layout.tsx`); it sends
-nothing in development, and it needs Analytics turned on in the Vercel project.
+nothing in development, and it needs Analytics turned on in the Vercel project. The SEO tags, `robots.txt`, `sitemap.xml`,
+the share images (`opengraph-image.jpg`, `twitter-image.jpg`) and the icons come from `web/src/app`; their absolute URLs use
+the Vercel project's production domain at build time (`web/src/app/site.ts`), so a custom domain applies on the next deploy.
 
 ### Releases
 

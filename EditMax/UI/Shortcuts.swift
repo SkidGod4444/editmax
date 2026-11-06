@@ -55,8 +55,9 @@ struct EditorActions {
 
     func addMarker() { _ = x.addMarker(at: player.currentTime, name: nil, colorHex: nil) }
 
-    /// A 0.5 s cross dissolve into each selected clip (or a longer one if it already has a transition).
-    func addTransition() { for id in state.selectedClipIDs { _ = try? x.setTransition(id.uuidString, kind: "crossDissolve", duration: nil) } }
+    /// A 0.5 s cross dissolve into each selected clip. A clip that already has a transition keeps it (kind and length):
+    /// pressing ⌘T again must never silently swap a push for a dissolve, and an unchanged clip records no history.
+    func addTransition() { for id in state.selectedClipIDs { _ = try? x.setTransition(id.uuidString, kind: nil, duration: nil) } }
 
     func setIn() { state.inPoint = player.currentTime; if let o = state.outPoint, o <= player.currentTime { state.outPoint = nil } }
     func setOut() { state.outPoint = player.currentTime; if let i = state.inPoint, i >= player.currentTime { state.inPoint = nil } }

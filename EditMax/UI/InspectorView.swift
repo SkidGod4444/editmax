@@ -1239,7 +1239,7 @@ struct ProjectInspector: View {
             ForEach(p.markers) { m in
                 HStack(spacing: 8) {
                     Circle().fill(Color(hex: m.colorHex)).frame(width: 8, height: 8)
-                    TextField("Name", text: Binding(get: { m.name }, set: { v in document.apply("Rename marker", origin: .user, coalesce: true) { p in if let i = p.markers.firstIndex(where: { $0.id == m.id }) { p.markers[i].name = v } } })).textFieldStyle(.plain).font(.system(size: 13))
+                    MarkerNameField(marker: m, document: document)
                     Text(Timecode.string(m.time)).inspectorSecondary().monospacedDigit()
                     Button { player.pause(); player.seek(to: m.time) } label: { Image(systemName: "arrow.right.to.line").inspectorHitTarget() }.buttonStyle(.borderless).focusable(false).help("Go to marker").pointer().uiFrame("inspector.marker.\(m.id.short).go")
                     Button { document.apply("Remove marker", origin: .user) { p in p.markers.removeAll { $0.id == m.id } } } label: { Image(systemName: "trash").inspectorHitTarget() }.buttonStyle(.borderless).focusable(false).help("Remove marker").pointer().uiFrame("inspector.marker.\(m.id.short).remove")
@@ -1361,4 +1361,32 @@ private struct StabilizeRow: View {
         Task { @MainActor in _ = try? await ToolExecutor(document: document, origin: .user).stabilizeClip(clip.id.uuidString, strength: nil, remove: true) }
     }
     private func cancel() { task?.cancel(); task = nil; progress = nil }
+}
+
+/// A marker's name, renamed when the user presses Return or leaves the field (as Finder renames a file), not on every
+/// keystroke. Live renaming wrote the field's old text back after ⌘Z (a focused field does not show the undone name),
+/// which recorded a new rename and threw away redo; clicking into the field also recorded an empty rename.
+private struct MarkerNameField: View {
+    let marker: Marker
+    let document: EditMaxDocument
+    @State private var draft = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        TextField("Name", text: $draft)
+            .textFieldStyle(.plain).font(.system(size: 13))
+            .focused($focused)
+            .onAppear { draft = marker.name }
+            // Undo, redo or the agent renamed it: the field follows the project, so leaving it changes nothing.
+            .onChange(of: marker.name) { _, name in draft = name }
+            .onSubmit(commit)
+            .onChange(of: focused) { _, now in if !now { commit() } }
+            .uiFrame("inspector.marker.\(marker.id.short).name")
+    }
+
+    private func commit() {
+        let id = marker.id, name = draft
+        guard name != marker.name else { return }
+        document.apply("Rename marker", origin: .user) { p in if let i = p.markers.firstIndex(where: { $0.id == id }) { p.markers[i].name = name } }
+    }
 }

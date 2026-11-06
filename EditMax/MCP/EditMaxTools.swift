@@ -239,8 +239,23 @@ enum EditMaxTools {
     private static func payload<T: Codable>(_ v: T) throws -> Payload { Payload(text: try encodeText(v), value: try? Value(v)) }
     private static func message(_ s: String) -> Payload { Payload(text: s, value: .object(["message": .string(s)])) }
 
+    /// The argument names a tool declares, from its schema; nil for a tool that is not in the catalog.
+    static func argumentNames(of tool: String) -> Set<String>? {
+        guard let t = tools.first(where: { $0.name == tool }), case .object(let schema) = t.inputSchema,
+              case .object(let props)? = schema["properties"] else { return nil }
+        return Set(props.keys)
+    }
+
     @MainActor
     static func call(_ name: String, _ a: [String: Value]) async throws -> Payload {
+        // A misspelt or misremembered argument must fail loudly: silently ignored, `remove_texts {texts: […]}` answered
+        // "Removed 0" and the agent carried on believing it had worked.
+        if let known = argumentNames(of: name) {
+            let unknown = a.keys.filter { !known.contains($0) }.sorted()
+            if !unknown.isEmpty {
+                throw MCPError.invalidParams("\(name) does not take \(unknown.map { "'\($0)'" }.joined(separator: ", ")); its arguments are \(known.sorted().joined(separator: ", "))")
+            }
+        }
         let s = { (k: String) -> String? in a[k]?.stringValue }
         let d = { (k: String) -> Double? in a[k]?.doubleValue ?? a[k]?.intValue.map(Double.init) }
         let i = { (k: String) -> Int? in a[k]?.intValue ?? a[k]?.doubleValue.map { Int($0) } }

@@ -83,3 +83,29 @@ final class DocumentHistoryTests: XCTestCase {
         XCTAssertNotNil(doc.project.transcripts?["k"], "analysis caches are not part of the edit history")
     }
 }
+
+/// The interaction log's measurements: drag lateness and near misses are pure functions a test can feed.
+@MainActor
+final class InteractionLogTests: XCTestCase {
+    func testDragTimingMeasuresLatenessAndGaps() {
+        var t = DragTiming(start: 10)
+        t.moved(at: 10.02, now: 10.021)   // on time
+        t.moved(at: 10.04, now: 10.30)    // delivered 260 ms late: the main thread was blocked
+        t.moved(at: 10.50, now: 10.501)   // a 460 ms pause between moves
+        XCTAssertEqual(t.updates, 3)
+        XCTAssertEqual(t.maxLate, 0.26, accuracy: 0.001)
+        XCTAssertEqual(t.maxGap, 0.46, accuracy: 0.001)
+    }
+
+    func testNearestRegisteredElementWithinReach() {
+        let reg = UIRegistry.shared
+        reg.set("test.divider", CGRect(x: 100, y: 0, width: 32, height: 300))
+        reg.set("test.far", CGRect(x: 900, y: 0, width: 32, height: 300))
+        defer { reg.remove("test.divider"); reg.remove("test.far") }
+        let n = reg.nearest(to: CGPoint(x: 90, y: 150), within: 24)
+        XCTAssertEqual(n?.id, "test.divider")
+        XCTAssertEqual(n!.distance, 10, accuracy: 0.001)
+        XCTAssertNil(reg.nearest(to: CGPoint(x: 60, y: 150), within: 24), "40 points away is not a near miss")
+        XCTAssertEqual(reg.nearest(to: CGPoint(x: 110, y: 150), within: 24)?.distance, 0, "inside counts as distance 0")
+    }
+}

@@ -108,7 +108,8 @@ app>`; the tool is in `LaunchServices.framework/Support/`).
 
 `MCPService` listens on `127.0.0.1` only (`mcpPort`, default 19790) and requires `Authorization: Bearer <token>`; the
 token is generated once and written with the port to `~/Library/Application Support/EditMax/mcp.json`. The transport is
-the MCP Swift SDK's stateless HTTP transport, so any number of clients can share it.
+the MCP Swift SDK's stateless HTTP transport, so any number of clients can share it. A call with an argument name the
+tool does not declare is rejected with the list of names it takes; nothing is silently ignored.
 
 The `ui_*` tools work the window itself. Views register with `.uiFrame("area.name")` (`UIDriver.swift`); frames are
 converted through AppKit into window points, so controls inside split views and sheets are addressable. `ui_click` and
@@ -176,7 +177,10 @@ failed agent start, protocol error), is rolled back to the previous or the bundl
 ## Logs and diagnostics
 
 `~/Library/Application Support/EditMax/logs/editmax.log` is the session as JSON lines: every interaction (`ui-click`
-with the element id, `ui-drag`, `ui-key`, `ui-menu`, `ui-typing` as a burst marker that never holds the characters),
+with the element id, or `near` and `distance` when the click hit no registered element but one was within 24 points;
+`ui-drag` with `ms`, `updates`, `maxLateMs` (how late the latest move was delivered, so a control lagging behind the
+mouse shows as a number), `maxGapMs`, `playing` and `laggy`; `ui-hang` whenever the main thread stops answering for
+150 ms, one line per episode with its worst delay; `ui-key`, `ui-menu`, `ui-typing` as a burst marker that never holds the characters),
 every edit (label, origin, project), every MCP call (arguments capped at 500 characters with free text replaced by its
 length; transcript tools log only lengths), `chat-send`/`chat-stop` (backend and length only), and engine events.
 Events the driver posted carry `synthetic: true`. Prompts and keys are never written; secrets are redacted at write

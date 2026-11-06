@@ -30,7 +30,9 @@ final class PlayerController: ObservableObject {
             guard let self else { return }
             self.currentTime = t.seconds.isFinite ? t.seconds : 0
             if self.scopesEnabled { self.sampleScopes() }
-            if self.player.timeControlStatus != .playing, self.isPlaying { self.isPlaying = false; self.rate = 0 }
+            // Keep the flag true while AVPlayer is still "waiting to play" right after play(): that is playback starting,
+            // not playback ending. Only a paused player ends it (the item's end pauses, see actionAtItemEnd).
+            if self.player.timeControlStatus == .paused, self.isPlaying { self.isPlaying = false; self.rate = 0 }
             if self.rate < 0, self.currentTime <= 0.001 { self.pause() }
         }
         player.actionAtItemEnd = .pause
@@ -129,8 +131,20 @@ final class PlayerController: ObservableObject {
         player.rate = dir * speed; rate = dir * speed; isPlaying = true
     }
     /// Before/after view (see `CompareMode`); the divider position is a fraction of the frame width.
-    @Published var compareMode: CompareMode = .off { didSet { CompareState.shared.mode = compareMode; redraw() } }
-    @Published var compareSplit: Double = 0.5 { didSet { CompareState.shared.split = compareSplit; redraw() } }
+    @Published var compareMode: CompareMode = .off { didSet { CompareState.shared.mode = compareMode; redrawIfPaused() } }
+    @Published var compareSplit: Double = 0.5 { didSet { CompareState.shared.split = compareSplit; redrawIfPaused() } }
+
+    /// The compositor reads the compare state on every frame, so while the video plays the next frame already shows the
+    /// new divider; swapping the video composition then (the paused-frame trick below) only stalls the pipeline and made
+    /// the divider lag behind the mouse. Paused, one redraw per run-loop turn is enough for any number of drag updates.
+    private var redrawScheduled = false
+    /// The player's own word: running or waiting to run, as opposed to the published flag the UI binds to.
+    var isRunning: Bool { player.timeControlStatus != .paused }
+    private func redrawIfPaused() {
+        guard !isRunning, !redrawScheduled else { return }
+        redrawScheduled = true
+        DispatchQueue.main.async { [weak self] in guard let self else { return }; self.redrawScheduled = false; self.redraw() }
+    }
     func cycleCompare() { compareMode = compareMode == .off ? .split : compareMode == .split ? .before : .off }
 
     /// Re-render the frame on screen while paused (a compositor setting changed, not the composition).

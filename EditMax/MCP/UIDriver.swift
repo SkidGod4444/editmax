@@ -20,12 +20,26 @@ final class UIRegistry {
     func element(at point: CGPoint) -> String? {
         frames.filter { $0.value.contains(point) }.min { $0.value.width * $0.value.height < $1.value.width * $1.value.height }?.key
     }
+    /// The registered element closest to a point that hit nothing, when it is within `within` points: the log's record
+    /// of a near miss ("hit nothing, 9 pt from preview.compareDivider" is how a hard-to-grab control shows up).
+    func nearest(to point: CGPoint, within: CGFloat) -> (id: String, distance: CGFloat)? {
+        var best: (String, CGFloat)?
+        for (id, f) in frames {
+            let dx = max(f.minX - point.x, 0, point.x - f.maxX), dy = max(f.minY - point.y, 0, point.y - f.maxY)
+            let d = hypot(dx, dy)
+            if d <= within, d < (best?.1 ?? .infinity) { best = (id, d) }
+        }
+        return best.map { (id: $0.0, distance: $0.1) }
+    }
     /// Views that react to a click through a SwiftUI gesture (bars select on tap, media rows append on double-click),
     /// keyed by id then click count; and the window's key handler. Used like `dragHandlers`.
     private(set) var tapHandlers: [String: [Int: () -> Void]] = [:]
     var keyHandler: ((NSEvent) -> Bool)?
     /// The player time of each open document, for inspect_timeline.
     var playheads: [UUID: () -> Double?] = [:]
+    /// Whether each open document's player is running, for the interaction log's `playing` field.
+    var playing: [UUID: () -> Bool] = [:]
+    var anyPlaying: Bool { playing.values.contains { $0() } }
     /// Modifier keys the driver pretends are held while it calls a handler directly (⇧ for multi-select, ⌥ for free drags).
     var modifiers: NSEvent.ModifierFlags?
     var currentModifiers: NSEvent.ModifierFlags { modifiers ?? NSEvent.modifierFlags }
@@ -369,6 +383,7 @@ enum UIDriver {
 
     private static func post(_ type: NSEvent.EventType, at p: CGPoint, in w: NSWindow, clickCount: Int = 1) {
         guard let content = w.contentView else { return }
+        InteractionLog.syntheticUntil = Date().addingTimeInterval(1)
         // Registry frames have a top-left origin; NSEvent wants the window's bottom-left origin.
         let loc = NSPoint(x: p.x, y: content.bounds.height - p.y)
         eventNumber += 1

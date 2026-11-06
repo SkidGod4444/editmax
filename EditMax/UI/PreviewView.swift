@@ -216,6 +216,8 @@ struct TransportBar: View {
 struct CompareOverlay: View {
     @ObservedObject var player: PlayerController
     let aspect: Double
+    /// The split when the drag began: the divider follows the mouse's travel, so grabbing it off-centre never makes it jump.
+    @State private var dragStart: Double?
     var body: some View {
         GeometryReader { geo in
             let full = geo.size
@@ -224,17 +226,28 @@ struct CompareOverlay: View {
             ZStack(alignment: .topLeading) {
                 if player.compareMode == .split {
                     let x = rect.minX + rect.width * player.compareSplit
+                    // The line sits exactly on the split; the handle and its hit strip stop short of the picture's edges so
+                    // the divider can always be grabbed again, even when it has been pushed all the way to one side.
+                    let grip: CGFloat = 16
+                    let hx = min(max(x, rect.minX + grip), rect.maxX - grip)
                     tag("BEFORE").position(x: rect.minX + 34, y: rect.minY + 14)
                     tag("AFTER").position(x: rect.maxX - 30, y: rect.minY + 14)
+                    Rectangle().fill(.white).frame(width: 2, height: rect.height).position(x: x, y: rect.midY).allowsHitTesting(false)
                     ZStack {
-                        Rectangle().fill(.white.opacity(0.001)).frame(width: 24)
-                        Rectangle().fill(.white).frame(width: 2)
+                        Rectangle().fill(.white.opacity(0.001)).frame(width: grip * 2)
                         Circle().fill(.white).frame(width: 14, height: 14).overlay(Image(systemName: "arrow.left.and.right").font(.system(size: 7, weight: .bold)).foregroundStyle(.black))
                     }
-                    .frame(width: 24, height: rect.height)
+                    .frame(width: grip * 2, height: rect.height)
+                    .contentShape(Rectangle())
                     .pointer().uiFrame("preview.compareDivider")
-                    .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("compare")).onChanged { g in player.compareSplit = (g.location.x - rect.minX) / max(1, rect.width) })
-                    .position(x: x, y: rect.midY)
+                    .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("compare"))
+                        .onChanged { g in
+                            let from = dragStart ?? player.compareSplit
+                            if dragStart == nil { dragStart = from }
+                            player.compareSplit = min(1, max(0, from + g.translation.width / max(1, rect.width)))
+                        }
+                        .onEnded { _ in dragStart = nil })
+                    .position(x: hx, y: rect.midY)
                 } else {
                     tag("BEFORE").position(x: rect.minX + 34, y: rect.minY + 14)
                 }

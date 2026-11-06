@@ -145,3 +145,22 @@ final class TextLayoutTests: XCTestCase {
         XCTAssertEqual(Set(TextLayout.laneRows([a, c]).values), [0], "nothing concurrent, nothing stacked")
     }
 }
+
+/// The MCP layer itself: a wrong argument name is an error, never a silent no-op.
+final class ToolCatalogTests: XCTestCase {
+    func testUnknownArgumentsAreRejectedWithTheRealNames() async {
+        do {
+            _ = try await EditMaxTools.call("remove_texts", ["texts": .array([.string("abc")])])
+            XCTFail("expected an error")
+        } catch {
+            let m = "\(error)"
+            XCTAssertTrue(m.contains("'texts'"), m)
+            XCTAssertTrue(m.contains("ids"), m)
+        }
+    }
+
+    func testEveryToolDeclaresItsArguments() {
+        for t in EditMaxTools.tools { XCTAssertNotNil(EditMaxTools.argumentNames(of: t.name), t.name) }
+        XCTAssertEqual(EditMaxTools.argumentNames(of: "remove_texts"), ["ids", "project"])
+    }
+}

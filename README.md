@@ -63,19 +63,18 @@ no backend, nothing leaves your Mac unless you ask a cloud model.
 
 ## Install
 
-EditMax runs on macOS 15 or later on Apple silicon (Intel Macs are untested). Liquid Glass and on-device SpeechAnalyzer captions need
-macOS 26; everything else works on 15.
+EditMax runs on macOS 15 or later on Apple silicon. Liquid Glass and on-device SpeechAnalyzer captions need macOS 26;
+everything else works on 15. Intel Macs are not supported: the bundled agent runtime is built for Apple silicon only.
 
-1. Download `EditMax-<version>.dmg` from the [latest release](https://github.com/SkidGod4444/editmax/releases/latest)
-   and drag EditMax to Applications.
-2. The app is not notarized yet, so macOS refuses to open it the first time. Open **System Settings > Privacy &
-   Security**, scroll down and click **Open Anyway** next to EditMax, or run once:
+1. Download `EditMax-<version>.dmg` from the [latest release](https://github.com/SkidGod4444/editmax/releases/latest).
+2. Open it and drag EditMax to Applications.
 
-   ```sh
-   xattr -dr com.apple.quarantine /Applications/EditMax.app
-   ```
+Releases are signed with a Developer ID and notarized by Apple, so EditMax opens like any other app. If a release's
+notes say it is not notarized, open it once, then click **Open Anyway** in **System Settings > Privacy & Security**,
+or run `xattr -dr com.apple.quarantine /Applications/EditMax.app`.
 
-Every release also ships a zip and a `SHA256SUMS` file. Prefer building it yourself? Two commands, see [Build](#build).
+Every release also ships a zip and a `SHA256SUMS` file (`shasum -a 256 -c SHA256SUMS` checks the download). Prefer
+building it yourself? See [Build](#build).
 
 ## First edit
 
@@ -123,7 +122,9 @@ that agent's own login, so there is nothing to sign up for. The agent sees only 
 commands and questions back to you are refused by policy, and every change it makes is a version you can restore.
 
 Prefer an API key? Switch the chat header to **API key**, pick a provider (Claude, OpenAI, Google Gemini, xAI Grok,
-or the Claude Agent SDK) and paste a key. Keys live in your login keychain.
+or the Claude Agent SDK) and paste a key. Keys live in your login keychain. The Claude Agent SDK always runs on your
+Anthropic API key, never on a Claude subscription login; to use your subscription, chat through the agent runtime
+with Claude Code instead.
 
 The **Focus** layout (⌥⌘F) hides everything but the player and the chat, for directing while you watch.
 
@@ -233,6 +234,34 @@ The Swift suite covers the timeline model, the document's history, the shared to
 clip (import, frame render, nest, export). Both suites run on every push and pull request through GitHub Actions.
 The five tests that render video skip on GitHub's runners, whose video path is unreliable, and run on every Mac: a
 green badge covers the model, history, tool validation and import, so run the suite on a Mac before a release.
+
+### Website
+
+The site is a static Next.js export in `web/`:
+
+```sh
+cd web && bun install
+bun run dev     # http://localhost:3000
+bun run build   # the static site, in web/out
+```
+
+It is hosted on Vercel with the project's root directory set to `web`. Vercel builds every push to `main`, so there
+is no workflow for it. Asset paths start at `/`, so host it at the root of a domain, not under a sub-path. The
+Download button looks up the newest release's DMG through the GitHub API: publishing a release updates it.
+
+### Releases
+
+```sh
+scripts/release.sh 0.2.0
+```
+
+stamps the version into `project.yml`, commits, tags `v0.2.0` and pushes. The tag starts
+[the release workflow](.github/workflows/release.yml), which runs `scripts/package.sh` (a Release build with the
+hardened runtime, packaged as a DMG and a zip with `SHA256SUMS`) and publishes them as a GitHub release. Signing and
+notarization switch on once the repository has the `MACOS_CERT_P12`, `MACOS_CERT_PASSWORD`, `APPLE_ID`,
+`APPLE_TEAM_ID` and `APPLE_APP_PASSWORD` secrets; without them the build is signed ad hoc and its release notes say
+how to open it. On a Mac, `SIGN_IDENTITY="Developer ID Application: …" NOTARY_PROFILE=<profile> scripts/package.sh`
+does the same into `build/release/` without publishing.
 
 ### Going deeper
 

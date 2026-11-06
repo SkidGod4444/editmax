@@ -1,0 +1,140 @@
+<!doctype html>
+<!-- EditMax installer background (scripts/dmg/background.tiff): the DMG window is an editor timeline.
+     The fonts load from web/node_modules (run `bun install` in web/ first). 660x340 CSS px, rendered headless at 2x.
+     From the repo root, re-render with:
+       agent-browser --session dmg-bg set viewport 660 340 2
+       agent-browser --session dmg-bg open "file://$PWD/scripts/dmg/src/index.html"
+       agent-browser --session dmg-bg screenshot /tmp/background@2x.png
+       agent-browser --session dmg-bg close
+       sips -z 340 660 /tmp/background@2x.png --out /tmp/background.png
+       tiffutil -cathidpicheck /tmp/background.png /tmp/background@2x.png -out scripts/dmg/background.tiff
+     If the layout changes, change icon_locations in scripts/dmg/settings.py to match.
+     Finder draws the icons and names on top: EditMax.app at (170,150), Applications at (490,150), 128 px icons,
+     13 pt names. The two clips are flat #757575 where the names land (about x 124-216 / 444-536, y 212-236), so
+     black (Light mode) and white (Dark mode) names both read. All clip detail stays on the edges: rim, trim handles,
+     the sky "selected" stripe on top, and a filmstrip band along the bottom (y 241-252). -->
+<html><head><meta charset="utf-8"><title>timeline</title>
+<style>
+@font-face{font-family:"Geist Mono";src:url("../../../web/node_modules/geist/dist/fonts/geist-mono/GeistMono-Variable.woff2") format("woff2");font-weight:100 900}
+html,body{margin:0;width:660px;height:340px;overflow:hidden;background:#000}
+.art{position:relative;width:660px;height:340px;overflow:hidden;background:#000}
+/* One overhead studio light, white with a faint blue at its source (as on the website hero). */
+.light{position:absolute;inset:0;background:
+  radial-gradient(20% 34% at 50% 0%, rgb(90 155 240 / .20), transparent 70%),
+  radial-gradient(50% 62% at 50% 0%, rgb(255 255 255 / .11), transparent 72%),
+  radial-gradient(85% 85% at 50% 0%, rgb(255 255 255 / .04), transparent 80%)}
+svg{position:absolute;inset:0}
+/* Timecode chip, centred over the playhead at x=92.5. */
+.tc{position:absolute;left:92.5px;top:12px;transform:translateX(-50%);height:18px;padding:0 9px 0 calc(9px + .16em);
+  border-radius:10px;background:rgb(255 255 255 / .07);box-shadow:inset 0 0 0 1px rgb(255 255 255 / .17);
+  font:500 10.5px/18px "Geist Mono";letter-spacing:.16em;color:rgb(255 255 255 / .84);white-space:nowrap}
+</style></head>
+<body><div class="art">
+<div class="light"></div>
+<svg width="660" height="340" viewBox="0 0 660 340">
+  <defs>
+    <linearGradient id="ph" gradientUnits="userSpaceOnUse" x1="0" y1="56" x2="0" y2="330">
+      <stop offset="0" stop-color="#5a9bf0" stop-opacity=".95"/>
+      <stop offset=".55" stop-color="#5a9bf0" stop-opacity=".85"/>
+      <stop offset="1" stop-color="#5a9bf0" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="arrow" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#fff" stop-opacity=".08"/><stop offset="1" stop-color="#fff" stop-opacity=".7"/>
+    </linearGradient>
+    <clipPath id="clipA"><rect x="92" y="209" width="156" height="45" rx="6"/></clipPath>
+    <clipPath id="clipB"><rect x="412" y="209" width="156" height="45" rx="6"/></clipPath>
+  </defs>
+
+  <!-- Ruler: time 0 sits under the playhead at the left edge of the EditMax clip; a tall tick every 5 frames -->
+  <g shape-rendering="crispEdges">
+    <rect x="92" y="56" width="521" height="1" fill="rgb(255 255 255 / .16)"/>
+    <g id="ticks"></g>
+  </g>
+
+  <!-- Tracks -->
+  <g shape-rendering="crispEdges">
+    <rect x="0" y="206" width="660" height="52" fill="rgb(255 255 255 / .028)"/>
+    <rect x="0" y="206" width="660" height="1" fill="rgb(255 255 255 / .07)"/>
+    <rect x="0" y="257" width="660" height="1" fill="rgb(255 255 255 / .07)"/>
+    <rect x="0" y="266" width="660" height="52" fill="rgb(255 255 255 / .022)"/>
+    <rect x="0" y="266" width="660" height="1" fill="rgb(255 255 255 / .06)"/>
+    <rect x="0" y="317" width="660" height="1" fill="rgb(255 255 255 / .06)"/>
+  </g>
+  <text x="18" y="235" font-family="Geist Mono" font-size="9" font-weight="500" letter-spacing=".08em" fill="rgb(255 255 255 / .42)">V1</text>
+  <text x="18" y="295" font-family="Geist Mono" font-size="9" font-weight="500" letter-spacing=".08em" fill="rgb(255 255 255 / .42)">A1</text>
+
+  <!-- V1, clip under "EditMax" (selected: sky stripe on its top edge) -->
+  <g>
+    <rect x="92" y="209" width="156" height="45" rx="6" fill="#757575"/>
+    <g clip-path="url(#clipA)" shape-rendering="crispEdges"><g class="film" data-x="92"></g></g>
+    <rect x="92.5" y="209.5" width="155" height="44" rx="5.5" fill="none" stroke="#575757"/>
+    <g clip-path="url(#clipA)" shape-rendering="crispEdges">
+      <rect x="92" y="209" width="156" height="2" fill="#5a9bf0"/>
+    </g>
+    <!-- trim handles -->
+    <rect x="97" y="217" width="2" height="16" rx="1" fill="rgb(0 0 0 / .30)"/><rect x="99" y="217" width="1" height="16" fill="rgb(255 255 255 / .14)" shape-rendering="crispEdges"/>
+    <rect x="241" y="217" width="2" height="16" rx="1" fill="rgb(0 0 0 / .30)"/><rect x="240" y="217" width="1" height="16" fill="rgb(255 255 255 / .14)" shape-rendering="crispEdges"/>
+  </g>
+
+  <!-- the slot the clip is headed for -->
+  <rect x="262.5" y="209.5" width="135" height="44" rx="5.5" fill="none" stroke="rgb(255 255 255 / .18)" stroke-dasharray="3 4"/>
+
+  <!-- V1, clip under "Applications" -->
+  <g>
+    <rect x="412" y="209" width="156" height="45" rx="6" fill="#757575"/>
+    <g clip-path="url(#clipB)" shape-rendering="crispEdges">
+      <g class="film" data-x="412"></g>
+      <rect x="412" y="210" width="156" height="1" fill="rgb(255 255 255 / .24)"/>
+    </g>
+    <rect x="412.5" y="209.5" width="155" height="44" rx="5.5" fill="none" stroke="#575757"/>
+    <rect x="417" y="217" width="2" height="16" rx="1" fill="rgb(0 0 0 / .30)"/><rect x="419" y="217" width="1" height="16" fill="rgb(255 255 255 / .14)" shape-rendering="crispEdges"/>
+    <rect x="561" y="217" width="2" height="16" rx="1" fill="rgb(0 0 0 / .30)"/><rect x="560" y="217" width="1" height="16" fill="rgb(255 255 255 / .14)" shape-rendering="crispEdges"/>
+  </g>
+
+  <!-- A1: the EditMax clip's audio, a faint waveform, no text -->
+  <rect x="92.5" y="269.5" width="155" height="45" rx="5.5" fill="rgb(255 255 255 / .035)" stroke="rgb(255 255 255 / .09)"/>
+  <g id="wave" fill="rgb(255 255 255 / .22)" shape-rendering="crispEdges"></g>
+
+  <!-- The gesture: a travel arrow from the app to Applications, the instruction right under it -->
+  <rect x="254" y="149.25" width="144" height="1.5" rx=".75" fill="url(#arrow)"/>
+  <path d="M398 144 l7 6 l-7 6" fill="none" stroke="rgb(255 255 255 / .8)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="331" y="173" text-anchor="middle" font-family="Geist Mono" font-size="9.5" font-weight="500" letter-spacing=".2em" fill="rgb(255 255 255 / .55)">DRAG TO APPLICATIONS</text>
+
+  <!-- Playhead, parked at 00:00:00:00: the head on the ruler, one sky line down through V1 and A1 that fades out -->
+  <rect x="92" y="56" width="1" height="274" fill="url(#ph)" shape-rendering="crispEdges"/>
+  <path d="M86 41 h13 v9 l-6.5 6.5 l-6.5 -6.5 z" fill="#5a9bf0"/>
+</svg>
+<div class="tc">00:00:00:00</div>
+</div>
+<script>
+const ns = "http://www.w3.org/2000/svg";
+function bar(g, x, y, w, h, fill) {
+  const r = document.createElementNS(ns, "rect");
+  r.setAttribute("x", x); r.setAttribute("y", y); r.setAttribute("width", w); r.setAttribute("height", h);
+  if (fill) r.setAttribute("fill", fill);
+  g.appendChild(r);
+}
+// Ruler ticks: one every 8 px from time 0 (x=92) to x=612, a tall one every 40 px. All 1 px wide.
+const t = document.getElementById("ticks");
+for (let x = 92; x <= 612; x += 8) {
+  const major = (x - 92) % 40 === 0;
+  bar(t, x, major ? 47 : 51, 1, major ? 9 : 5, major ? "rgb(255 255 255 / .34)" : "rgb(255 255 255 / .16)");
+}
+// Filmstrip along the bottom edge of each video clip (below the name zone): a darker band split into frames.
+for (const f of document.querySelectorAll(".film")) {
+  const x0 = +f.dataset.x;
+  bar(f, x0, 241, 156, 13, "rgb(0 0 0 / .13)");
+  bar(f, x0, 241, 156, 1, "rgb(0 0 0 / .22)");
+  for (let x = x0 + 26; x < x0 + 156; x += 26) bar(f, x, 242, 1, 12, "rgb(0 0 0 / .22)");
+}
+// Waveform: 1 px bars every 3 px inside the audio clip, mirrored about y=292. Deterministic, so renders repeat.
+const w = document.getElementById("wave");
+for (let x = 99; x <= 240; x += 3) {
+  const u = (x - 99) / 141;
+  const env = 0.25 + 0.75 * Math.sin(Math.PI * u) ** 0.7;
+  const a = env * (0.45 + 0.35 * Math.abs(Math.sin(x * 0.37)) + 0.2 * Math.abs(Math.sin(x * 1.91)));
+  const h = Math.max(2, Math.round(a * 17));
+  bar(w, x, 292 - h, 1, 2 * h);
+}
+</script>
+</body></html>

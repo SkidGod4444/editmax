@@ -263,6 +263,10 @@ notarization switch on once the repository has the `MACOS_CERT_P12`, `MACOS_CERT
 how to open it. On a Mac, `SIGN_IDENTITY="Developer ID Application: …" NOTARY_PROFILE=<profile> scripts/package.sh`
 does the same into `build/release/` without publishing.
 
+The installer window (a timeline with the app and Applications as two clips) is laid out by
+[dmgbuild](https://github.com/dmgbuild/dmgbuild) from `scripts/dmg/settings.py`; its art is `scripts/dmg/src/index.html`.
+The `installer-designer` agent in `.claude/agents/` makes new looks and previews them before anything changes.
+
 ### Going deeper
 
 [docs/INTERNALS.md](docs/INTERNALS.md) covers the architecture, the engine's rules, the file format, the UI driver,

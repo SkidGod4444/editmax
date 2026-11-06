@@ -31,6 +31,7 @@ cp project.yml "$OUT/project.yml.bak"; cp EditMax/Resources/Info.plist "$OUT/Inf
 trap 'mv "$OUT/project.yml.bak" project.yml; mv "$OUT/Info.plist.bak" EditMax/Resources/Info.plist' EXIT
 sed -i '' -E "s/(CFBundleShortVersionString: )\"[^\"]+\"/\1\"$VERSION\"/; s/(CFBundleVersion: )\"[^\"]+\"/\1\"$BUILD\"/" project.yml
 command -v xcodegen >/dev/null || brew install xcodegen
+command -v uvx >/dev/null || brew install uv
 # xcodegen refuses to generate unless both Vendor/ directories exist, so the bundled binaries come first.
 scripts/vendor-codemax.sh
 scripts/vendor-agent.sh
@@ -78,10 +79,10 @@ if [ -n "$NOTARIZE" ]; then
   xcrun stapler staple "$APP"
 fi
 
-STAGE="$OUT/stage"; mkdir -p "$STAGE"; cp -R "$APP" "$STAGE/"; ln -s /Applications "$STAGE/Applications"; cp LICENSE "$STAGE/LICENSE.txt"
 DMG="$OUT/EditMax-$VERSION.dmg"
-hdiutil create -volname "EditMax" -srcfolder "$STAGE" -ov -format UDZO -quiet "$DMG"
-rm -rf "$STAGE"
+# The DMG window (background, icon layout, volume icon; the app and an Applications link) is laid out by dmgbuild
+# from scripts/dmg/settings.py. The licenses are inside the app, in Contents/Resources/Licenses.
+uvx --from dmgbuild==1.6.7 dmgbuild -s scripts/dmg/settings.py -D app="$APP" "EditMax" "$DMG"
 if [ "$IDENTITY" != "-" ]; then codesign --force --timestamp --sign "$IDENTITY" "$DMG"; fi
 if [ -n "$NOTARIZE" ]; then
   notarize "$DMG"; xcrun stapler staple "$DMG"

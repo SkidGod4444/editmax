@@ -387,7 +387,7 @@ enum TitleAnimator {
         if p <= 0 { return .empty() }
         switch kind {
         case .typewriter:
-            let k = Int((p * Double(tx.count)).rounded(.down))
+            let k = Int((p * Double(tx.count) - 1e-9).rounded(.up))   // a letter appears as its share of the time starts, so the last one is on before the animation ends
             var out = CIImage.empty()
             for line in tx.lines where k > line.start {
                 let x = k >= line.end ? line.band.maxX : (line.edges[max(0, min(line.edges.count - 1, k - line.start - 1))])

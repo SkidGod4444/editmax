@@ -1,6 +1,8 @@
 # Effects, compositing and HDR
 
-Notes for the README and docs/INTERNALS.md. Each feature has a user paragraph (README style) and an engine paragraph (INTERNALS style). All new settings are off by default and decode with defaults, so projects saved before these features render exactly as they did.
+How EditMax's effects, compositing and HDR output work. Each feature has a user paragraph and an engine paragraph.
+The [README](../README.md) has the overview; [INTERNALS](INTERNALS.md) the engine's rules. Every setting here is off by
+default and decodes with a default, so projects saved before these features render exactly as they did.
 
 ## Green-screen key
 

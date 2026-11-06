@@ -1,6 +1,8 @@
-# Editing features: notes for README and INTERNALS
+# Editing: trims, split edits, media, scenes, the source viewer and slow motion
 
-Each feature below has two paragraphs. **README** is for users. **INTERNALS** is for whoever changes the code. Existing projects play exactly as before: every new field decodes with a default of off. `Project.currentFormat` is unchanged.
+How EditMax's editing tools work. Each feature has two paragraphs: **README** for users, **INTERNALS** for whoever
+changes the code. The [README](../README.md) has the overview; [INTERNALS](INTERNALS.md) the engine's rules. Projects
+saved before these tools play exactly as before: every field here decodes with a default of off.
 
 ## Roll, slip and slide trims
 

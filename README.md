@@ -54,14 +54,15 @@ no backend, nothing leaves your Mac unless you ask a cloud model.
 
 | | |
 |---|---|
-| **Timeline** | Video and audio tracks, ripple insert and delete across every track, snapping, markers, in/out points, multi-select, frame thumbnails and waveforms, proxies for smooth playback |
-| **Picture** | Transform, crop, five-point tone curve, vibrance, exposure, temperature and tint, six built-in looks or any `.cube` LUT, input LUTs for log footage, fades, cross dissolves, dips and wipes, scopes and before/after |
-| **Motion** | Keyframes on every transform, color, opacity, volume and speed value with linear, smooth and hold easing; speed ramps with freeze frames; auto-reframe for vertical cuts; stabilization |
-| **Sound** | Three-band EQ, high-pass, noise gate, voice isolation, auto-ducking of music under speech, volume envelopes |
+| **Timeline** | Video and audio tracks, ripple insert and delete across every track, roll, slip and slide trims, J and L cuts, a source viewer with insert, overwrite and fit-to-fill edits, match frame, scene cut detection, snapping, markers, in/out points, frame thumbnails and waveforms, proxies, relink and consolidate media |
+| **Color** | Exposure, temperature and tint, tone curve, lift/gamma/gain/offset wheels, custom RGB and hue-vs-saturation curves, grade layers with shape, color and AI subject masks, shot match, six built-in looks or any `.cube` LUT, input LUTs for log footage, waveform, RGB parade, vectorscope and histogram, before/after |
+| **Effects** | Green-screen key, 19 blend modes, face blur that follows faces, film grain, glow, vignette, sharpen and noise reduction, animated titles and lower thirds, dissolves, dips, wipes, push, slide, zoom, iris and blur transitions |
+| **Motion** | Keyframes on every transform, color, opacity, volume and speed value with linear, smooth and hold easing; speed ramps with freeze frames; smooth slow motion (frame blending or optical flow); auto-reframe for vertical cuts; stabilization |
+| **Sound** | Three-band EQ, high-pass, noise gate, compressor, true-peak limiter, de-esser, hum removal, voice isolation, loudness measurement and normalization (−14 LUFS for YouTube in one step), audio crossfades, a mixer with pan, solo, buses and a master limiter, auto-ducking of music under speech |
 | **Speech** | On-device transcription, captions in six styles, remove silence and filler words, search and cut by the words that were spoken |
 | **Structure** | Multicam clips synced by audio, nested sequences, templates for every social format, batch export to several formats at once |
-| **Delivery** | H.264 MP4, 10-bit HEVC and ProRes masters, FCPXML and EDL to hand the cut to DaVinci Resolve or Final Cut Pro, YouTube chapters from markers |
-| **Agents** | 63 MCP tools covering all of the above plus the window itself; an in-app chat with a policy that allows only editor tools |
+| **Delivery** | H.264 MP4, 10-bit HEVC and ProRes masters in SDR or HDR (HLG, PQ), FCPXML and EDL to hand the cut to DaVinci Resolve or Final Cut Pro, YouTube chapters from markers |
+| **Agents** | 105 MCP tools covering all of the above plus the window itself; an in-app chat with a policy that allows only editor tools |
 
 ## Install
 
@@ -156,11 +157,13 @@ full id or the first eight characters of an id.
 | Area | Tools |
 |---|---|
 | Inspect | `list_projects`, `inspect_timeline`, `list_assets`, `list_history`, `capture_frame`, `frame_stats`, `inspect_sequence` |
-| Cut | `import_media`, `insert_clip`, `split_clip`, `move_clip`, `trim_clip`, `remove_clips`, `close_gaps`, `ripple_delete`, `add_track`, `move_track`, `set_playhead` |
-| Picture | `set_clip_transform`, `set_clip_color`, `set_clip_fades`, `set_transition`, `set_keyframe`, `remove_keyframe`, `auto_reframe`, `stabilize_clip` |
-| Sound | `set_clip_properties`, `set_clip_audio`, `set_ducking` |
+| Cut | `import_media`, `insert_clip`, `split_clip`, `move_clip`, `trim_clip`, `remove_clips`, `close_gaps`, `ripple_delete`, `add_track`, `move_track`, `set_playhead`, `roll_edit`, `slip_clip`, `slide_clip`, `set_split_edit`, `insert_edit`, `overwrite_edit`, `match_frame`, `detect_scenes`, `relink_media`, `consolidate_media` |
+| Picture | `set_clip_transform`, `set_clip_fades`, `set_transition`, `set_keyframe`, `remove_keyframe`, `auto_reframe`, `stabilize_clip`, `set_smooth_slow_motion` |
+| Color | `set_clip_color`, `set_color_wheels`, `set_color_curve`, `add_grade_layer`, `update_grade_layer`, `remove_grade_layer`, `move_grade_layer`, `set_layer_mask`, `capture_matte`, `match_color`, `capture_scopes`, `set_project_color` |
+| Effects | `set_chroma_key`, `key_matte`, `set_blend_mode`, `blur_faces`, `blur_region`, `set_clip_finish` |
+| Sound | `set_clip_properties`, `set_clip_audio`, `set_clip_compressor`, `set_clip_limiter`, `set_clip_deesser`, `set_clip_hum_removal`, `set_clip_mix`, `set_audio_crossfade`, `set_track_mix`, `set_bus`, `set_master`, `inspect_mix`, `measure_loudness`, `normalize_loudness`, `set_ducking` |
 | Speech | `get_transcript`, `search_transcript`, `cut_transcript`, `add_captions`, `remove_captions`, `detect_silence`, `remove_silence`, `remove_words` |
-| Text and markers | `add_text`, `remove_texts`, `add_marker`, `remove_marker` |
+| Text and markers | `add_text`, `add_lower_third`, `set_text_animation`, `remove_texts`, `add_marker`, `remove_marker` |
 | Structure | `nest_clips`, `unnest_clip`, `make_multicam`, `cut_angle`, `set_multicam`, `sync_angles`, `make_proxies`, `list_templates`, `apply_template`, `save_template`, `set_project_settings` |
 | Deliver | `export_video`, `export_timeline`, `export_chapters`, `export_batch` |
 | Safety | `restore_snapshot` |
@@ -182,11 +185,31 @@ saturation, temperature, tint and the tone curve, then a creative look last, ble
 waveform and histogram button on the preview) and before/after (⌥⌘B: split with a draggable divider, whole picture,
 off) help you judge. Sources are decoded in 16-bit, so 10-bit footage keeps its precision through a LUT.
 
+**Grading deeper.** The color wheels (lift, gamma, gain, offset) and curves (master, R, G, B, hue vs saturation) come
+after the basic controls. Grade layers stack further grades on a clip, each limited by a mask: a shape, a color range,
+or the person or subject that Apple's on-device model finds in each frame. Shot match grades a clip to look like
+another. The scopes add an RGB parade and a vectorscope. Finishing (grain, glow, vignette, sharpen, noise reduction)
+comes last. Details: [docs/color.md](docs/color.md).
+
+**Effects.** A green-screen key with spill suppression, blend modes for layering, face blur that follows every face,
+title animations (fade, slide, pop, typewriter, word by word, wipe) and lower thirds, and more transitions. A project
+can also output HDR (HLG or PQ in Rec.2020); SDR stays the default. Details: [docs/effects.md](docs/effects.md).
+
+**Trimming.** Pick Roll (R), Slip (Y) or Slide (U) in the timeline's tool picker, or Select (A) to go back. A J or L cut
+lets a clip's sound start before or run on after its picture. The source viewer (⌥⌘S) shows a file before it is on the
+timeline: mark in and out, then insert (,) or overwrite (.), with fit to fill when four points are set; F finds the
+frame under the playhead in its source. Scene detection splits a long video at its cuts. A moved file shows as
+missing and can be relinked from a folder; Consolidate copies everything a project uses into one folder. Smooth slow
+motion fills in frames for clips slower than 1×. Details: [docs/editing.md](docs/editing.md).
+
 **Keyframes.** The diamond next to a slider adds a keyframe at the playhead; once a value is animated, dragging the
 slider writes a keyframe. Speed keyframes make a speed ramp; 0× is a freeze frame.
 
 **Sound.** The EQ, high-pass and gate shape a clip; voice isolation renders Apple's on-device model over it once.
-Ducking (Project inspector) drops a music track under another track's clips with attack and release.
+The compressor, de-esser, hum removal and a true-peak limiter follow. Ducking (Project inspector) drops a music track
+under another track's clips with attack and release. The mixer (toolbar) has each track's fader, pan, mute and solo,
+buses, and the master with its limiter; Normalize measures the mix (ITU-R BS.1770) and sets it to −14 LUFS for YouTube,
+−16 for Apple and podcasts or −23 for broadcast. Details: [docs/audio.md](docs/audio.md).
 
 **Cleanup, then captions.** Remove silence listens to every audible clip, so a pause in the speech survives where
 music runs underneath; mute a track deliberately if you want it ignored. Remove filler words uses the transcript's
@@ -304,13 +327,20 @@ The `installer-designer` agent in `.claude/agents/` makes new looks and previews
 
 [docs/INTERNALS.md](docs/INTERNALS.md) covers the architecture, the engine's rules, the file format, the UI driver,
 the chat backends, the session log, the UI conventions and the gotchas: read it before changing the code.
+[Color](docs/color.md), [audio](docs/audio.md), [editing](docs/editing.md) and [effects](docs/effects.md) each have
+a page on how their tools work and where their limits are.
 
 ## Limits
 
-- Media is referenced by path, not copied into the project; a file you move or rename has to be imported again.
-- Timeline export carries the edit, not EditMax's processing (grades, looks, styles, EQ, isolation, ducking,
-  stabilization); chapters are a sidecar text file, not an embedded track.
-- SDR only: no HDR transfer tags, no color management.
+- Media is referenced by path, not copied into the project; a file you move or rename shows as missing until you
+  relink it (or consolidate the project's media into one folder first).
+- Timeline export carries the edit, not EditMax's processing (grades, wheels and layers, looks, effects, styles and
+  animations, EQ and dynamics, the mixer, isolation, ducking, stabilization, J and L cuts); chapters are a sidecar text
+  file, not an embedded track.
+- HDR projects preview tone-mapped to SDR (no EDR preview yet), and grades and keys clip HDR highlights above SDR white.
+  ProRes HDR masters carry the HLG/PQ tags but no mastering-display metadata.
+- Bus compressors and the master limiter run on each track before AVFoundation sums them, not on the true sum; gains
+  are exact.
 - The in-app agent chat needs an agent installed on the Mac (Claude Code, Codex, OpenCode, Cursor, Grok or
   Antigravity) or an API key.
 

@@ -1,8 +1,8 @@
 # Color: wheels, curves, scopes, shot match, finishing, grade layers, masks
 
-Notes for the README and docs/INTERNALS.md. Each section has a user paragraph (README style) and an internals
-paragraph. Every new setting is optional and decodes as "off", so existing projects open and render exactly as
-before; `Project.currentFormat` is unchanged.
+How EditMax's color tools work, for users and for whoever changes the code: each section has a user paragraph and an
+internals paragraph. The [README](../README.md) has the overview; [INTERNALS](INTERNALS.md) the engine's rules. Every
+setting here is optional and decodes as "off", so projects saved before these tools open and render exactly as before.
 
 Order of everything color does to a clip, after its transform (`ColorPipeline.apply`, Engine/GradeStack.swift):
 input LUT → exposure → contrast/saturation → temperature/tint → shadows/midtones/highlights → vibrance → **wheels →

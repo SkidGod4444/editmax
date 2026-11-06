@@ -15,7 +15,7 @@ function Count({ to, suffix = "" }: { to: number; suffix?: string }) {
 }
 
 const stats = [
-  { n: 63, label: "MCP tools your agent can call" },
+  { n: 105, label: "MCP tools your agent can call" },
   { n: 6, label: "built-in looks, or any .cube LUT" },
   { n: 6, label: "caption styles from the words spoken" },
   { n: 100, suffix: "%", label: "on-device transcription" },

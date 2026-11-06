@@ -1,8 +1,9 @@
 # Audio: dynamics, loudness, cleanup, crossfades and the mixer
 
-All of it runs in the one `MTAudioProcessingTap` per clip span that the EQ already used (`Engine/AudioTap.swift`), so the
-preview, every export and the loudness meter hear the same sound. Every new setting is off by default and decodes with
-a default, so old projects play exactly as before. `Project.currentFormat` is unchanged.
+How EditMax's audio tools work, for users and for whoever changes the code. The [README](../README.md) has the overview;
+[INTERNALS](INTERNALS.md) the engine's rules. All of it runs in the one `MTAudioProcessingTap` per clip span that the EQ
+already used (`Engine/AudioTap.swift`), so the preview, every export and the loudness meter hear the same sound. Every
+setting is off by default and decodes with a default, so old projects play exactly as before.
 
 ## The signal chain
 
@@ -240,9 +241,9 @@ reports that no sound is transferred.
   (`BlankVideo`) and isolated-voice files into `AVURLAsset`s that nothing kept. `AVMutableComposition` does not retain
   its sources, so a reader started after the build could fail when they were freed. `Output.sources` now holds every
   asset the composition reads from, and `Loudness.render` keeps the output alive while it reads
-  (`withExtendedLifetime`). `testRenderingTheSameProjectRepeatedlyNeverFails` reads ten times in a row.
-  `ExportService` and the player were not changed; holding `out` with `withExtendedLifetime(out)` around their
-  reads would close the same gap there.
+  (`withExtendedLifetime`). `testRenderingTheSameProjectRepeatedlyNeverFails` reads ten times in a row. Every other
+  one-off render (both export paths, `renderFrame`, shot match) now holds its `Output` the same way, and the player
+  keeps its last one in `PlayerController.lastOutput`.
 - **Transition tails had no EQ.** The part of an outgoing clip that plays under a transition was outside every tap span,
   so it lost its EQ, gate and isolation for the length of the transition. That is unchanged here, to keep the existing
   sound. The tail now gets its own span with the clip's dynamics, gain and pan only, so a compressed or limited clip

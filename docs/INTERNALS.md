@@ -55,18 +55,30 @@ EditMax's own compositor (`Compositor.swift`, Core Image on the GPU) draws every
 overlap; the outgoing clip plays on underneath a transition, so it needs media past its out point (`set_transition`
 reports when it does not).
 
-Order of operations per clip: input (conversion) LUT at full strength → exposure, contrast, saturation, temperature,
-tint, tone curve, vibrance → creative look (built-in or `.cube`, blended by mix) → transform → fades and transitions.
-Sources are decoded to 16-bit half floats (`kCVPixelFormatType_64RGBAHalf`), so 10-bit footage keeps its precision
-through the LUT. There is no color management: an ungraded frame exports with the source's pixel values.
+Order of operations per clip: effects on the oriented source (face blur, then the green-screen key) → crop,
+stabilization, transform → input (conversion) LUT at full strength → exposure, contrast, saturation, temperature,
+tint, tone curve, vibrance → color wheels and curves → creative look (built-in or `.cube`, blended by mix) → grade
+layers with their masks → finishing (noise reduction, sharpen, glow, vignette, grain) → opacity, fades and
+transitions → blend mode onto the tracks below (`ColorPipeline.apply`, `Effects.composite`). Sources are decoded to
+16-bit half floats (`kCVPixelFormatType_64RGBAHalf`), so 10-bit footage keeps its precision through the LUT. SDR
+projects have no color management: an ungraded frame exports with the source's pixel values. HDR projects (HLG or
+PQ, `set_project_color`) swap in HDR compositors (`ColorManagement.configure`); see [effects.md](effects.md#hdr).
+
+Every feature added after the first release has its own page with the user view, the engine's design and its limits:
+[color.md](color.md), [audio.md](audio.md), [editing.md](editing.md), [effects.md](effects.md). Read the page before
+changing the feature. The rule they all keep: every new field decodes as "off", so a project saved before a feature
+renders exactly as before (checked by rendering one project on the old and new code and comparing every pixel).
 
 Keyframes: every transform, color, opacity, volume and speed value can be animated (linear, smooth, hold). Speed
 keyframes are a speed ramp (0× = freeze); the clip's media use is the exact integral of the ramp, played as short
 constant-rate pieces. A multicam clip is expanded into one piece per cut (`Clip.multicamPieces`) so ramps, keyframes,
 transitions and fades keep working on it.
 
-Audio: per-clip three-band EQ (200 Hz / 1 kHz / 6 kHz), high-pass and noise gate run through an
-`MTAudioProcessingTap` (`AudioTap.swift`), attached only when a clip asks for it. Clip volume is one envelope per
+Audio: per-clip three-band EQ (200 Hz / 1 kHz / 6 kHz), high-pass, hum notches and noise gate, then de-esser,
+compressor, gain, pan and limiter, then the track's strip (fader, pan, bus, master), all run through one
+`MTAudioProcessingTap` per composition track (`AudioTap.swift`, `AudioMixPlan.attachTaps`), attached only when a clip
+or the mixer asks for it. J/L-cut sounds go on lanes of their own (`SplitEditAudio`), one owner track per lane, with
+that track's strip. Clip volume is one envelope per
 clip (keyframes × fades × transition crossfade × ducking) emitted as back-to-back ramps. Voice isolation renders
 Apple's on-device `AUSoundIsolation` over the asset once (cached in `Application Support/EditMax/isolated/`).
 
@@ -75,8 +87,8 @@ through `AVAssetReader` + `AVAssetWriter` with `EditMaxCompositor10` (64RGBAHalf
 Rec.709 tags. HEVC Main 10: 4:2:0, `hvc1`, about 0.25 bits per pixel per frame, AAC sound, MP4. ProRes: `apch`, `apcn`
 or `ap4h` (10-bit 4:2:2, 12-bit 4:4:4 for 4444) at Apple's own rates, no compression properties (VideoToolbox
 refuses a bitrate for ProRes), 24-bit 48 kHz stereo PCM, QuickTime `.mov`. The container follows the preset:
-`exportVideo` and `BatchExport` set the extension from `Preset.fileExtension`. Limits: SDR only (no HLG/PQ tags),
-proxies are 8-bit, and untagged 8-bit sources can shift by up to 2 levels on saturated colors versus an 8-bit decode.
+`exportVideo` and `BatchExport` set the extension from `Preset.fileExtension`. HDR projects write Rec.2020 HLG or PQ
+masters (PQ HEVC also carries mastering-display and light-level metadata; ProRes does not). Limits: proxies are 8-bit, and untagged 8-bit sources can shift by up to 2 levels on saturated colors versus an 8-bit decode.
 
 Timeline export (`Interchange.swift`, `export_timeline`) writes an edit list, never pixels:
 - FCPXML 1.10. The bottom video track is the primary storyline (gaps for holes, a `transition` that starts at the cut
@@ -118,7 +130,8 @@ with a shared group id. One renderer draws preview, export and `capture_frame`.
 
 ## File format
 
-Projects are `.emx` (JSON; the older `.editmax` extension still opens). `formatVersion` is 2; files without it are
+Projects are `.emx` (JSON; the older `.editmax` extension still opens). `formatVersion` is 2 (unchanged by the color,
+audio, editing and effects features, whose fields all decode with defaults); files without it are
 format 1, whose renderer drew tint the wrong way round, so on open every tint value, keyframe and history snapshot is
 negated and the picture is unchanged. Every model field decodes with a default, so old files always open. Assets are
 referenced by path plus a security-scoped bookmark, not copied.
@@ -274,9 +287,16 @@ replace the hash with one from `security find-identity -v -p codesigning`, or wi
 ## Tests and CI
 
 `EditMaxTests/` runs inside the app (`TEST_HOST`), so it sees the real model, engine and executor; the app skips its
-splash, Home, MCP server and updater under XCTest. Four engine tests render the fixture; they skip on CI (`CI` in the
-environment) because GitHub's macOS VMs render intermittently (-12780 inside a composition while a probe of the same
-render succeeds), and run on every developer Mac. `.github/workflows/test.yml` runs the Swift suite on `macos-26` with the newest Xcode on the runner
+splash, Home, MCP server and updater under XCTest, and runs as an accessory app (no Dock icon, no menu bar item), so a
+test run does not put extra EditMax windows on screen. The rendering tests skip on CI (`CI` in the environment) and
+run on every developer Mac.
+
+Random -11800 / -12780 render failures were a real bug, not the machine: an `AVAssetTrack` does not retain its
+`AVAsset`, and `AVMutableComposition` does not retain the assets it reads from, so an asset freed after
+`insertTimeRange` (the base black movie, an isolated-voice file, a J/L-cut source) made a later read fail at random.
+`CompositionBuilder.Output.sources` now holds every asset the composition reads; any one-off render must keep its
+`Output` alive while it reads (`defer { withExtendedLifetime(out) {} }`), and the player keeps its last one.
+`BlankVideo` is written to a temporary file and moved into place, so two builds never read a half-written movie. `.github/workflows/test.yml` runs the Swift suite on `macos-26` with the newest Xcode on the runner
 and the Bun suite on Ubuntu. CI has no runtime source, so `scripts/vendor-codemax.sh` writes a stub when
 `EDITMAX_STUB_VENDOR=1`.
 

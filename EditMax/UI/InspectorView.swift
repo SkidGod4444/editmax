@@ -1,6 +1,7 @@
 import SwiftUI
 import UniformTypeIdentifiers
 import AppKit
+import AVFoundation
 
 // MARK: - Inspector styling primitives
 // One visual system for every page of the right-hand panel: titled cards of rows with 1 px hairlines between them,
@@ -150,7 +151,99 @@ struct InspectorEmptyState: View {
     }
 }
 
+/// Plain-English text for an error shown in the inspector or the mixer. The engine's errors are written for the agents
+/// that call the same tools ("Invalid: nothing to measure: …", tool and parameter names); a person reading the inspector
+/// gets a sentence instead. Every catch in the inspector and the mixer turns its error into text here.
+enum InspectorMessage {
+    /// What the failed action was about, when that changes the right words.
+    enum Scope { case general, clip }
+
+    static func text(_ error: Error, scope: Scope = .general) -> String {
+        let raw: String
+        if let e = error as? EditError {
+            switch e {
+            case .invalid(let s): raw = s
+            case .notFound(let s): raw = "Could not find " + s
+            }
+        } else if error is CancellationError {
+            raw = "Stopped"
+        } else {
+            raw = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
+        return sentence(raw, scope: scope)
+    }
+
+    /// Engine phrases that read like code or name a framework, and what they mean for the person.
+    private static func phrases(_ scope: Scope) -> [(String, String)] {
+        [("nothing to measure: no clip with sound on an unmuted track",
+          scope == .clip ? "This clip has no sound to measure" : "There is no sound to measure: no clip with sound plays on an unmuted track"),
+         ("cannot read the mixed sound", "Could not read the sound to measure it"),
+         ("reading the mixed sound failed", "Could not read the sound to measure it"),
+         ("the sound is silent (below −70 LUFS everywhere): nothing to normalize", "The sound is silent, so there is nothing to normalize"),
+         ("AVFoundation hands its processing one channel and spreads it to both speakers afterwards, so it cannot be panned", "it plays in both speakers and cannot be panned"),
+         ("; give frequency 50 or 60", ". Choose 50 Hz or 60 Hz instead")]
+    }
+
+    /// Tidies an engine message into a sentence: no "Invalid:" prefix, no hint naming a tool, a capital and a full stop.
+    static func sentence(_ raw: String, scope: Scope = .general) -> String {
+        var t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        // A wrapped error repeats the engine's prefixes ("Transcription failed: Invalid: …").
+        t = t.replacingOccurrences(of: "Invalid: ", with: "").replacingOccurrences(of: "Not found: ", with: "could not find ")
+        for (code, words) in phrases(scope) { t = t.replacingOccurrences(of: code, with: words) }
+        // Hints for agents name a tool or parameter in brackets: "remove it first (set_transition kind none)".
+        t = t.replacingOccurrences(of: #"\s*\([^()]*(?<![\w.'"])[a-z]+_[a-z_]+(?![\w.'"])[^()]*\)"#, with: "", options: .regularExpression)
+        guard let first = t.first else { return "Something went wrong." }
+        t = first.uppercased() + t.dropFirst()
+        if let last = t.last, !".!?…".contains(last) { t += "." }
+        return t
+    }
+}
+
+/// The inspector's slider. `neutral` is the resting value of a setting that runs both ways from it (pan, a gain in dB,
+/// a J or L cut's lead): on macOS 26 the track fills from there instead of from the left end and a tick marks it, and a
+/// drag that comes within 1 % of the range of it lands exactly on it, so "unchanged" is easy to see and to hit.
+struct InspectorSlider: View {
+    let value: Double
+    let range: ClosedRange<Double>
+    var neutral: Double? = nil
+    let set: (Double) -> Void
+
+    var body: some View {
+        let binding = Binding(get: { min(range.upperBound, max(range.lowerBound, value)) }, set: { v in set(Self.snapped(v, to: neutral, in: range)) })
+        if #available(macOS 26.0, *), let neutral, range.lowerBound < neutral, neutral < range.upperBound {
+            Slider(value: binding, in: range, neutralValue: neutral, label: { EmptyView() }, ticks: { SliderTick(neutral) })
+        } else {
+            Slider(value: binding, in: range)
+        }
+    }
+
+    /// `v`, or the neutral value when `v` is within 1 % of the range of it.
+    static func snapped(_ v: Double, to neutral: Double?, in range: ClosedRange<Double>) -> Double {
+        guard let neutral, abs(v - neutral) < (range.upperBound - range.lowerBound) * 0.01 else { return v }
+        return neutral
+    }
+
+    /// Zero, for a slider whose range runs both ways from zero and whose reset is zero (a gain, an offset, a pan); nil
+    /// for one that fills from its left end (a level, an amount, a length).
+    static func neutral(range: ClosedRange<Double>, reset: Double) -> Double? {
+        range.lowerBound < 0 && range.upperBound > 0 && reset == 0 ? 0 : nil
+    }
+}
+
+extension InspectorStyle {
+    /// The smallest click target in the panel: icon buttons get at least this much room around their glyph.
+    static let hitTarget: CGFloat = 22
+}
+
 extension View {
+    /// An icon button's label made at least `InspectorStyle.hitTarget` square and clickable all over, so a 10 pt glyph is
+    /// not a 10 pt target.
+    func inspectorHitTarget() -> some View {
+        frame(minWidth: InspectorStyle.hitTarget, minHeight: InspectorStyle.hitTarget).contentShape(Rectangle())
+    }
+    /// Dims a control that cannot be used. A mini switch that is off draws the same enabled or disabled, so without this
+    /// a disabled one reads as available.
+    func inspectorDisabledLook(_ disabled: Bool) -> some View { opacity(disabled ? 0.4 : 1) }
     /// The fixed label column of a slider row.
     func inspectorLabel() -> some View {
         font(.system(size: 13)).lineLimit(1).minimumScaleFactor(0.8).frame(width: InspectorStyle.labelWidth, alignment: .leading)
@@ -249,14 +342,14 @@ struct InspectorView: View {
     @State private var exportNote: String?
     private var logs: some View {
         let config = MCPService.configDirectory.appendingPathComponent("mcp.json").path
-        return InspectorCard("Diagnostics", footer: "editmax.log records the agent runtime, the updater and the MCP server; codemax-protocol.log every line exchanged with codemax, secrets removed. Export packs both with codemax's own debug log.") {
+        return InspectorCard("Diagnostics", footer: "The logs record the agent runtime, the updater and the MCP server, and every line exchanged with the agent runtime, secrets removed. Export packs them with the runtime's own debug log.") {
             HStack(spacing: 8) {
                 Button("Export diagnostics…") {
                     do {
                         let zip = try DebugLog.exportDiagnostics(versions: ["editmax": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "", "codemax-bundled": installer.status.bundledVersion ?? "", "codemax-installed": installer.status.installedPath ?? "", "editmax-agent": CodemaxRunner.bundledBinary(.agent)?.path ?? "missing"])
                         exportNote = "Saved to \(zip.lastPathComponent) on the Desktop."
                         NSWorkspace.shared.activateFileViewerSelecting([zip])
-                    } catch { exportNote = "Export failed: \(error.localizedDescription)" }
+                    } catch { exportNote = "Export failed: " + InspectorMessage.text(error) }
                 }.controlSize(.small).pointer().uiFrame("agents.exportDiagnostics")
                 Button("Reveal logs") { DebugLog.reveal() }.controlSize(.small).pointer().uiFrame("agents.revealLogs")
                 Spacer(minLength: 0)
@@ -421,6 +514,58 @@ struct InspectorView: View {
     }
 }
 
+/// Whether the file a clip plays its sound from has a sound track. The project only records a file's kind, and a video
+/// file may have no sound (a screen recording, a drone shot), so the file is read once and the answer cached by path.
+@MainActor
+enum ClipSound {
+    enum Presence: Equatable {
+        /// Not read yet, or the file is missing or unreadable: the sound cards stay, so nothing set on them is hidden.
+        case unknown
+        case none, some
+    }
+    private static var cache: [String: Presence] = [:]
+
+    /// The answer without reading the file: known kinds, or an earlier read.
+    static func cached(_ clip: Clip, in project: Project) -> Presence {
+        guard let a = IsolatedAudio.audioAsset(of: clip, in: project) else { return .unknown }
+        switch a.kind {
+        case .image: return .none
+        case .audio: return .some
+        case .video, .sequence: return cache[a.path] ?? .unknown
+        }
+    }
+
+    /// Reads the file when the kind does not tell.
+    static func probe(_ clip: Clip, in project: Project) async -> Presence {
+        let known = cached(clip, in: project)
+        guard known == .unknown, let a = IsolatedAudio.audioAsset(of: clip, in: project), FileManager.default.fileExists(atPath: a.path) else { return known }
+        guard let tracks = try? await AVURLAsset(url: a.url).loadTracks(withMediaType: .audio) else { return .unknown }
+        let p: Presence = tracks.isEmpty ? .none : .some
+        cache[a.path] = p
+        return p
+    }
+}
+
+/// Which of the clip inspector's cards apply to a clip, from its track and what its file holds. A picture without sound
+/// gets no sound cards (volume, EQ, dynamics, gain and pan, loudness, transcript, J/L cut), only its fades; sound alone
+/// on an audio track gets no picture transition (its crossfade card is the sound's own).
+struct ClipCards: Equatable {
+    var picture = false      // transform, color, wheels, curves, look, grade layers, finishing, green screen, blend, face blur
+    var sound = false        // audio (volume and fades), EQ and cleanup, compressor … gain and pan, transcript
+    var fadesOnly = false    // fades without volume, for a picture with no sound
+    var transition = false   // the picture transition in
+    var splitEdit = false    // the J/L cut
+
+    init(track: TrackKind, asset: AssetKind?, sound presence: ClipSound.Presence) {
+        let hasSound = asset != .image && presence != .none
+        picture = track == .video
+        sound = hasSound
+        fadesOnly = !hasSound && track == .video
+        transition = track == .video
+        splitEdit = track == .video && asset == .video && hasSound
+    }
+}
+
 struct ClipInspector: View {
     @ObservedObject var document: EditMaxDocument
     @EnvironmentObject var state: EditorState
@@ -433,12 +578,21 @@ struct ClipInspector: View {
     @State private var transitionNote: String?
     @State private var reframing = false
     @State private var reframeNote: String?
+    /// The read of the sound file, with the path it was for (the inspector is reused when another clip is selected).
+    @State private var probed: (path: String, presence: ClipSound.Presence)?
+
+    private var soundPath: String { IsolatedAudio.audioAsset(of: clip, in: document.project)?.path ?? "" }
+    private var sound: ClipSound.Presence {
+        if let probed, probed.path == soundPath { return probed.presence }
+        return ClipSound.cached(clip, in: document.project)
+    }
 
     /// Slider drags make one undo step.
     private var x: ToolExecutor { ToolExecutor(document: document, origin: .user, coalesce: true) }
     private var asset: Asset? { document.project.asset(clip.assetID) }
 
     var body: some View {
+        let cards = ClipCards(track: track.kind, asset: asset?.kind, sound: sound)
         RevealScroller { ScrollView {
             VStack(alignment: .leading, spacing: InspectorStyle.gap) {
                 headerCard.revealAnchor(.header)
@@ -446,8 +600,8 @@ struct ClipInspector: View {
                 if let seq = document.project.sequence(of: clip) { sequenceCard(seq) }
                 if let mc = clip.multicam { multicamCard(mc).revealAnchor(.multicam) }
                 speedCard.revealAnchor(.speed)
-                if let asset, asset.kind == .video || asset.kind == .audio { TranscriptSection(document: document, clip: clip) }
-                if track.kind == .video {
+                if cards.sound, let asset, asset.kind == .video || asset.kind == .audio { TranscriptSection(document: document, clip: clip) }
+                if cards.picture {
                     transformCard.revealAnchor(.transform)
                     colorCard.revealAnchor(.color)
                     ColorWheelsCard(document: document, clip: clip).revealAnchor(.wheels)   // UI/ColorWheelsSection.swift
@@ -456,11 +610,15 @@ struct ClipInspector: View {
                     ColorStackSections(document: document, clip: clip)   // shot match, grade layers, finishing (UI/ColorStackSections.swift)
                     ClipEffectsSection(document: document, clip: clip)   // green screen, blend, face blur (EffectsInspector.swift)
                 }
-                audioCard.revealAnchor(.audio)
-                eqCard.revealAnchor(.eq)
-                ClipAudioSections(document: document, clip: clip, track: track)
-                transitionCard.revealAnchor(.transition)
-                EditingInspectorCards(document: document, clip: clip, track: track)   // split edit, smooth slow motion (EditingInspector.swift)
+                if cards.sound {
+                    audioCard.revealAnchor(.audio)
+                    eqCard.revealAnchor(.eq)
+                    ClipAudioSections(document: document, clip: clip, track: track)
+                } else if cards.fadesOnly {
+                    fadesCard.revealAnchor(.audio)
+                }
+                if cards.transition { transitionCard.revealAnchor(.transition) }
+                EditingInspectorCards(document: document, clip: clip, track: track, splitEdit: cards.splitEdit)   // split edit, smooth slow motion (EditingInspector.swift)
                 Text("Clip \(clip.id.short)").font(.system(size: 11)).monospacedDigit().foregroundStyle(.tertiary).textSelection(.enabled)
                     .frame(maxWidth: .infinity).padding(.top, 4)
             }
@@ -468,6 +626,12 @@ struct ClipInspector: View {
         } }
         .onAppear { nameDraft = clip.name }
         .onChange(of: clip.id) { _, _ in nameDraft = clip.name }
+        // Reads the sound file once per path; a relink or another selected clip reads again.
+        .task(id: soundPath) {
+            let path = soundPath
+            let p = await ClipSound.probe(clip, in: document.project)
+            if path == soundPath { probed = (path, p) }
+        }
     }
 
     /// Thumbnail, name and the actions that apply to the clip as a whole.
@@ -558,8 +722,8 @@ struct ClipInspector: View {
                 HStack {
                     Text("\(Timecode.string(clip.start + cut.time))  →  angle \(cut.angle + 1)").font(.system(size: 13)).monospacedDigit()
                     Spacer()
-                    Button { player.pause(); player.seek(to: clip.start + cut.time) } label: { Image(systemName: "arrow.right.to.line") }.buttonStyle(.borderless).focusable(false).help("Go to cut").pointer().uiFrame("inspector.multicam.cut.\(cut.time).go")
-                    Button { _ = try? plain.cutAngle(clip.id.uuidString, at: clip.start + cut.time, angle: 0, remove: true) } label: { Image(systemName: "trash") }.buttonStyle(.borderless).focusable(false).help("Remove cut").pointer().uiFrame("inspector.multicam.cut.\(cut.time).remove")
+                    Button { player.pause(); player.seek(to: clip.start + cut.time) } label: { Image(systemName: "arrow.right.to.line").inspectorHitTarget() }.buttonStyle(.borderless).focusable(false).help("Go to cut").pointer().uiFrame("inspector.multicam.cut.\(cut.time).go")
+                    Button { _ = try? plain.cutAngle(clip.id.uuidString, at: clip.start + cut.time, angle: 0, remove: true) } label: { Image(systemName: "trash").inspectorHitTarget() }.buttonStyle(.borderless).focusable(false).help("Remove cut").pointer().uiFrame("inspector.multicam.cut.\(cut.time).remove")
                 }
             }
             if mc.angles.count > 1 {
@@ -586,27 +750,27 @@ struct ClipInspector: View {
     private var transformCard: some View {
         let tf = clip.transform
         return InspectorCard("Transform", trailing: {
-            if !clip.transform.isIdentity { Button("Reset") { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: nil, y: nil, rotation: nil, cropLeft: nil, cropRight: nil, cropTop: nil, cropBottom: nil, reset: true) }.controlSize(.mini).pointer().uiFrame("inspector.transform.reset") }
+            if !clip.transform.isIdentity { Button("Reset") { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: nil, y: nil, rotation: nil, cropLeft: nil, cropRight: nil, cropTop: nil, cropBottom: nil, reset: true) }.controlSize(.small).pointer().uiFrame("inspector.transform.reset") }
         }) {
             slider("Scale", param: .scale, value: tf.scale, range: 0.1...4, format: { "\(Int($0 * 100))%" }, reset: 1) { try? x.setClipTransform(clip.id.uuidString, scale: $0, x: nil, y: nil, rotation: nil, cropLeft: nil, cropRight: nil, cropTop: nil, cropBottom: nil, reset: false) }
             slider("Position X", param: .x, value: tf.x, range: -1...1, format: { "\(Int($0 * 100))%" }, reset: 0) { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: $0, y: nil, rotation: nil, cropLeft: nil, cropRight: nil, cropTop: nil, cropBottom: nil, reset: false) }
             slider("Position Y", param: .y, value: tf.y, range: -1...1, format: { "\(Int($0 * 100))%" }, reset: 0) { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: nil, y: $0, rotation: nil, cropLeft: nil, cropRight: nil, cropTop: nil, cropBottom: nil, reset: false) }
             slider("Rotation", param: .rotation, value: tf.rotation, range: -180...180, format: { "\(Int($0))°" }, reset: 0) { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: nil, y: nil, rotation: $0, cropLeft: nil, cropRight: nil, cropTop: nil, cropBottom: nil, reset: false) }
-            slider("Crop left", value: tf.cropLeft, range: 0...0.9, format: { "\(Int($0 * 100))%" }, reset: 0) { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: nil, y: nil, rotation: nil, cropLeft: $0, cropRight: nil, cropTop: nil, cropBottom: nil, reset: false) }
-            slider("Crop right", value: tf.cropRight, range: 0...0.9, format: { "\(Int($0 * 100))%" }, reset: 0) { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: nil, y: nil, rotation: nil, cropLeft: nil, cropRight: $0, cropTop: nil, cropBottom: nil, reset: false) }
-            slider("Crop top", value: tf.cropTop, range: 0...0.9, format: { "\(Int($0 * 100))%" }, reset: 0) { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: nil, y: nil, rotation: nil, cropLeft: nil, cropRight: nil, cropTop: $0, cropBottom: nil, reset: false) }
-            slider("Crop bottom", value: tf.cropBottom, range: 0...0.9, format: { "\(Int($0 * 100))%" }, reset: 0) { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: nil, y: nil, rotation: nil, cropLeft: nil, cropRight: nil, cropTop: nil, cropBottom: $0, reset: false) }
+            slider("Crop left", keyColumn: true, value: tf.cropLeft, range: 0...0.9, format: { "\(Int($0 * 100))%" }, reset: 0) { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: nil, y: nil, rotation: nil, cropLeft: $0, cropRight: nil, cropTop: nil, cropBottom: nil, reset: false) }
+            slider("Crop right", keyColumn: true, value: tf.cropRight, range: 0...0.9, format: { "\(Int($0 * 100))%" }, reset: 0) { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: nil, y: nil, rotation: nil, cropLeft: nil, cropRight: $0, cropTop: nil, cropBottom: nil, reset: false) }
+            slider("Crop top", keyColumn: true, value: tf.cropTop, range: 0...0.9, format: { "\(Int($0 * 100))%" }, reset: 0) { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: nil, y: nil, rotation: nil, cropLeft: nil, cropRight: nil, cropTop: $0, cropBottom: nil, reset: false) }
+            slider("Crop bottom", keyColumn: true, value: tf.cropBottom, range: 0...0.9, format: { "\(Int($0 * 100))%" }, reset: 0) { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: nil, y: nil, rotation: nil, cropLeft: nil, cropRight: nil, cropTop: nil, cropBottom: $0, reset: false) }
             slider("Opacity", param: .opacity, value: clip.opacity, range: 0...1, format: { "\(Int($0 * 100))%" }, reset: 1) { try? x.setClipProperties(clip.id.uuidString, opacity: $0) }
             if asset?.kind == .video {
                 // Auto-reframe: cover the frame and keyframe the position so the subject stays in view (Vision person / saliency).
                 let reframe = { Task { @MainActor in
                     guard !reframing else { return }
-                    reframing = true; reframeNote = "Analysing…"
+                    reframing = true; reframeNote = "Analyzing…"
                     defer { reframing = false }
                     do {
                         let r = try await ToolExecutor(document: document, origin: .user).autoReframe(clip.id.uuidString)
                         reframeNote = "\(r.mode): \(r.keyframesX + r.keyframesY) keyframes, scale \(Int((r.scale * 100).rounded()))%" + (r.note.map { " — \($0)" } ?? "")
-                    } catch { reframeNote = error.localizedDescription }
+                    } catch { reframeNote = InspectorMessage.text(error) }
                 } }
                 HStack(spacing: 8) {
                     Button("Auto-reframe", systemImage: "person.crop.rectangle.badge.plus") { _ = reframe() }
@@ -623,7 +787,7 @@ struct ClipInspector: View {
     private var colorCard: some View {
         let c = clip.color
         return InspectorCard("Color", trailing: {
-            if !clip.color.isIdentity { Button("Reset") { try? x.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: nil, temperature: nil, tint: nil, reset: true) }.controlSize(.mini).pointer().uiFrame("inspector.color.reset") }
+            if !clip.color.isIdentity { Button("Reset") { try? x.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: nil, temperature: nil, tint: nil, reset: true) }.controlSize(.small).pointer().uiFrame("inspector.color.reset") }
         }) {
             slider("Exposure", param: .exposure, value: c.exposure, range: -2...2, format: { String(format: "%+.1f", $0) }, reset: 0) { try? x.setClipColor(clip.id.uuidString, exposure: $0, contrast: nil, saturation: nil, temperature: nil, tint: nil, reset: false) }
             slider("Contrast", param: .contrast, value: c.contrast, range: 0.5...2, format: { "\(Int($0 * 100))%" }, reset: 1) { try? x.setClipColor(clip.id.uuidString, exposure: nil, contrast: $0, saturation: nil, temperature: nil, tint: nil, reset: false) }
@@ -671,6 +835,15 @@ struct ClipInspector: View {
     private var audioCard: some View {
         InspectorCard("Audio", footer: track.kind == .video ? "Fades take the picture to black and the sound to silence." : nil) {
             slider("Volume", param: .volume, value: clip.volume, range: 0...2, format: { "\(Int($0 * 100))%" }, reset: 1) { try? x.setClipProperties(clip.id.uuidString, volume: $0) }
+            slider("Fade in", keyColumn: true, value: clip.fadeIn, range: 0...min(5, clip.duration), format: { String(format: "%.1f s", $0) }, reset: 0) { try? x.setClipFades(clip.id.uuidString, fadeIn: $0, fadeOut: nil) }
+            slider("Fade out", keyColumn: true, value: clip.fadeOut, range: 0...min(5, clip.duration), format: { String(format: "%.1f s", $0) }, reset: 0) { try? x.setClipFades(clip.id.uuidString, fadeIn: nil, fadeOut: $0) }
+        }
+    }
+
+    /// A picture with no sound: its fades still take it to black, and the line under them says why the sound cards are gone.
+    private var fadesCard: some View {
+        let why = asset?.kind == .image ? "A still image has no sound." : "\(asset?.name ?? "This file") has no sound, so there are no sound settings."
+        return InspectorCard("Fades", footer: "Fades take the picture to black. " + why) {
             slider("Fade in", value: clip.fadeIn, range: 0...min(5, clip.duration), format: { String(format: "%.1f s", $0) }, reset: 0) { try? x.setClipFades(clip.id.uuidString, fadeIn: $0, fadeOut: nil) }
             slider("Fade out", value: clip.fadeOut, range: 0...min(5, clip.duration), format: { String(format: "%.1f s", $0) }, reset: 0) { try? x.setClipFades(clip.id.uuidString, fadeIn: nil, fadeOut: $0) }
         }
@@ -679,13 +852,13 @@ struct ClipInspector: View {
     private var eqCard: some View {
         let au = clip.audio
         return InspectorCard("EQ & cleanup", footer: isolated.caption(for: IsolatedAudio.audioAsset(of: clip, in: document.project), amount: au.voiceIsolation), trailing: {
-            if clip.audio.hasCleanup || clip.audio.needsIsolation { Button("Reset") { try? x.setClipAudio(clip.id.uuidString, low: nil, mid: nil, high: nil, highPass: nil, gate: nil, reset: true) }.controlSize(.mini).pointer().uiFrame("inspector.audio.reset") }
+            if clip.audio.hasCleanup || clip.audio.needsIsolation { Button("Reset") { try? x.setClipAudio(clip.id.uuidString, low: nil, mid: nil, high: nil, highPass: nil, gate: nil, reset: true) }.controlSize(.small).pointer().uiFrame("inspector.audio.reset") }
         }) {
             slider("Low", value: au.lowGain, range: -18...18, format: { String(format: "%+.0f dB", $0) }, reset: 0) { try? x.setClipAudio(clip.id.uuidString, low: $0, mid: nil, high: nil, highPass: nil, gate: nil, reset: false) }
             slider("Mid", value: au.midGain, range: -18...18, format: { String(format: "%+.0f dB", $0) }, reset: 0) { try? x.setClipAudio(clip.id.uuidString, low: nil, mid: $0, high: nil, highPass: nil, gate: nil, reset: false) }
             slider("High", value: au.highGain, range: -18...18, format: { String(format: "%+.0f dB", $0) }, reset: 0) { try? x.setClipAudio(clip.id.uuidString, low: nil, mid: nil, high: $0, highPass: nil, gate: nil, reset: false) }
             slider("High-pass", value: au.highPass, range: 0...400, format: { $0 <= 0 ? "off" : "\(Int($0)) Hz" }, reset: 0) { try? x.setClipAudio(clip.id.uuidString, low: nil, mid: nil, high: nil, highPass: $0 < 20 ? 0 : $0, gate: nil, reset: false) }
-            slider("Noise gate", value: au.gate, range: -80...0, format: { $0 >= 0 ? "off" : "\(Int($0)) dB" }, reset: 0) { try? x.setClipAudio(clip.id.uuidString, low: nil, mid: nil, high: nil, highPass: nil, gate: $0 > -1 ? 0 : $0, reset: false) }
+            slider("Noise gate", value: Self.gateSlider(au.gate), range: Self.gateOff...(-1), format: Self.gateText, reset: Self.gateOff) { try? x.setClipAudio(clip.id.uuidString, low: nil, mid: nil, high: nil, highPass: nil, gate: Self.gateValue(fromSlider: $0), reset: false) }
             InspectorFootnote("EQ shelves at 200 Hz and 6 kHz, a 1 kHz peak. A high-pass around 80–120 Hz removes rumble; the gate drops 26 dB below its threshold.")
             slider("Voice isolation", value: au.voiceIsolation, range: 0...1, format: { $0 < 0.005 ? "off" : "\(Int(($0 * 100).rounded()))%" }, reset: 0) { try? x.setClipAudio(clip.id.uuidString, low: nil, mid: nil, high: nil, highPass: nil, gate: nil, voiceIsolation: $0, reset: false) }
         }
@@ -717,7 +890,9 @@ struct ClipInspector: View {
             if input { try x.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: nil, temperature: nil, tint: nil, reset: false, inputLut: url.path) }
             else { try x.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: nil, temperature: nil, tint: nil, reset: false, lut: url.path) }
         }
-        catch { NSAlert(error: error).runModal() }
+        catch {
+            let alert = NSAlert(); alert.messageText = "Could not load the LUT"; alert.informativeText = InspectorMessage.text(error); alert.runModal()
+        }
     }
 
     private func commitName(_ x: ToolExecutor) {
@@ -731,7 +906,9 @@ struct ClipInspector: View {
 
     /// A labeled slider with its value on the right; double-click the value to reset. With `param`, a keyframe diamond:
     /// once a parameter is animated, dragging the slider writes a keyframe at the playhead instead of the plain value.
-    private func slider(_ title: String, param: ClipParam? = nil, value: Double, range: ClosedRange<Double>, format: @escaping (Double) -> String, reset: Double, set: @escaping (Double) -> Void) -> some View {
+    /// `keyColumn` keeps the diamond's room on a row without one, so its slider lines up with the keyframed rows of the
+    /// same card (the crops under Position and Rotation, the fades under Volume).
+    private func slider(_ title: String, param: ClipParam? = nil, keyColumn: Bool = false, value: Double, range: ClosedRange<Double>, format: @escaping (Double) -> String, reset: Double, set: @escaping (Double) -> Void) -> some View {
         let x = ToolExecutor(document: document, origin: .user, coalesce: true)
         let animated = param.map(clip.isAnimated) ?? false
         let shown = (param != nil && animated) ? clip.value(param!, at: localTime) : value
@@ -750,6 +927,7 @@ struct ClipInspector: View {
                     else { _ = try? plain.setKeyframe(clip.id.uuidString, param: param.rawValue, time: player.currentTime, value: shown, ease: nil) }
                 } label: {
                     Image(systemName: onKey ? "diamond.fill" : "diamond").font(.system(size: 10)).foregroundStyle(animated ? Color.accentColor : Color.secondary)
+                        .frame(width: Self.keyColumnWidth, height: Self.keyColumnWidth).contentShape(Rectangle())
                 }
                 .buttonStyle(.borderless).focusable(false).pointer().uiFrame("inspector.key.\(param.rawValue)")
                 .help(onKey ? "Remove the keyframe at the playhead" : (animated ? "Add a keyframe at the playhead" : "Animate: add the first keyframe at the playhead"))
@@ -767,13 +945,26 @@ struct ClipInspector: View {
                         Button("Remove all \(clip.keyframes(param).count) keyframes") { _ = try? plain.removeKeyframe(clip.id.uuidString, param: param.rawValue, time: nil, all: true) }
                     }
                 }
+            } else if keyColumn {
+                Color.clear.frame(width: Self.keyColumnWidth, height: 1)
             }
-            Slider(value: .init(get: { shown }, set: apply), in: range).controlSize(.small).pointer().uiFrame("inspector.\(key).slider")
+            InspectorSlider(value: shown, range: range, neutral: InspectorSlider.neutral(range: range, reset: reset), set: apply)
+                .controlSize(.small).pointer().uiFrame("inspector.\(key).slider")
             Text(format(shown)).inspectorValue()
                 .onTapGesture(count: 2) { apply(reset) }.help("Double-click to reset").pointer()
                 .uiFrame("inspector.\(key).reset").uiTap("inspector.\(key).reset", count: 2) { apply(reset) }
         }
     }
+
+    /// The keyframe diamond's square: a click target, and the room a row without one keeps when it lines up with one.
+    static let keyColumnWidth: CGFloat = 20
+
+    /// The noise gate's slider runs from Off at the left end, like the high-pass and voice isolation beside it, to a
+    /// −1 dB threshold at the right (more gating). The project stores 0 for off and a −90…−1 dB threshold otherwise.
+    static let gateOff = -91.0
+    static func gateSlider(_ gate: Double) -> Double { gate >= 0 ? gateOff : max(gateOff + 1, min(-1, gate)) }
+    static func gateValue(fromSlider v: Double) -> Double { v < gateOff + 0.5 ? 0 : min(-1, v.rounded()) }
+    static func gateText(_ v: Double) -> String { v < gateOff + 0.5 ? "off" : "\(Int(v.rounded())) dB" }
 
     private func jumpKeyframe(_ p: ClipParam, forward: Bool) {
         let ts = clip.keyframes(p).map { clip.start + $0.time }
@@ -804,7 +995,8 @@ struct TextInspector: View {
                     if status != .ok { TextFontStatusRow(status: status) }
                     HStack(spacing: 8) {
                         Button("Apply text") { commitText() }.pointer().disabled(draft == text.text).uiFrame("inspector.text.apply")
-                        Button("Show", systemImage: "eye") { player.pause(); player.seek(to: text.start + 0.05) }.help("Move the playhead to this text").pointer().uiFrame("inspector.text.show")
+                        Button("Show", systemImage: "eye") { player.pause(); player.seek(to: Self.showTime(for: text, fps: document.project.settings.fps)) }
+                            .help("Move the playhead to where this text is fully on screen").pointer().uiFrame("inspector.text.show")
                         Button("Delete", systemImage: "trash", role: .destructive) {
                             state.selectedTextID = nil
                             document.apply("Delete text", origin: .user) { p in p.texts.removeAll { $0.id == text.id } }
@@ -873,6 +1065,23 @@ struct TextInspector: View {
         .onChange(of: text.id) { _, _ in draft = text.text }
     }
 
+    /// Where Show parks the playhead: the first frame after the in animation has finished (a typewriter title has every
+    /// letter, a pop has settled), before the out animation starts. The picture shown at a time is the frame that starts
+    /// at or before it, so one frame of margin (at least 0.05 s) keeps that frame past the animation. When the in and
+    /// out animations overlap (a short title), the moment where both are furthest along; always inside the title.
+    static func showTime(for text: TextOverlay, fps: Double) -> Double {
+        let a = text.animation ?? TextAnimation()
+        let inLen = a.inKind == .none ? 0 : max(0.01, a.inDuration)     // the lengths TitleAnimator.phases uses
+        let outLen = a.outKind == .none ? 0 : max(0.01, a.outDuration)
+        let margin = max(0.05, 1 / max(1, fps))
+        let first = text.start + inLen, last = text.end - outLen    // fully on screen between these
+        let t: Double
+        if first + margin <= last { t = first + margin }
+        else if first <= last { t = (first + last) / 2 }
+        else { t = (text.start * outLen + text.end * inLen) / (inLen + outLen) }   // in and out progress equal
+        return min(max(t, text.start), max(text.start, text.end - 0.001))
+    }
+
     private func commitText() {
         let t = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty, t != text.text else { return }
@@ -906,7 +1115,7 @@ extension ProjectInspector {
                 var status = r.ranges.isEmpty ? "Nothing to remove." : "Removed \(what), \(String(format: "%.1f", r.removedSeconds)) s. Timeline is now \(Timecode.string(r.duration))."
                 if !r.ignoredTracks.isEmpty { status += " Not listened to (muted or hidden), but cut along: \(r.ignoredTracks.joined(separator: ", "))." }
                 cleanupStatus = status
-            } catch { cleanupStatus = error.localizedDescription }
+            } catch { cleanupStatus = InspectorMessage.text(error) }
         }
     }
 
@@ -917,7 +1126,7 @@ extension ProjectInspector {
             do {
                 let r = try await ToolExecutor(document: document, origin: .user).addCaptions(clip: nil, preset: captionPreset, maxWords: nil, language: nil)
                 captionStatus = "Added \(r.count) captions to \(r.clips) clip\(r.clips == 1 ? "" : "s")."
-            } catch { captionStatus = error.localizedDescription }
+            } catch { captionStatus = InspectorMessage.text(error) }
         }
     }
 }
@@ -995,13 +1204,13 @@ struct ProjectInspector: View {
                 }.labelsHidden().pointer().uiFrame("inspector.template")
                 Spacer(minLength: 0)
                 Button("Apply") {
-                    do { let t = try x.applyTemplate(templateChoice); templateStatus = "Applied \(t.name). Undo with ⌘Z." } catch { templateStatus = error.localizedDescription }
+                    do { let t = try x.applyTemplate(templateChoice); templateStatus = "Applied \(t.name). Undo with ⌘Z." } catch { templateStatus = InspectorMessage.text(error) }
                 }.controlSize(.small).pointer().disabled(templateChoice.isEmpty).uiFrame("inspector.template.apply")
             }
             HStack(spacing: 8) {
                 TextField("Save this project as a template", text: $templateName).textFieldStyle(.roundedBorder).controlSize(.small)
                 Button("Save") {
-                    do { _ = try x.saveTemplate(templateName); templateStatus = "Saved template '\(templateName)'."; templateName = "" } catch { templateStatus = error.localizedDescription }
+                    do { _ = try x.saveTemplate(templateName); templateStatus = "Saved template '\(templateName)'."; templateName = "" } catch { templateStatus = InspectorMessage.text(error) }
                 }.controlSize(.small).pointer().disabled(templateName.trimmingCharacters(in: .whitespaces).isEmpty).uiFrame("inspector.template.save")
             }
         }
@@ -1032,8 +1241,8 @@ struct ProjectInspector: View {
                     Circle().fill(Color(hex: m.colorHex)).frame(width: 8, height: 8)
                     TextField("Name", text: Binding(get: { m.name }, set: { v in document.apply("Rename marker", origin: .user, coalesce: true) { p in if let i = p.markers.firstIndex(where: { $0.id == m.id }) { p.markers[i].name = v } } })).textFieldStyle(.plain).font(.system(size: 13))
                     Text(Timecode.string(m.time)).inspectorSecondary().monospacedDigit()
-                    Button { player.pause(); player.seek(to: m.time) } label: { Image(systemName: "arrow.right.to.line") }.buttonStyle(.borderless).focusable(false).help("Go to marker").pointer().uiFrame("inspector.marker.\(m.id.short).go")
-                    Button { document.apply("Remove marker", origin: .user) { p in p.markers.removeAll { $0.id == m.id } } } label: { Image(systemName: "trash") }.buttonStyle(.borderless).focusable(false).help("Remove marker").pointer().uiFrame("inspector.marker.\(m.id.short).remove")
+                    Button { player.pause(); player.seek(to: m.time) } label: { Image(systemName: "arrow.right.to.line").inspectorHitTarget() }.buttonStyle(.borderless).focusable(false).help("Go to marker").pointer().uiFrame("inspector.marker.\(m.id.short).go")
+                    Button { document.apply("Remove marker", origin: .user) { p in p.markers.removeAll { $0.id == m.id } } } label: { Image(systemName: "trash").inspectorHitTarget() }.buttonStyle(.borderless).focusable(false).help("Remove marker").pointer().uiFrame("inspector.marker.\(m.id.short).remove")
                 }
             }
             Button("Copy YouTube chapters", systemImage: "doc.on.doc") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(Chapters.youtubeText(p), forType: .string) }
@@ -1109,10 +1318,10 @@ private struct StabilizeRow: View {
     var body: some View {
         let busy = progress != nil
         HStack(spacing: 8) {
-            Button(clip.stabilization == nil ? "Stabilize" : "Re-analyse", systemImage: "camera.metering.center.weighted") { start() }
+            Button(clip.stabilization == nil ? "Stabilize" : "Re-analyze", systemImage: "camera.metering.center.weighted") { start() }
                 .controlSize(.small).focusable(false).pointer().disabled(busy)
                 .uiTap("inspector.stabilize") { start() }.uiFrame("inspector.stabilize")
-                .help("Smooth camera shake: analyse the clip's motion and counter-shift the picture, zooming in a little to hide the borders")
+                .help("Smooth camera shake: analyze the clip's motion and counter-shift the picture, zooming in a little to hide the borders")
             if clip.stabilization != nil {
                 Button("Remove") { remove() }.controlSize(.small).focusable(false).pointer().disabled(busy)
                     .uiTap("inspector.stabilize.remove") { remove() }.uiFrame("inspector.stabilize.remove")
@@ -1125,7 +1334,7 @@ private struct StabilizeRow: View {
     }
 
     private var status: String {
-        if let progress { return "Analysing… \(Int((progress * 100).rounded())) %" }
+        if let progress { return "Analyzing… \(Int((progress * 100).rounded())) %" }
         if let note { return note }
         if let s = document.project.hydrated(clip).stabilization { return "\(s.samples.count) samples · zoom \(Int((s.zoom * 100).rounded())) % · \(Stabilizer.cropPercent(s.zoom)) % crop · \(ProjectDiff.fmt(s.strength)) s" }
         return "Not stabilized"
@@ -1142,7 +1351,7 @@ private struct StabilizeRow: View {
                 }
                 note = r.note.map { "Done; \($0)" }
             } catch is CancellationError {
-            } catch { note = error.localizedDescription }
+            } catch { note = InspectorMessage.text(error) }
             progress = nil
         }
     }

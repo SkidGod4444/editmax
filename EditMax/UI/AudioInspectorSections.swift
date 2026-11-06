@@ -99,13 +99,13 @@ struct ClipAudioSections: View {
         return InspectorCard("Gain & pan", footer: loudness ?? (mono ? "Mono sound: it plays in both speakers and cannot be panned." : nil), trailing: {
             HStack(spacing: 6) {
                 if measuring { ProgressView().controlSize(.mini) }
-                Button("Measure") { measure() }.controlSize(.mini).pointer().disabled(measuring).uiFrame("inspector.audio.loudness.measure")
+                Button("Measure") { measure() }.controlSize(.small).fixedSize().pointer().disabled(measuring).uiFrame("inspector.audio.loudness.measure")
                 Menu("Normalize") {
                     Button("YouTube, −14 LUFS") { normalize("youtube") }
                     Button("Apple and podcasts, −16 LUFS") { normalize("apple") }
                     Button("EBU R128, −23 LUFS") { normalize("ebu") }
                 }
-                .menuStyle(.borderlessButton).fixedSize().controlSize(.mini).pointer().disabled(measuring).uiFrame("inspector.audio.loudness.normalize")
+                .fixedSize().controlSize(.small).pointer().disabled(measuring).uiFrame("inspector.audio.loudness.normalize")
             }
         }) {
             slider("Gain", key: "gain", value: au.gain, range: -24...24, format: { String(format: "%+.1f dB", $0) }, reset: 0) { v in Task { _ = try? await x.setClipMix(id, gain: (v * 10).rounded() / 10, pan: nil) } }
@@ -118,11 +118,13 @@ struct ClipAudioSections: View {
         let prev = document.project.clipBefore(clip, on: track)
         let footer = crossfadeNote ?? (prev == nil ? "No clip ends where this one starts." : clip.transitionIn != nil ? "The transition already crossfades the sound." : "Fades \(prev!.name) out under this clip's start; needs that much sound past its out point.")
         return InspectorCard("Crossfade in", footer: footer, trailing: {
-            toggle("crossfade", on: clip.audioCrossfade != nil) { on in
-                crossfadeNote = on ? (try? plain.setAudioCrossfade(id, duration: nil, curve: nil, remove: false))?.note : nil
-                if !on { _ = try? plain.setAudioCrossfade(id, duration: nil, curve: nil, remove: true) }
+            toggle("crossfade", on: clip.audioCrossfade != nil, enabled: prev != nil && clip.transitionIn == nil,
+                   disabledHelp: prev == nil ? "No clip ends where this one starts" : "The transition already crossfades the sound") { on in
+                do {
+                    if on { crossfadeNote = try plain.setAudioCrossfade(id, duration: nil, curve: nil, remove: false).note }
+                    else { crossfadeNote = nil; _ = try plain.setAudioCrossfade(id, duration: nil, curve: nil, remove: true) }
+                } catch { crossfadeNote = InspectorMessage.text(error, scope: .clip) }
             }
-            .disabled(prev == nil || clip.transitionIn != nil)
         }) {
             if let xf = clip.audioCrossfade {
                 slider("Duration", key: "crossfade.duration", value: xf.duration, range: 0.05...min(5, max(0.06, clip.duration)), format: { String(format: "%.2f s", $0) }, reset: 0.5) { v in
@@ -145,7 +147,7 @@ struct ClipAudioSections: View {
         Task {
             defer { detecting = false }
             do { humNote = try await plain.setClipHumRemoval(id, enabled: true, frequency: frequency, amount: nil, harmonics: nil).note }
-            catch { humNote = "\(error)" }
+            catch { humNote = InspectorMessage.text(error, scope: .clip) }
         }
     }
 
@@ -153,7 +155,7 @@ struct ClipAudioSections: View {
         measuring = true
         Task {
             defer { measuring = false }
-            do { loudness = Self.describe(try await plain.measureLoudness(clip: id)) } catch { loudness = "\(error)" }
+            do { loudness = Self.describe(try await plain.measureLoudness(clip: id)) } catch { loudness = InspectorMessage.text(error, scope: .clip) }
         }
     }
 
@@ -164,7 +166,7 @@ struct ClipAudioSections: View {
             do {
                 let r = try await plain.normalizeLoudness(target: target, ceiling: nil, clip: id)
                 loudness = "Now " + Self.describe(r.after) + (r.note.map { " " + $0 } ?? "")
-            } catch { loudness = "\(error)" }
+            } catch { loudness = InspectorMessage.text(error, scope: .clip) }
         }
     }
 
@@ -180,16 +182,20 @@ struct ClipAudioSections: View {
 
     // MARK: Controls
 
-    private func toggle(_ key: String, on: Bool, set: @escaping (Bool) -> Void) -> some View {
+    /// A card's on/off switch. When it cannot be used it says why on hover and is drawn dimmed: a switch that is off
+    /// looks the same enabled or not, so the dimming is what tells the two apart.
+    private func toggle(_ key: String, on: Bool, enabled: Bool = true, disabledHelp: String? = nil, set: @escaping (Bool) -> Void) -> some View {
         Toggle(isOn: Binding(get: { on }, set: set)) { EmptyView() }
-            .toggleStyle(.switch).controlSize(.mini).labelsHidden().pointer().uiFrame("inspector.audio.\(key).toggle")
+            .toggleStyle(.switch).controlSize(.mini).labelsHidden().pointer().disabled(!enabled).inspectorDisabledLook(!enabled)
+            .help(enabled ? "" : disabledHelp ?? "")
+            .uiFrame("inspector.audio.\(key).toggle")
     }
 
     /// A labeled slider with its value on the right; double-click the value to reset.
     private func slider(_ title: String, key: String, value: Double, range: ClosedRange<Double>, format: @escaping (Double) -> String, reset: Double, set: @escaping (Double) -> Void) -> some View {
         HStack(spacing: 8) {
             Text(title).inspectorLabel()
-            Slider(value: Binding(get: { min(range.upperBound, max(range.lowerBound, value)) }, set: set), in: range).controlSize(.small).pointer().uiFrame("inspector.audio.\(key).slider")
+            InspectorSlider(value: value, range: range, neutral: InspectorSlider.neutral(range: range, reset: reset), set: set).controlSize(.small).pointer().uiFrame("inspector.audio.\(key).slider")
             Text(format(value)).font(.system(size: 11)).monospacedDigit().foregroundStyle(.secondary).lineLimit(1).fixedSize().frame(width: 66, alignment: .trailing)
                 .onTapGesture(count: 2) { set(reset) }.help("Double-click to reset").pointer()
                 .uiFrame("inspector.audio.\(key).reset").uiTap("inspector.audio.\(key).reset", count: 2) { set(reset) }

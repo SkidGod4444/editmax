@@ -13,9 +13,9 @@ struct ColorWheelsCard: View {
 
     var body: some View {
         let w = wheels
-        InspectorCard(title, footer: title == nil ? nil : "Drag a dot toward a colour to tint that range; the slider is the wheel's master. Lift moves black, gamma the middle, gain white, offset everything. Double-click a wheel to reset it.", trailing: {
+        InspectorCard(title, footer: title == nil ? nil : "Drag a dot toward a color to tint that range; the slider is the wheel's master. Lift moves black, gamma the middle, gain white, offset everything. Double-click a wheel to reset it.", trailing: {
             if !w.isIdentity {
-                Button("Reset") { set(ColorWheels()) }.controlSize(.mini).focusable(false).pointer().uiFrame("inspector.color.\(info.idPrefix)wheels.reset")
+                Button("Reset") { set(ColorWheels()) }.controlSize(.small).focusable(false).pointer().uiFrame("inspector.color.\(info.idPrefix)wheels.reset")
             }
         }) {
             HStack(alignment: .top, spacing: 10) { wheel(.lift, w); wheel(.gamma, w) }
@@ -39,9 +39,10 @@ struct ColorWheelsCard: View {
                 .frame(height: 96)
                 .uiFrame("inspector.color.\(id)")
                 .uiTap("inspector.color.\(id).reset", count: 2) { var a = all; a[name] = ColorWheel(); set(a) }
-                .help("\(name.title): drag the dot toward a colour; double-click to reset")
+                .help("\(name.title): drag the dot toward a color; double-click to reset")
             HStack(spacing: 4) {
-                Slider(value: .init(get: { min(range.upperBound, max(range.lowerBound, w.master)) }, set: { v in var a = all; var x = w; x.master = v; a[name] = x; set(a) }), in: range)
+                // The gain master runs −0.5…1, so 0 is not the middle: the fill grows from 0 and a tick marks it.
+                InspectorSlider(value: w.master, range: range, neutral: 0) { v in var a = all; var x = w; x.master = v; a[name] = x; set(a) }
                     .controlSize(.mini).pointer().uiFrame("inspector.color.\(id).master.slider")
                 Text(String(format: "%+.2f", w.master)).font(.system(size: 10)).monospacedDigit().foregroundStyle(.secondary).frame(width: 34, alignment: .trailing)
                     .onTapGesture(count: 2) { var a = all; var x = w; x.master = 0; a[name] = x; set(a) }.pointer()

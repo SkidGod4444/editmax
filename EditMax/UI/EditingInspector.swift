@@ -6,6 +6,8 @@ struct EditingInspectorCards: View {
     @ObservedObject var document: EditMaxDocument
     let clip: Clip
     let track: Track
+    /// The J/L cut moves the clip's sound: off for a clip whose file has none (`ClipCards`).
+    var splitEdit = true
     @State private var trimNeighbour = false
     @State private var note: String?
 
@@ -14,7 +16,7 @@ struct EditingInspectorCards: View {
     private var x: ToolExecutor { ToolExecutor(document: document, origin: .user, coalesce: true) }
 
     var body: some View {
-        if track.kind == .video, asset?.kind == .video { splitEditCard.revealAnchor(.splitEdit) }
+        if splitEdit, track.kind == .video, asset?.kind == .video { splitEditCard.revealAnchor(.splitEdit) }
         if track.kind == .video, asset?.kind == .video, clip.multicam == nil, InterpolatedVideo.slowest(clip) < 0.999 || clip.smoothSlowMotion != .off { SlowMotionCard(document: document, clip: clip).revealAnchor(.slowMotion) }
         if track.kind == .video, asset?.kind == .video || asset?.kind == .sequence, clip.multicam == nil { SceneCutsCard(document: document, clip: clip).revealAnchor(.scenes) }
     }
@@ -27,22 +29,22 @@ struct EditingInspectorCards: View {
         let room = p.mediaRoom(plain), minLen = p.minClipLength
         let maxLead = max(0, min(5, room.head, clip.start)), maxTrail = max(0, min(5, room.tail))
         let maxInside = max(0, min(5, clip.duration - minLen) / 2)
-        let footer = note ?? "A J cut starts the sound before the picture, an L cut lets it run on after; the extra sound is the clip's own media past its in and out (\(EditFormat.s(room.head)) s before, \(EditFormat.s(room.tail)) s after). Under a neighbour both sounds play, unless Neighbour is set to trim."
+        let footer = note ?? "A J cut starts the sound before the picture, an L cut lets it run on after; the extra sound is the clip's own media past its in and out (\(EditFormat.s(room.head)) s before, \(EditFormat.s(room.tail)) s after). Under a neighbor both sounds play, unless Neighbor is set to Trim."
         return InspectorCard("Split edit", footer: footer, trailing: {
             if clip.hasSplitEdit {
-                Button("Reset") { set(lead: 0, trail: 0, coalesce: false) }.controlSize(.mini).pointer().uiFrame("inspector.splitEdit.reset")
+                Button("Reset") { set(lead: 0, trail: 0, coalesce: false) }.controlSize(.small).pointer().uiFrame("inspector.splitEdit.reset")
             }
         }) {
-            InspectorValueRow("Kind", ToolExecutor.splitEditKind(clip) == "none" ? "Sound with picture" : ToolExecutor.splitEditKind(clip))
+            InspectorValueRow("Kind", Self.kindTitle(clip))
             row("Lead", key: "lead", value: clip.audioLead, range: -maxInside...max(maxLead, 0.01)) { set(lead: $0, trail: nil, coalesce: true) }
             row("Trail", key: "trail", value: clip.audioTrail, range: -maxInside...max(maxTrail, 0.01)) { set(lead: nil, trail: $0, coalesce: true) }
-            InspectorRow("Neighbour") {
-                Picker("Neighbour", selection: $trimNeighbour) {
+            InspectorRow("Neighbor") {
+                Picker("Neighbor", selection: $trimNeighbour) {
                     Text("Overlap").tag(false)
                     Text("Trim").tag(true)
                 }
                 .labelsHidden().pickerStyle(.segmented).frame(width: 130).pointer().uiFrame("inspector.splitEdit.neighbour")
-                .help("Overlap: both sounds play where they meet. Trim: the touching neighbour's sound stops (or starts) where this one starts (or stops).")
+                .help("Overlap: both sounds play where they meet. Trim: the touching neighbor's sound stops (or starts) where this one starts (or stops).")
             }
         }
     }
@@ -50,10 +52,11 @@ struct EditingInspectorCards: View {
     private func row(_ title: String, key: String, value: Double, range: ClosedRange<Double>, set: @escaping (Double) -> Void) -> some View {
         HStack(spacing: 8) {
             Text(title).inspectorLabel()
-            Slider(value: .init(get: { min(max(value, range.lowerBound), range.upperBound) }, set: { v in set(abs(v) < 0.02 ? 0 : (v * 100).rounded() / 100) }), in: range)
+            // Zero (sound with the picture) is the resting point: the fill grows from it each way and a tick marks it.
+            InspectorSlider(value: value, range: range, neutral: 0) { v in set(abs(v) < 0.02 ? 0 : (v * 100).rounded() / 100) }
                 .controlSize(.small).pointer().uiFrame("inspector.splitEdit.\(key).slider")
                 .help(title == "Lead" ? "Seconds the sound starts before the picture (left of 0: after it)" : "Seconds the sound runs on after the picture (left of 0: stops before it)")
-            Text(abs(value) < 0.005 ? "0" : String(format: "%+.2f s", value)).inspectorValue()
+            Text(abs(value) < 0.005 ? "0 s" : String(format: "%+.2f s", value)).inspectorValue()
                 .onTapGesture(count: 2) { set(0) }.help("Double-click to put the sound back with the picture").pointer()
                 .uiFrame("inspector.splitEdit.\(key).reset").uiTap("inspector.splitEdit.\(key).reset", count: 2) { set(0) }
         }
@@ -65,8 +68,14 @@ struct EditingInspectorCards: View {
             let r = try ex.setSplitEdit(clip.id.uuidString, lead: lead, trail: trail, neighbour: trimNeighbour ? "trim" : "overlap")
             note = r.overlaps?.first
         } catch {
-            note = (error as? LocalizedError)?.errorDescription ?? "\(error)"
+            note = InspectorMessage.text(error)
         }
+    }
+
+    /// The Kind row in sentence case like the other labels: "Sound with picture", "J cut", "Sound inside the picture".
+    static func kindTitle(_ c: Clip) -> String {
+        let k = ToolExecutor.splitEditKind(c)
+        return k == "none" ? "Sound with picture" : k.prefix(1).uppercased() + k.dropFirst()
     }
 }
 
@@ -132,7 +141,7 @@ struct SceneCutsCard: View {
             do {
                 let r = try await SceneDetector.detect(url: url, from: from, to: to, sensitivity: sensitivity, minScene: 0.5)
                 scan = (id, from...to, r)
-            } catch { note = (error as? LocalizedError)?.errorDescription ?? "\(error)" }
+            } catch { note = InspectorMessage.text(error) }
         }
     }
 
@@ -141,7 +150,7 @@ struct SceneCutsCard: View {
             let r = try ToolExecutor(document: document, origin: .user).applySceneCuts(clip.id, sourceTimes: found.cuts.map(\.time), action: action)
             note = action == "split" ? "Split into \(r.clips?.count ?? 1) clips." : "Added \(r.markers?.count ?? 0) markers."
             scan = nil
-        } catch { note = (error as? LocalizedError)?.errorDescription ?? "\(error)" }
+        } catch { note = InspectorMessage.text(error) }
     }
 }
 
@@ -199,7 +208,7 @@ struct SlowMotionCard: View {
         guard let job else { return "Takes effect while the clip is slower than 1×." }
         let how = job.method == .opticalFlow ? "optical flow" : "blend" + (clip.smoothSlowMotion == .opticalFlow ? " (optical flow is not available on this Mac)" : "")
         if let f = cache.progress[job.key] { return "Rendering \(Int(f * 100)) % · \(Int(job.fps)) frames per source second, \(how)" }
-        if let e = cache.failed[job.key] { return "Render failed: \(e)" }
+        if let e = cache.failed[job.key] { return "Render failed: " + InspectorMessage.sentence(e) }
         if FileManager.default.fileExists(atPath: job.url.path) { return "Ready: \(Int(job.fps)) frames per source second, \(how). The export uses it too." }
         return "Waiting to render (\(how))."
     }
@@ -209,7 +218,7 @@ struct SlowMotionCard: View {
         let id = clip.id.uuidString
         Task { @MainActor in
             do { let r = try await x.setSmoothSlowMotion(id, mode: m.rawValue, wait: false); note = r.note }
-            catch { note = (error as? LocalizedError)?.errorDescription ?? "\(error)" }
+            catch { note = InspectorMessage.text(error) }
         }
     }
 }

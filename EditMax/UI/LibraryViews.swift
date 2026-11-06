@@ -399,6 +399,8 @@ struct LibraryPanelList: View {
     @ObservedObject private var thumbs = LibraryThumbnails.shared
     @State private var search = ""
     @State private var hovered: UUID?
+    /// A line shown on a row for a moment after a double-click that adds nothing, saying why.
+    @State private var notice: (item: UUID, text: String)?
 
     private var shown: [LibraryItem] { library.items(search: search).filter { $0.kind != .font } }
 
@@ -433,8 +435,12 @@ struct LibraryPanelList: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.name).font(.system(size: 13, weight: .medium)).lineLimit(1).truncationMode(.middle)
                     .foregroundStyle(item.exists ? Color.primary : Color.secondary)
-                Text(item.exists ? subtitle(item) : "Missing").font(.system(size: 11)).foregroundStyle(item.exists ? Color.secondary : Color.orange)
-                    .monospacedDigit().lineLimit(1).truncationMode(.tail)
+                if let notice, notice.item == item.id {
+                    Text(notice.text).font(.system(size: 11, weight: .medium)).foregroundStyle(item.exists ? Color.accentColor : Color.orange).lineLimit(1)
+                } else {
+                    Text(item.exists ? subtitle(item) : "Missing").font(.system(size: 11)).foregroundStyle(item.exists ? Color.secondary : Color.orange)
+                        .monospacedDigit().lineLimit(1).truncationMode(.tail)
+                }
             }
             Spacer(minLength: 0)
             if inProject {
@@ -445,8 +451,8 @@ struct LibraryPanelList: View {
         .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(hovered == item.id ? Color.primary.opacity(0.06) : Color.clear))
         .contentShape(Rectangle())
         .modifier(LibraryDragSource(item: item))
-        .onTapGesture(count: 2) { addToProject(item) }
-        .uiTap("media.library.\(item.name)", count: 2) { addToProject(item) }
+        .onTapGesture(count: 2) { doubleClicked(item) }
+        .uiTap("media.library.\(item.name)", count: 2) { doubleClicked(item) }
         .onHover { hovered = $0 ? item.id : (hovered == item.id ? nil : hovered) }
         .help(item.exists ? "Drag onto the timeline, or double-click to add it to this project" : "The file is not at \(item.path)")
         .pointer()
@@ -468,11 +474,27 @@ struct LibraryPanelList: View {
         return names.isEmpty ? first : first + " · " + (names.count == 1 ? names[0] : "\(names.count) projects")
     }
 
+    /// Adds the item, or says on its row why a double-click does not: it is already in this project (the Project list
+    /// has it), or its file is gone.
+    private func doubleClicked(_ item: LibraryItem) {
+        if document.project.assets.contains(where: { $0.path == item.path }) { show("Already in this project", on: item) }
+        else if !item.exists { show("The file is missing, so it can't be added", on: item) }
+        else { addToProject(item) }
+    }
+
+    private func show(_ text: String, on item: LibraryItem) {
+        withAnimation(.snappy) { notice = (item.id, text) }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2.5))
+            if notice?.item == item.id, notice?.text == text { withAnimation(.snappy) { notice = nil } }
+        }
+    }
+
     private func addToProject(_ item: LibraryItem) {
         guard item.exists else { return }
         Task {
             do { try await ToolExecutor(document: document, origin: .user).importMedia(paths: [item.path]) }
-            catch { onError(error.localizedDescription) }
+            catch { onError(InspectorMessage.text(error)) }
         }
     }
 }

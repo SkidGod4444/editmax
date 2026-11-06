@@ -17,7 +17,7 @@ struct CurvesCard: View {
         let all = curves
         InspectorCard(title, footer: title == nil ? nil : "Click to add a point, drag to move it, double-click it to remove it. Master moves R, G and B together; hue vs sat changes the saturation of one hue (1 = unchanged).", trailing: {
             if !all[channel].isEmpty {
-                Button("Reset") { set(channel, []) }.controlSize(.mini).focusable(false).pointer().uiFrame("inspector.color.\(info.idPrefix)curves.reset")
+                Button("Reset") { set(channel, []) }.controlSize(.small).focusable(false).pointer().uiFrame("inspector.color.\(info.idPrefix)curves.reset")
             }
         }) {
             Picker("Curve", selection: $channel) {

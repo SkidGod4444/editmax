@@ -29,7 +29,7 @@ struct ColorStackSections: View {
     }
 }
 
-/// Match this clip's colour to another clip (`match_color`). Ids: `inspector.color.match.reference`, `.run`.
+/// Match this clip's color to another clip (`match_color`). Ids: `inspector.color.match.reference`, `.run`.
 struct ShotMatchCard: View {
     @ObservedObject var document: EditMaxDocument
     let clip: Clip
@@ -67,8 +67,8 @@ struct ShotMatchCard: View {
         Task { @MainActor in
             do {
                 let r = try await x.matchColor(target, reference: refText, clipSeconds: nil, referenceSeconds: nil, mix: nil)
-                status = "Matched: colour distance \(ProjectDiff.fmt(r.distanceBefore)) → \(ProjectDiff.fmt(r.distanceAfter)) (under 5 is close)."
-            } catch { status = "Could not match: \(error.localizedDescription)" }
+                status = "Matched: color distance \(ProjectDiff.fmt(r.distanceBefore)) → \(ProjectDiff.fmt(r.distanceAfter)) (under 5 is close)."
+            } catch { status = "Could not match: " + InspectorMessage.text(error) }
             running = false
         }
     }
@@ -85,8 +85,8 @@ struct GradeLayersCard: View {
     private var sliding: ToolExecutor { ToolExecutor(document: document, origin: .user, coalesce: true) }
 
     var body: some View {
-        InspectorCard("Grade layers", footer: clip.grades.isEmpty ? "Layers add grades on top of this one, each inside an optional mask (a shape, a colour range or the subject)." : "Applied top to bottom after the clip's grade. Click a layer to grade it and set its mask.", trailing: {
-            Button { add() } label: { Image(systemName: "plus") }
+        InspectorCard("Grade layers", footer: clip.grades.isEmpty ? "Layers add grades on top of this one, each inside an optional mask (a shape, a color range or the subject)." : "Applied top to bottom after the clip's grade. Click a layer to grade it and set its mask.", trailing: {
+            Button { add() } label: { Image(systemName: "plus").inspectorHitTarget() }
                 .buttonStyle(.plain).focusable(false).help("Add a grade layer").pointer().disabled(clip.grades.count >= ToolExecutor.maxGradeLayers)
                 .uiFrame("inspector.color.layers.add").uiTap("inspector.color.layers.add") { add() }
         }) {
@@ -115,11 +115,11 @@ struct GradeLayersCard: View {
                 if layer.mask.map({ !$0.isEmpty }) ?? false { Image(systemName: "circle.dashed").font(.system(size: 9)).foregroundStyle(.secondary).help("Masked") }
                 Spacer(minLength: 4)
                 Group {
-                    Button { move(layer, i - 1) } label: { Image(systemName: "chevron.up") }.pointer().disabled(i == 0).uiFrame("\(pre).up").uiTap("\(pre).up") { move(layer, i - 1) }
-                    Button { move(layer, i + 1) } label: { Image(systemName: "chevron.down") }.pointer().disabled(i == clip.grades.count - 1).uiFrame("\(pre).down").uiTap("\(pre).down") { move(layer, i + 1) }
-                    Button { remove(layer) } label: { Image(systemName: "trash") }.pointer().uiFrame("\(pre).remove").uiTap("\(pre).remove") { remove(layer) }
+                    Button { move(layer, i - 1) } label: { Image(systemName: "chevron.up").inspectorHitTarget() }.help("Move up").pointer().disabled(i == 0).uiFrame("\(pre).up").uiTap("\(pre).up") { move(layer, i - 1) }
+                    Button { move(layer, i + 1) } label: { Image(systemName: "chevron.down").inspectorHitTarget() }.help("Move down").pointer().disabled(i == clip.grades.count - 1).uiFrame("\(pre).down").uiTap("\(pre).down") { move(layer, i + 1) }
+                    Button { remove(layer) } label: { Image(systemName: "trash").inspectorHitTarget() }.help("Remove the layer").pointer().uiFrame("\(pre).remove").uiTap("\(pre).remove") { remove(layer) }
                 }
-                .buttonStyle(.plain).font(.system(size: 10)).focusable(false)
+                .buttonStyle(.plain).font(.system(size: 11)).focusable(false)
             }
             .contentShape(Rectangle())
             .onTapGesture { selected = isSel ? nil : layer.id }
@@ -166,7 +166,7 @@ struct LayerBasicsCard: View {
     }
 }
 
-/// Where a grade layer applies: a shape, a colour selection and/or the AI subject, multiplied; invert flips it.
+/// Where a grade layer applies: a shape, a color selection and/or the AI subject, multiplied; invert flips it.
 /// Ids: `inspector.color.layer.<n>.mask.shape|qualifier|subject|invert` and `.mask.<value>.slider|reset`.
 struct LayerMaskCard: View {
     @ObservedObject var document: EditMaxDocument
@@ -181,7 +181,7 @@ struct LayerMaskCard: View {
     var body: some View {
         let m = layer.mask ?? GradeMask()
         let id = "\(info.idPrefix)mask"
-        InspectorCard("\(layer.name): mask", footer: "The parts multiply: the layer applies inside the shape, on the selected colours and on the subject. Subject uses Apple's Vision, analysed once per frame.") {
+        InspectorCard("\(layer.name): mask", footer: "The parts multiply: the layer applies inside the shape, on the selected colors and on the subject. The subject is found on this Mac, once per frame.") {
             HStack {
                 Text("Shape").inspectorLabel()
                 Picker("", selection: .init(get: { m.shape?.kind.rawValue ?? "none" }, set: { v in set(.init(shape: v), coalesce: false) })) {
@@ -189,14 +189,14 @@ struct LayerMaskCard: View {
                 }.labelsHidden().pickerStyle(.segmented).controlSize(.small).pointer().uiFrame("inspector.color.\(id).shape")
             }
             if let s = m.shape {
-                ColorSliderRow(title: "Centre x", id: "\(id).centerX", value: s.centerX, range: 0...1, format: { String(format: "%.2f", $0) }, reset: 0.5) { set(.init(shapeValues: ["center_x": $0])) }
-                ColorSliderRow(title: "Centre y", id: "\(id).centerY", value: s.centerY, range: 0...1, format: { String(format: "%.2f", $0) }, reset: 0.5) { set(.init(shapeValues: ["center_y": $0])) }
+                ColorSliderRow(title: "Center x", id: "\(id).centerX", value: s.centerX, range: 0...1, format: { String(format: "%.2f", $0) }, reset: 0.5) { set(.init(shapeValues: ["center_x": $0])) }
+                ColorSliderRow(title: "Center y", id: "\(id).centerY", value: s.centerY, range: 0...1, format: { String(format: "%.2f", $0) }, reset: 0.5) { set(.init(shapeValues: ["center_y": $0])) }
                 ColorSliderRow(title: "Width", id: "\(id).width", value: s.width, range: 0.02...1.5, format: { String(format: "%.2f", $0) }, reset: 0.5) { set(.init(shapeValues: ["width": $0])) }
                 ColorSliderRow(title: "Height", id: "\(id).height", value: s.height, range: 0.02...1.5, format: { String(format: "%.2f", $0) }, reset: 0.5) { set(.init(shapeValues: ["height": $0])) }
                 ColorSliderRow(title: "Rotation", id: "\(id).rotation", value: s.rotation, range: -180...180, format: { String(format: "%+.0f°", $0) }) { set(.init(shapeValues: ["rotation": $0])) }
                 ColorSliderRow(title: "Feather", id: "\(id).feather", value: s.feather, range: 0...0.5, format: { String(format: "%.2f", $0) }, reset: 0.05) { set(.init(shapeValues: ["feather": $0])) }
             }
-            Toggle("Colour selection", isOn: .init(get: { m.qualifier != nil }, set: { on in set(on ? .init(qualifierValues: ["hue_center": 25, "hue_width": 40]) : .init(qualifierOff: true), coalesce: false) }))
+            Toggle("Color selection", isOn: .init(get: { m.qualifier != nil }, set: { on in set(on ? .init(qualifierValues: ["hue_center": 25, "hue_width": 40]) : .init(qualifierOff: true), coalesce: false) }))
                 .toggleStyle(.checkbox).controlSize(.small).focusable(false).pointer().uiFrame("inspector.color.\(id).qualifier")
             if let q = m.qualifier {
                 ColorSliderRow(title: "Hue", id: "\(id).hueCenter", value: q.hueCenter, range: 0...360, format: { String(format: "%.0f° %@", $0, ColorBalance.name(ofHue: $0)) }, reset: 0) { set(.init(qualifierValues: ["hue_center": $0])) }
@@ -234,7 +234,7 @@ struct FinishCard: View {
         InspectorCard("Finishing", footer: "After the grade: noise reduction, sharpen, glow on highlights, vignette (left lightens the edges), film grain.", trailing: {
             if !f.isIdentity {
                 Button("Reset") { try? ToolExecutor(document: document, origin: .user).setFinish(clip.id, ClipFinish()) }
-                    .controlSize(.mini).focusable(false).pointer().uiFrame("inspector.color.finish.reset")
+                    .controlSize(.small).focusable(false).pointer().uiFrame("inspector.color.finish.reset")
             }
         }) {
             ColorSliderRow(title: "Noise", id: "finish.noise", value: f.noiseReduction, range: 0...1, format: pct) { v in set { $0.noiseReduction = v } }

@@ -66,7 +66,7 @@ struct TranscriptSection: View {
         busy = true; status = "Transcribing…"
         Task { @MainActor in
             defer { busy = false }
-            do { _ = try await x.ensureTranscript(assetID: clip.assetID, language: nil); status = nil } catch { status = error.localizedDescription }
+            do { _ = try await x.ensureTranscript(assetID: clip.assetID, language: nil); status = nil } catch { status = InspectorMessage.text(error, scope: .clip) }
         }
     }
 
@@ -82,7 +82,7 @@ struct TranscriptSection: View {
                 anchor = nil; selection = nil
                 let n = r.words?.count ?? 0
                 status = "Cut \(n) word\(n == 1 ? "" : "s"), \(String(format: "%.2f", r.removedSeconds)) s. Timeline is now \(Timecode.string(r.duration))."
-            } catch { status = error.localizedDescription }
+            } catch { status = InspectorMessage.text(error, scope: .clip) }
         }
     }
 }

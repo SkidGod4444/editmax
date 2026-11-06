@@ -14,7 +14,7 @@ struct ColorSliderRow: View {
     var body: some View {
         HStack(spacing: 8) {
             Text(title).inspectorLabel()
-            Slider(value: .init(get: { min(range.upperBound, max(range.lowerBound, value)) }, set: set), in: range).controlSize(.small).pointer().uiFrame("inspector.color.\(id).slider")
+            InspectorSlider(value: value, range: range, neutral: InspectorSlider.neutral(range: range, reset: reset), set: set).controlSize(.small).pointer().uiFrame("inspector.color.\(id).slider")
             Text(format(value)).inspectorValue()
                 .onTapGesture(count: 2) { set(reset) }.help("Double-click to reset").pointer()
                 .uiFrame("inspector.color.\(id).reset").uiTap("inspector.color.\(id).reset", count: 2) { set(reset) }

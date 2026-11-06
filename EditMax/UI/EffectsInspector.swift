@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 
 // The inspector's effects sections: green screen, blend and face blur for a clip, animation and lower third for a
-// text, the colour setting for the project. Every edit goes through `ToolExecutor` (the same methods as the MCP tools);
+// text, the color setting for the project. Every edit goes through `ToolExecutor` (the same methods as the MCP tools);
 // slider drags coalesce into one undo step.
 
 /// A slider row in the inspector's look: label, slider, value (double-click the value to reset).
@@ -18,7 +18,7 @@ struct EffectsSlider: View {
     var body: some View {
         HStack(spacing: 8) {
             Text(title).inspectorLabel()
-            Slider(value: .init(get: { value }, set: set), in: range).controlSize(.small).pointer().uiFrame("inspector.effects.\(id)")
+            InspectorSlider(value: value, range: range, neutral: InspectorSlider.neutral(range: range, reset: reset), set: set).controlSize(.small).pointer().uiFrame("inspector.effects.\(id)")
             Text(format(value)).inspectorValue()
                 .onTapGesture(count: 2) { set(reset) }.help("Double-click to reset").pointer()
                 .uiFrame("inspector.effects.\(id).reset").uiTap("inspector.effects.\(id).reset", count: 2) { set(reset) }
@@ -58,22 +58,22 @@ struct ClipEffectsSection: View {
 
     private var keyCard: some View {
         let key = clip.effects.chromaKey
-        return InspectorCard("Green screen", footer: keyNote ?? (key == nil ? "Makes the screen colour transparent so the video track below shows through. Put the background on a lower track." : "Tolerance takes more of the screen, softness smooths the edge, spill takes the screen's colour off hair and skin.")) {
+        return InspectorCard("Green screen", footer: keyNote ?? (key == nil ? "Makes the screen color transparent so the video track below shows through. Put the background on a lower track." : "Tolerance takes more of the screen, softness smooths the edge, spill takes the screen's color off hair and skin.")) {
             InspectorRow("Key") {
                 Toggle("Key", isOn: Binding(get: { key != nil }, set: { on in on ? autoKey() : removeKey() }))
                     .toggleStyle(.switch).controlSize(.mini).labelsHidden().pointer().disabled(keyBusy).uiFrame("inspector.effects.key.toggle")
             }
             if let key {
-                InspectorRow("Screen colour") {
+                InspectorRow("Screen color") {
                     HStack(spacing: 8) {
                         if key.autoPicked { Text("picked").inspectorSecondary() }
                         Button("Pick from edges") { autoKey() }.controlSize(.small).focusable(false).pointer().disabled(keyBusy)
                             .uiTap("inspector.effects.key.auto") { autoKey() }.uiFrame("inspector.effects.key.auto")
-                            .help("Find the screen colour at the edges of the frame at the playhead")
-                        ColorPicker("Screen colour", selection: Binding(get: { Color(hex: key.colorHex) }, set: { c in
+                            .help("Find the screen color at the edges of the frame at the playhead")
+                        ColorPicker("Screen color", selection: Binding(get: { Color(hex: key.colorHex) }, set: { c in
                             let hex = c.hexString
                             guard hex != key.colorHex else { return }
-                            do { try slide.adjustChromaKey(id, color: hex); keyNote = nil } catch { keyNote = error.localizedDescription }
+                            do { try slide.adjustChromaKey(id, color: hex); keyNote = nil } catch { keyNote = InspectorMessage.text(error) }
                         }), supportsOpacity: false).labelsHidden().pointer().uiFrame("inspector.effects.key.color")
                     }
                 }
@@ -88,16 +88,16 @@ struct ClipEffectsSection: View {
 
     private func autoKey() {
         guard !keyBusy else { return }
-        keyBusy = true; keyNote = "Looking for the screen colour…"
+        keyBusy = true; keyNote = "Looking for the screen color…"
         Task { @MainActor in
             defer { keyBusy = false }
             do {
                 let r = try await plain.setChromaKey(id, color: "auto", tolerance: nil, softness: nil, spill: nil, shrink: nil, edgeBlur: nil, time: nil, remove: false)
                 keyNote = "Screen \(r.key?.colorHex ?? "") · \(r.matte.map { "\($0.keyedPercent) % keyed" } ?? "")" + (r.note.map { " — \($0)" } ?? "")
             } catch {
-                // No clear colour at the edges: start from a standard green the user can change.
-                if clip.effects.chromaKey == nil, (try? plain.adjustChromaKey(id, color: "#00B140")) != nil { keyNote = "\(error.localizedDescription) Started from standard green; pick the colour." }
-                else { keyNote = error.localizedDescription }
+                // No clear color at the edges: start from a standard green the user can change.
+                if clip.effects.chromaKey == nil, (try? plain.adjustChromaKey(id, color: "#00B140")) != nil { keyNote = "\(InspectorMessage.text(error)) Started from standard green; pick the color." }
+                else { keyNote = InspectorMessage.text(error) }
             }
         }
     }
@@ -202,7 +202,7 @@ struct ClipEffectsSection: View {
                 }
                 blurNote = r.note
             } catch is CancellationError {
-            } catch { blurNote = error.localizedDescription }
+            } catch { blurNote = InspectorMessage.text(error) }
             blurProgress = nil
         }
     }
@@ -257,7 +257,7 @@ struct TextEffectsSection: View {
     }
 
     private func apply(_ body: () throws -> Any) {
-        do { _ = try body(); note = nil } catch { note = error.localizedDescription }
+        do { _ = try body(); note = nil } catch { note = InspectorMessage.text(error) }
     }
 
     private var lowerThirdCard: some View {
@@ -301,12 +301,12 @@ struct TextEffectsSection: View {
 
 // MARK: - Project
 
-/// The project's colour setting, as a row of the Project card.
+/// The project's color setting, as a row of the Project card.
 struct ProjectColorRow: View {
     @ObservedObject var document: EditMaxDocument
     var body: some View {
-        InspectorRow("Colour") {
-            Picker("Colour", selection: Binding(get: { document.project.settings.color }, set: { v in _ = try? ToolExecutor(document: document, origin: .user).setProjectColor(v.rawValue) })) {
+        InspectorRow("Color") {
+            Picker("Color", selection: Binding(get: { document.project.settings.color }, set: { v in _ = try? ToolExecutor(document: document, origin: .user).setProjectColor(v.rawValue) })) {
                 ForEach(ProjectColor.allCases, id: \.self) { Text($0.title).tag($0) }
             }.labelsHidden().fixedSize().pointer().uiFrame("inspector.effects.projectColor")
             .help("SDR Rec.709 passes every frame through as it is. HDR makes the preview and the HEVC 10-bit and ProRes masters Rec.2020 HLG or PQ; H.264 exports stay SDR.")

@@ -311,11 +311,26 @@ enum StillLoader {
 /// A tiny black movie used as the base video track, so a timeline of stills and titles alone still renders and exports.
 enum BlankVideo {
     static let size = CGSize(width: 64, height: 36)
+    private static let lock = NSLock()
+    /// Written once to a temporary name and moved into place, so a render that starts while another is still writing it
+    /// (in this process or another EditMax) never reads a half-written file.
     static func url() throws -> URL {
+        lock.lock(); defer { lock.unlock() }
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("EditMax")
         let url = dir.appendingPathComponent("blank.mp4")
         if FileManager.default.fileExists(atPath: url.path) { return url }
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let tmp = dir.appendingPathComponent("blank-\(UUID().uuidString).mp4")
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        try write(to: tmp)
+        if !FileManager.default.fileExists(atPath: url.path) {
+            do { try FileManager.default.moveItem(at: tmp, to: url) }
+            catch where FileManager.default.fileExists(atPath: url.path) {}   // another EditMax got there first: same movie
+        }
+        return url
+    }
+
+    private static func write(to url: URL) throws {
         let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: [AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: Int(size.width), AVVideoHeightKey: Int(size.height)])
         let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA])
@@ -335,6 +350,5 @@ enum BlankVideo {
         writer.finishWriting { done.signal() }
         done.wait()
         if let e = writer.error { throw e }
-        return url
     }
 }

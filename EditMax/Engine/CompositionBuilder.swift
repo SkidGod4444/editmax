@@ -39,10 +39,13 @@ enum CompositionBuilder {
         let t = { (s: Double) in CMTime(seconds: s, preferredTimescale: timescale) }
 
         // Base track: a tiny black movie under everything, so stills and titles render without any video clip.
-        if let base = comp.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid),
-           let blankTrack = try? await AVURLAsset(url: BlankVideo.url()).loadTracks(withMediaType: .video).first {
+        // The asset is held until the track is inserted: an AVAssetTrack does not keep its AVAsset alive, and inserting
+        // a track whose asset ARC has already freed fails at random with -11800 / -12780 (it did, in every render test).
+        if let blankAsset = try? AVURLAsset(url: BlankVideo.url()),
+           let base = comp.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid),
+           let blankTrack = try? await blankAsset.loadTracks(withMediaType: .video).first {
             let one = CMTimeRange(start: .zero, duration: CMTime(value: 1, timescale: 1))
-            try base.insertTimeRange(one, of: blankTrack, at: .zero)
+            try withExtendedLifetime(blankAsset) { try base.insertTimeRange(one, of: blankTrack, at: .zero) }
             base.scaleTimeRange(CMTimeRange(start: .zero, duration: one.duration), toDuration: total)
         }
 

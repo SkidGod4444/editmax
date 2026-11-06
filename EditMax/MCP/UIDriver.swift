@@ -142,7 +142,14 @@ enum UIDriver {
     struct Element: Codable { var id: String, x: Double, y: Double, width: Double, height: Double }
     struct Layout: Codable { var window: Point, elements: [Element] }
 
-    static var window: NSWindow? { NSApp.keyWindow ?? NSApp.mainWindow ?? NSApp.windows.first { $0.isVisible && $0.contentView != nil } }
+    /// The window the driver works on: the key or main window when it is on screen, else the frontmost titled window.
+    /// With the app in the background there is no key window, and the first visible window can be the menu bar icon's.
+    static var window: NSWindow? {
+        func onScreen(_ w: NSWindow?) -> NSWindow? { w.flatMap { $0.isVisible && $0.windowNumber > 0 && $0.contentView != nil ? $0 : nil } }
+        return onScreen(NSApp.keyWindow) ?? onScreen(NSApp.mainWindow)
+            ?? NSApp.orderedWindows.first { onScreen($0) != nil && $0.styleMask.contains(.titled) }
+            ?? NSApp.windows.first { onScreen($0) != nil && $0.styleMask.contains(.titled) }
+    }
 
     static func layout(prefix: String?) throws -> Layout {
         guard let w = window, let content = w.contentView else { throw EditError.invalid("no window") }
@@ -293,8 +300,11 @@ enum UIDriver {
         var cg: CGImage
         do {
             guard CGPreflightScreenCaptureAccess() else { throw EditError.invalid("Screen Recording not granted") }
+            // A window that is not on screen (closing, or a menu's window) has a negative number; converting it to a
+            // CGWindowID trapped and took the app down. Such a window falls back to the layer render.
+            guard w.windowNumber > 0, let wid = CGWindowID(exactly: w.windowNumber) else { throw EditError.invalid("window not on screen") }
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
-            guard let win = content.windows.first(where: { $0.windowID == CGWindowID(w.windowNumber) }) else { throw EditError.invalid("window not capturable") }
+            guard let win = content.windows.first(where: { $0.windowID == wid }) else { throw EditError.invalid("window not capturable") }
             let filter = SCContentFilter(desktopIndependentWindow: win)
             let cfg = SCStreamConfiguration()
             let scale = w.backingScaleFactor

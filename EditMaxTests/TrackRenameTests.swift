@@ -39,6 +39,25 @@ final class TrackRenameTests: XCTestCase {
         XCTAssertEqual(p.tracks.first { $0.kind == .video }?.name, "B-roll")
     }
 
+    /// A project from before new video tracks went on top: V2 sits under V1, which covers it. A clip added with no track
+    /// named must still land on V1, where it can be seen, not on the bottom row.
+    func testOlderProjectsStillAddToV1() throws {
+        var q = Project()
+        let v2 = Track(name: "V2", kind: .video)
+        q.tracks.insert(v2, at: 1)   // [V1, V2, A1]: the old order
+        XCTAssertEqual(q.tracks.map(\.name), ["V1", "V2", "A1"])
+        XCTAssertEqual(q.defaultTrack(of: .video)?.name, "V1")
+        doc.project.tracks = q.tracks
+        doc.project.assets.append(Asset(name: "ridge.mp4", path: "/tmp/old-ridge.mp4", kind: .video, duration: 10, width: 1920, height: 1080))
+        let c = try x.insertClip(asset: "ridge.mp4")
+        XCTAssertEqual(p.clip(c.id)?.track.name, "V1")
+        // New order, and with V1 renamed: the bottom video row is the base.
+        var n = Project(); _ = n.addTrack(kind: .video)
+        XCTAssertEqual(n.defaultTrack(of: .video)?.name, "V1")
+        n.tracks[n.tracks.firstIndex { $0.name == "V1" }!].name = "Main"
+        XCTAssertEqual(n.defaultTrack(of: .video)?.name, "Main", "no V1: the bottom video row")
+    }
+
     func testProjectSettingsSayWhatChanged() throws {
         try x.setProjectSettings(width: 1080, height: 1920, fps: nil, name: nil)
         XCTAssertEqual(p.history.last?.label, "Resolution 1080×1920")

@@ -644,9 +644,16 @@ extension Project {
         return matches.count == 1 ? matches[0] : nil
     }
 
-    /// Where an edit with no track named goes, as in other editors: V1, the base video track (the bottom video row, under
-    /// every other picture), or A1, the top audio row.
-    func defaultTrack(of kind: TrackKind) -> Track? { kind == .video ? tracks.last { $0.kind == .video } : tracks.first { $0.kind == .audio } }
+    /// Where an edit with no track named goes, as in other editors: the track named V1 (A1 for sound), else the bottom
+    /// video row (the base, under every other picture) or the top audio row.
+    ///
+    /// By name first: projects made before new video tracks went on top have V2 *under* V1, and the bottom row there is
+    /// the one V1 covers, so a clip sent to it would look like it vanished.
+    func defaultTrack(of kind: TrackKind) -> Track? {
+        let base = kind == .video ? "v1" : "a1"
+        if let named = tracks.first(where: { $0.kind == kind && $0.name.lowercased() == base }) { return named }
+        return kind == .video ? tracks.last { $0.kind == .video } : tracks.first { $0.kind == .audio }
+    }
     /// The top track of a kind (row order). Edits with no track named use `defaultTrack(of:)`.
     func firstTrack(of kind: TrackKind) -> Track? { tracks.first { $0.kind == kind } }
 

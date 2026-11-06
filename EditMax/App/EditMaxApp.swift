@@ -24,6 +24,7 @@ struct EditMaxApp: App {
                 Button("Export Video…") { NotificationCenter.default.post(name: .editmaxExport, object: nil) }.keyboardShortcut("e", modifiers: [.command])
                 Button("Export Chapters…") { NotificationCenter.default.post(name: .editmaxExportChapters, object: nil) }
                 Button("Batch Export…") { NotificationCenter.default.post(name: .editmaxBatchExport, object: nil) }.keyboardShortcut("e", modifiers: [.command, .shift])
+                Button("Export Timeline…") { NotificationCenter.default.post(name: .editmaxExportTimeline, object: nil) }.keyboardShortcut("e", modifiers: [.command, .option])
             }
             ViewCommands()
             EditCommands()
@@ -110,6 +111,10 @@ struct EditorRootView: View {
         .onReceive(NotificationCenter.default.publisher(for: .editmaxBatchExport)) { _ in
             guard DocumentRegistry.shared.activeID == document.id, !state.isExporting else { return }
             DeliveryActions(document: document, state: state).batchExport()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .editmaxExportTimeline)) { _ in
+            guard DocumentRegistry.shared.activeID == document.id, !state.isExporting else { return }
+            DeliveryActions(document: document, state: state).exportTimeline()
         }
         .overlay(alignment: .top) {
             if let s = state.exportStatus {
@@ -249,6 +254,12 @@ struct EditorRootView: View {
         panel.allowedContentTypes = [.mpeg4Movie]
         panel.nameFieldStringValue = document.displayName + ".mp4"
         let format = ExportFormatBox()
+        // The name field and the file type follow the format: ProRes is a QuickTime .mov, the rest MP4.
+        format.onChange = { preset in
+            panel.allowedContentTypes = [preset.isProRes ? .quickTimeMovie : .mpeg4Movie]
+            let name = (panel.nameFieldStringValue as NSString).deletingPathExtension
+            panel.nameFieldStringValue = (name.isEmpty ? document.displayName : name) + "." + preset.fileExtension
+        }
         let host = NSHostingView(rootView: ExportFormatPicker(box: format))
         host.frame = NSRect(x: 0, y: 0, width: 420, height: 48)
         panel.accessoryView = host
@@ -334,14 +345,21 @@ extension Notification.Name {
     static let editmaxCompare = Notification.Name("io.openhorizon.editmax.compare")
 }
 
-/// The format choice in the export save panel.
-final class ExportFormatBox: ObservableObject { @Published var preset: ExportService.Preset = .high }
+/// The format choice in the export save panel. `onChange` lets the panel follow it (file type, name extension).
+final class ExportFormatBox: ObservableObject {
+    @Published var preset: ExportService.Preset = .high { didSet { onChange?(preset) } }
+    var onChange: ((ExportService.Preset) -> Void)?
+}
 struct ExportFormatPicker: View {
     @ObservedObject var box: ExportFormatBox
     var body: some View {
         Picker("Format", selection: $box.preset) {
             Text("H.264, 8-bit (plays everywhere)").tag(ExportService.Preset.high)
             Text("HEVC 10-bit, Main 10 (for grading)").tag(ExportService.Preset.hevc10)
+            Divider()
+            Text("ProRes 422 HQ (edit and grade in Resolve, Final Cut)").tag(ExportService.Preset.prores422hq)
+            Text("ProRes 422 (smaller)").tag(ExportService.Preset.prores422)
+            Text("ProRes 4444 (highest quality)").tag(ExportService.Preset.prores4444)
         }
         .pickerStyle(.menu).pointer().uiFrame("export.format")
         .padding(.horizontal, 12).padding(.vertical, 8)

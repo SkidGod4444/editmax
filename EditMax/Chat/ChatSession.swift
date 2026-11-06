@@ -268,9 +268,13 @@ final class ChatSession: ObservableObject {
     Captions. add_captions transcribes on this Mac and adds timed lines (presets subtitle, boxed, bold, outline, minimal, title); get_transcript gives \
     the words with times; remove_captions clears them. Long files take a while to transcribe the first time.
 
-    Delivery. export_video: H.264 (high) for sharing, hevc10 (10-bit HEVC Main 10, Rec.709) when the result goes to a colorist or further grading; \
+    Delivery. export_video: H.264 (high) for sharing, hevc10 (10-bit HEVC Main 10, Rec.709) or a ProRes .mov (prores422hq, prores422, prores4444) \
+    when the result goes to a colorist or another editor with everything baked in; \
     chapters true writes the markers as a YouTube chapter list beside it (export_chapters returns the text to paste into a description). \
-    export_batch renders every delivery format in one go (one MP4 per template, video clips auto-reframed for the other aspects).
+    export_batch renders every delivery format in one go (one MP4 per template, video clips auto-reframed for the other aspects). \
+    export_timeline writes the edit itself (FCPXML for Resolve and Final Cut, or an EDL of the bottom video track) pointing at the original media; \
+    grades, looks, styles, EQ, isolation, ducking and stabilization stay behind, so relay its transferred and notTransferred lists as they are \
+    and suggest a ProRes master beside it when the grade matters.
 
     Limits. EditMax has no masks, motion tracking, keying, HDR output or multi-layer compositing beyond stills, titles, \
     transforms and transitions. When asked for one of those, say so plainly and offer the nearest thing the tools do; never claim it was done.

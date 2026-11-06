@@ -4,7 +4,7 @@ import { animate, motion, useInView } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { ease } from "./motion";
 
-const formats = ["H.264 MP4", "10-bit HEVC", "9:16 Shorts", "1:1 Feed", "YouTube chapters", "Batch export"];
+const formats = ["H.264 MP4", "ProRes", "10-bit HEVC", "FCPXML · EDL", "9:16 Shorts", "YouTube chapters"];
 
 /** A batch export: the bar fills, and each format ticks off as the bar passes it. Loops while on screen. */
 export function ExportArt() {

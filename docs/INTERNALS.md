@@ -8,7 +8,7 @@ file covers how it is built, the engine's rules, and the gotchas that cost time 
 | Directory | What lives there |
 |---|---|
 | `EditMax/Model` | `Project` (the Codable timeline plus its history), `EditMaxDocument` (`ReferenceFileDocument`; every mutation goes through `apply(label:origin:)`, which records a labeled snapshot), `DocumentRegistry` (open windows, Home hand-off) |
-| `EditMax/Engine` | `ToolExecutor` (every edit, shared by the UI, the MCP server and the chat), `CompositionBuilder` + `Compositor` (AVComposition, Core Image on the GPU), `PlayerController`, `ExportService`, `MediaImporter`, `Captions`, `Cleanup`, `TranscriptEditing`, `Multicam`, `AutoReframe`, `Stabilizer`, `VoiceIsolation`, `Looks` (LUTs), `AudioTap`, `RenderCache` (proxies, nested sequences, templates), `Delivery` |
+| `EditMax/Engine` | `ToolExecutor` (every edit, shared by the UI, the MCP server and the chat), `CompositionBuilder` + `Compositor` (AVComposition, Core Image on the GPU), `PlayerController`, `ExportService`, `MediaImporter`, `Captions`, `Cleanup`, `TranscriptEditing`, `Multicam`, `AutoReframe`, `Stabilizer`, `VoiceIsolation`, `Looks` (LUTs), `AudioTap`, `RenderCache` (proxies, nested sequences, templates), `Delivery`, `Interchange` (FCPXML, EDL) |
 | `EditMax/MCP` | `MCPService` (MCP Swift SDK, stateless HTTP transport, bearer auth), `HTTPListener` (NWListener HTTP/1.1), `EditMaxTools` (catalog and dispatch), `UIDriver` (the `ui_*` tools) |
 | `EditMax/Chat` | `CodemaxRunner` (NDJSON over `codemax serve`), `CodemaxInstaller`, `CodemaxUpdater`, `ChatSession`, `KeychainStore` |
 | `EditMax/UI` | SwiftUI views; `Glass.swift` is the only place Liquid Glass APIs are called |
@@ -70,10 +70,34 @@ Audio: per-clip three-band EQ (200 Hz / 1 kHz / 6 kHz), high-pass and noise gate
 clip (keyframes × fades × transition crossfade × ducking) emitted as back-to-back ramps. Voice isolation renders
 Apple's on-device `AUSoundIsolation` over the asset once (cached in `Application Support/EditMax/isolated/`).
 
-10-bit delivery (`export_video preset: hevc10`): HEVC Main 10, 4:2:0, `hvc1`, Rec.709 tags, about 0.25 bits per pixel
-per frame, through `AVAssetReader` + `AVAssetWriter` with `EditMaxCompositor10`. Limits: SDR only (no HLG/PQ tags),
-MP4 only, proxies are 8-bit, and untagged 8-bit sources can shift by up to 2 levels on saturated colors versus an
-8-bit decode.
+Masters (`ExportService.exportMaster`, `export_video preset: hevc10 | prores422hq | prores422 | prores4444`) go
+through `AVAssetReader` + `AVAssetWriter` with `EditMaxCompositor10` (64RGBAHalf frames) at the project size, with
+Rec.709 tags. HEVC Main 10: 4:2:0, `hvc1`, about 0.25 bits per pixel per frame, AAC sound, MP4. ProRes: `apch`, `apcn`
+or `ap4h` (10-bit 4:2:2, 12-bit 4:4:4 for 4444) at Apple's own rates, no compression properties (VideoToolbox
+refuses a bitrate for ProRes), 24-bit 48 kHz stereo PCM, QuickTime `.mov`. The container follows the preset:
+`exportVideo` and `BatchExport` set the extension from `Preset.fileExtension`. Limits: SDR only (no HLG/PQ tags),
+proxies are 8-bit, and untagged 8-bit sources can shift by up to 2 levels on saturated colors versus an 8-bit decode.
+
+Timeline export (`Interchange.swift`, `export_timeline`) writes an edit list, never pixels:
+- FCPXML 1.10. The bottom video track is the primary storyline (gaps for holes, a `transition` that starts at the cut
+  for each clip that dissolves in, as EditMax plays it: the outgoing clip's media past its out point fills it). Every
+  other track is a connected `spine` anchored at sequence 0 on the first primary element (its `start`, since anchor
+  offsets are in the parent's own time): video tracks on lanes 1, 2… (the top row highest), titles above them, audio
+  tracks and detached multicam sound below 0. Times are whole frames at the project rate, as exact fractions
+  (29.97 → `1001/30000s`). Asset starts come from the file's timecode track. A constant speed retimes the whole file
+  with a two-point `timeMap` (handles stay usable); a ramp is sampled every half second. Volume → `adjust-volume`
+  in dB, fades → `fadeIn`/`fadeOut` plus `adjust-blend` keyframes, transform → `adjust-transform` (FCP measures
+  position in percent of the frame height with y up, and rotation counter-clockwise). Multicam is flattened to its
+  cuts; nested sequences go as their rendered file. Captions go to an `.srt` beside it.
+- CMX 3600 EDL of the bottom video track's picture, recorded from 01:00:00:00, non-drop. A dissolve is the outgoing
+  clip's zero-length cut plus a `D` event; a constant speed adds an `M2` line; clip and file names go in comments.
+- `Interchange.report` builds the result's `transferred` / `notTransferred` lists from the project itself (grades,
+  LUTs, EQ, ducking, stabilization, other keyframes, crops, missing media…). The menu shows them in a sheet and the
+  MCP tool returns them; keep them honest when adding a feature to either side.
+
+Checked: both sample files in `InterchangeTests` validate against Apple's FCPXML 1.10 DTD (not in the repo: run the
+tests with `TEST_RUNNER_EDITMAX_FCPXML_DTD=<path>` to turn the check on), and ffprobe reads the ProRes settings back
+as `apch`/`ap4h` with `pcm_s24le`. Not yet checked: an import into DaVinci Resolve or Final Cut Pro.
 
 Tested against DJI's official D-Log → Rec.709 cube on DJI's Inspire 3 sample (ProRes HQ and a 10-bit HEVC transcode):
 the export matches ffmpeg's `lut3d` within 5 levels. DJI's cubes use tabs and CR line ends; the parser accepts any

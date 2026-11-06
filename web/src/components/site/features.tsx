@@ -146,7 +146,7 @@ export function Features() {
           <Card className="md:col-span-3" title="Sound that sits right" body="Three-band EQ, high-pass, noise gate, voice isolation, and music that ducks under speech by itself.">
             <SoundArt />
           </Card>
-          <Card className="md:col-span-3" title="Deliver for every format" body="H.264 MP4, 10-bit HEVC masters, templates for every social format, YouTube chapters from markers, and several formats in one export.">
+          <Card className="md:col-span-3" title="Deliver for every format" body="H.264 MP4, ProRes and 10-bit HEVC masters, FCPXML and EDL to hand the cut to Resolve or Final Cut, templates for every social format, YouTube chapters from markers.">
             <ExportArt />
           </Card>
           <Card className="md:col-span-3" title="Every agent edit can be undone" body="Each change lands in History with who made it. Point at an older step to see what going back to it would undo.">

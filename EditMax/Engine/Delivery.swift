@@ -96,7 +96,7 @@ enum BatchExport {
         }
     }
 
-    /// Renders `project` once per template into `directory` as `<project name>-<template slug>.mp4`, one export session
+    /// Renders `project` once per template into `directory` as `<project name>-<template slug>.mp4` (.mov for ProRes), one export session
     /// at a time. `progress` gets "k/n Template name" and that export's fraction. With `chapters`, the markers also go
     /// to `<project name>.chapters.txt` in the directory (once; skipped when there are no markers).
     static func export(_ project: Project, to directory: URL, templates: [String], preset: ExportService.Preset, chapters: Bool, reframe: Bool = true,
@@ -118,7 +118,7 @@ enum BatchExport {
             copy.settings.width = max(16, t.width)
             copy.settings.height = max(16, t.height)
             copy.settings.fps = max(1, t.fps)
-            let url = directory.appendingPathComponent("\(base)-\(slug(t.name)).mp4")
+            let url = directory.appendingPathComponent("\(base)-\(slug(t.name)).\(preset.fileExtension)")
             let label = "\(k + 1)/\(infos.count) \(t.name)"
             progress?(label, 0)
             // A template with another aspect would letterbox every clip: follow the subject instead (per clip, on the copy only).
@@ -154,11 +154,16 @@ enum BatchExport {
 }
 
 extension ExportService.Preset {
-    /// "hevc10", "hevc", "high", "med", "Medium"… → a preset (default high), the same loose match `export_video` accepts.
+    /// "hevc10", "hevc", "high", "med", "prores", "prores422", "ProRes 4444"… → a preset (default high), the same loose
+    /// match `export_video` accepts. An exact name wins over a prefix, so "prores422" is 422 and a bare "prores" is 422 HQ.
     static func parse(_ text: String?) -> ExportService.Preset {
-        let want = (text ?? "high").lowercased().filter { $0.isLetter || $0.isNumber }
+        func key(_ s: String) -> String { s.lowercased().filter { $0.isLetter || $0.isNumber } }
+        let want = key(text ?? "high")
         guard !want.isEmpty else { return .high }
-        return allCases.first { $0.rawValue.lowercased().filter { $0.isLetter || $0.isNumber }.hasPrefix(want) } ?? .high
+        let aliases: [String: ExportService.Preset] = ["h264": .high, "mp4": .high, "proreshq": .prores422hq, "hq": .prores422hq, "mov": .prores422hq,
+                                                       "4444": .prores4444, "prores4": .prores4444, "422": .prores422]
+        if let a = aliases[want] { return a }
+        return allCases.first { key($0.rawValue) == want } ?? allCases.first { key($0.rawValue).hasPrefix(want) } ?? .high
     }
 }
 

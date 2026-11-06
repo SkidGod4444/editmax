@@ -16,7 +16,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-PolyForm%20Noncommercial-orange" alt="License: PolyForm Noncommercial 1.0.0"></a>
   <img src="https://img.shields.io/badge/macOS-15%2B-black" alt="macOS 15+">
   <img src="https://img.shields.io/badge/Swift-5-F05138" alt="Swift 5">
-  <img src="https://img.shields.io/badge/MCP-62%20tools-blue" alt="62 MCP tools">
+  <img src="https://img.shields.io/badge/MCP-63%20tools-blue" alt="63 MCP tools">
 </p>
 
 <p align="center">
@@ -60,8 +60,8 @@ no backend, nothing leaves your Mac unless you ask a cloud model.
 | **Sound** | Three-band EQ, high-pass, noise gate, voice isolation, auto-ducking of music under speech, volume envelopes |
 | **Speech** | On-device transcription, captions in six styles, remove silence and filler words, search and cut by the words that were spoken |
 | **Structure** | Multicam clips synced by audio, nested sequences, templates for every social format, batch export to several formats at once |
-| **Delivery** | H.264 MP4, 10-bit HEVC masters, YouTube chapters from markers |
-| **Agents** | 62 MCP tools covering all of the above plus the window itself; an in-app chat with a policy that allows only editor tools |
+| **Delivery** | H.264 MP4, 10-bit HEVC and ProRes masters, FCPXML and EDL to hand the cut to DaVinci Resolve or Final Cut Pro, YouTube chapters from markers |
+| **Agents** | 63 MCP tools covering all of the above plus the window itself; an in-app chat with a policy that allows only editor tools |
 
 ## Install
 
@@ -103,7 +103,7 @@ Projects are single `.emx` files that autosave. Media is referenced, not copied.
 | ⌘T, `[` / `]` | Transition on the selected clip, previous and next keyframe |
 | ⌘Z / ⇧⌘Z | Undo and redo, the agent's edits included |
 | ⌘= / ⌘- | Zoom the timeline |
-| ⌘E, ⇧⌘E | Export video, batch export |
+| ⌘E, ⇧⌘E, ⌥⌘E | Export video, batch export, export timeline |
 | ⇧⌘F, ⌥⌘F, ⌥⌘B | Full-screen preview, focus layout (player beside the chat), before/after |
 | ⌘N, ⇧⌘N, ⇧⌘P, ⌘, | New project, new project on Home, Home, Settings |
 
@@ -157,7 +157,7 @@ full id or the first eight characters of an id.
 | Speech | `get_transcript`, `search_transcript`, `cut_transcript`, `add_captions`, `remove_captions`, `detect_silence`, `remove_silence`, `remove_words` |
 | Text and markers | `add_text`, `remove_texts`, `add_marker`, `remove_marker` |
 | Structure | `nest_clips`, `unnest_clip`, `make_multicam`, `cut_angle`, `set_multicam`, `sync_angles`, `make_proxies`, `list_templates`, `apply_template`, `save_template`, `set_project_settings` |
-| Deliver | `export_video`, `export_chapters`, `export_batch` |
+| Deliver | `export_video`, `export_timeline`, `export_chapters`, `export_batch` |
 | Safety | `restore_snapshot` |
 | The window | `ui_layout`, `ui_click`, `ui_drag`, `ui_key`, `ui_scroll`, `ui_screenshot` |
 
@@ -200,9 +200,18 @@ up by their audio, the inspector's angle buttons cut at the playhead, and one an
 **Nested sequences.** Fold clips into one compound clip so grading, speed, fades and keyframes apply to the group;
 unnest to expand it back.
 
-**Delivery.** Export writes H.264/AAC MP4 at the project size, or a 10-bit HEVC Main 10 master. Markers become a
-YouTube chapter list (File → Export Chapters…, or beside the MP4). Batch Export renders one file per template and
-auto-reframes landscape clips for vertical and square formats.
+**Delivery.** Export writes H.264/AAC MP4 at the project size, a 10-bit HEVC Main 10 master, or an Apple ProRes
+422 HQ, 422 or 4444 `.mov` with 24-bit sound. Masters carry everything EditMax renders: grades, looks, titles, captions
+and the mixed sound. Markers become a YouTube chapter list (File → Export Chapters…, or beside the file). Batch Export
+renders one file per template and auto-reframes landscape clips for vertical and square formats.
+
+**Timeline export** (File → Export Timeline…, ⌥⌘E) hands the edit itself to another editor, pointing at your original
+media. FCPXML 1.10 (DaVinci Resolve, Final Cut Pro) carries every track: clip order, trims and gaps, cross dissolves,
+speed changes and ramps, volume and fades, scale, position, rotation and opacity, markers, titles as plain text, and
+the captions as an `.srt` beside it. An EDL (CMX 3600) carries the picture of the bottom video track, for a conform.
+Neither carries EditMax's processing: color grades, looks and LUTs, title and caption styles, EQ, gate and voice
+isolation, ducking, stabilization, crops and other keyframes stay behind. After each export EditMax lists, for that
+project, what went over and what did not. To keep the grade, send a ProRes master along with the timeline.
 
 **Settings** (⌘,): library folder, splash, appearance, Liquid Glass, chat defaults, API keys, the agent runtime's
 automatic updates, MCP port and token, logs and diagnostics.
@@ -233,8 +242,8 @@ cd agent && bun test                                                            
 ```
 
 The Swift suite covers the timeline model, the document's history, the shared tool API and the engine on a bundled
-clip (import, frame render, nest, export). Both suites run on every push and pull request through GitHub Actions.
-The five tests that render video skip on GitHub's runners, whose video path is unreliable, and run on every Mac: a
+clip (import, frame render, nest, export, ProRes and HEVC masters, FCPXML and EDL). Both suites run on every push and pull request through GitHub Actions.
+The seven tests that render video skip on GitHub's runners, whose video path is unreliable, and run on every Mac: a
 green badge covers the model, history, tool validation and import, so run the suite on a Mac before a release.
 
 ### Website
@@ -288,7 +297,8 @@ the chat backends, the session log, the UI conventions and the gotchas: read it 
 ## Limits
 
 - Media is referenced by path, not copied into the project; a file you move or rename has to be imported again.
-- Export is MP4 only; chapters are a sidecar text file, not an embedded track.
+- Timeline export carries the edit, not EditMax's processing (grades, looks, styles, EQ, isolation, ducking,
+  stabilization); chapters are a sidecar text file, not an embedded track.
 - SDR only: no HDR transfer tags, no color management.
 - The in-app agent chat needs an agent installed on the Mac (Claude Code, Codex, OpenCode, Cursor, Grok or
   Antigravity) or an API key.

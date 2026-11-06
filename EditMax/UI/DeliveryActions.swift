@@ -5,9 +5,10 @@ import UniformTypeIdentifiers
 extension Notification.Name {
     static let editmaxExportChapters = Notification.Name("io.openhorizon.editmax.exportChapters")
     static let editmaxBatchExport = Notification.Name("io.openhorizon.editmax.batchExport")
+    static let editmaxExportTimeline = Notification.Name("io.openhorizon.editmax.exportTimeline")
 }
 
-/// File > Export Chapters… and File > Batch Export… for one window: the panels, then the work through `ToolExecutor`.
+/// File > Export Chapters…, Batch Export… and Export Timeline… for one window: the panels, then the work through `ToolExecutor`.
 /// Progress and results show in the same export status banner as Export Video.
 @MainActor
 struct DeliveryActions {
@@ -54,7 +55,7 @@ struct DeliveryActions {
         panel.canCreateDirectories = true
         panel.allowsMultipleSelection = false
         panel.title = "Batch Export"
-        panel.message = "Choose a folder: every built-in template is rendered into it, named \(document.displayName)-<template>.mp4."
+        panel.message = "Choose a folder: every built-in template is rendered into it, named \(document.displayName)-<template>.mp4 (.mov for ProRes)."
         panel.prompt = "Export Here"
         let format = ExportFormatBox()
         let host = NSHostingView(rootView: ExportFormatPicker(box: format))
@@ -82,11 +83,81 @@ struct DeliveryActions {
         }
     }
 
+    /// Save panel with the format picker (FCPXML or EDL), then a sheet that says exactly what went into the file and
+    /// what stays in EditMax, so nobody opens it in Resolve expecting the grade.
+    func exportTimeline() {
+        guard document.project.duration > 0 else {
+            let alert = NSAlert()
+            alert.messageText = "Nothing to export"
+            alert.informativeText = "The timeline is empty."
+            alert.runModal()
+            return
+        }
+        let panel = NSSavePanel()
+        panel.title = "Export Timeline"
+        panel.message = "An edit list for DaVinci Resolve or Final Cut Pro that points at your original media. Nothing is rendered."
+        let fcpxml = UTType(filenameExtension: "fcpxml") ?? .xml, edl = UTType(filenameExtension: "edl") ?? .plainText
+        panel.allowedContentTypes = [fcpxml]
+        panel.allowsOtherFileTypes = true
+        panel.nameFieldStringValue = document.displayName + ".fcpxml"
+        let box = TimelineFormatBox()
+        box.onChange = { f in
+            panel.allowedContentTypes = [f == .edl ? edl : fcpxml]
+            let name = (panel.nameFieldStringValue as NSString).deletingPathExtension
+            panel.nameFieldStringValue = (name.isEmpty ? document.displayName : name) + "." + f.fileExtension
+        }
+        let host = NSHostingView(rootView: TimelineFormatPicker(box: box))
+        host.frame = NSRect(x: 0, y: 0, width: 460, height: 48)
+        panel.accessoryView = host
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        state.isExporting = true
+        state.exportStatus = "Exporting timeline…"
+        Task {
+            do {
+                let r = try await ToolExecutor(document: document, origin: .user).exportTimeline(to: url.path, format: box.format)
+                state.isExporting = false
+                flash("Exported \(r.clips) \(box.format == .edl ? "event" : "clip")\(r.clips == 1 ? "" : "s") to \(URL(fileURLWithPath: r.path).lastPathComponent)")
+                let alert = NSAlert()
+                alert.messageText = "Timeline exported to \(URL(fileURLWithPath: r.path).lastPathComponent)"
+                var text = "Carried over:\n" + r.transferred.map { "• " + $0 }.joined(separator: "\n")
+                if !r.notTransferred.isEmpty {
+                    text += "\n\nStays in EditMax:\n" + r.notTransferred.map { "• " + $0 }.joined(separator: "\n")
+                    text += "\n\nTo keep the grade and sound as they are, also export a ProRes master (File > Export Video…)."
+                }
+                alert.informativeText = text
+                alert.addButton(withTitle: "Show in Finder")
+                alert.addButton(withTitle: "Done")
+                if alert.runModal() == .alertFirstButtonReturn {
+                    NSWorkspace.shared.activateFileViewerSelecting(([r.path] + r.sidecars).map { URL(fileURLWithPath: $0) })
+                }
+            } catch {
+                state.isExporting = false
+                flash("Timeline export failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
     private func flash(_ text: String) {
         state.exportStatus = text
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(6))
             if state.exportStatus == text { state.exportStatus = nil }
         }
+    }
+}
+
+/// The format choice in the Export Timeline panel.
+final class TimelineFormatBox: ObservableObject {
+    @Published var format: Interchange.Format = .fcpxml { didSet { onChange?(format) } }
+    var onChange: ((Interchange.Format) -> Void)?
+}
+struct TimelineFormatPicker: View {
+    @ObservedObject var box: TimelineFormatBox
+    var body: some View {
+        Picker("Format", selection: $box.format) {
+            ForEach(Interchange.Format.allCases, id: \.self) { Text($0.title).tag($0) }
+        }
+        .pickerStyle(.menu).pointer().uiFrame("export.timelineFormat")
+        .padding(.horizontal, 12).padding(.vertical, 8)
     }
 }

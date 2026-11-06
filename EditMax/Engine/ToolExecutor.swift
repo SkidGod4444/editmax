@@ -415,7 +415,11 @@ struct ToolExecutor {
     /// With `chapters`, the markers also go to `<basename>.chapters.txt` beside the MP4 (skipped when there are none; a sidecar failure never fails the export).
     func exportVideo(to path: String, preset: ExportService.Preset = .high, chapters: Bool = false, progress: ((Double) -> Void)? = nil) async throws -> ExportService.Result {
         var url = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
-        if url.pathExtension.lowercased() != "mp4" { url.appendPathExtension("mp4") }
+        // The container follows the preset: a "cut.mp4" asked for as ProRes is written as cut.mov, and the reverse.
+        if url.pathExtension.lowercased() != preset.fileExtension {
+            if ["mp4", "mov", "m4v"].contains(url.pathExtension.lowercased()) { url.deletePathExtension() }
+            url.appendPathExtension(preset.fileExtension)
+        }
         var r = try await ExportService.export(project, to: url, preset: preset, progress: progress)
         if chapters, !project.markers.isEmpty { r.chapters = try? Chapters.write(project, nextTo: url).path }
         return r

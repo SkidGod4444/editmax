@@ -31,9 +31,10 @@ cp project.yml "$OUT/project.yml.bak"; cp EditMax/Resources/Info.plist "$OUT/Inf
 trap 'mv "$OUT/project.yml.bak" project.yml; mv "$OUT/Info.plist.bak" EditMax/Resources/Info.plist' EXIT
 sed -i '' -E "s/(CFBundleShortVersionString: )\"[^\"]+\"/\1\"$VERSION\"/; s/(CFBundleVersion: )\"[^\"]+\"/\1\"$BUILD\"/" project.yml
 command -v xcodegen >/dev/null || brew install xcodegen
-xcodegen generate -q
+# xcodegen refuses to generate unless both Vendor/ directories exist, so the bundled binaries come first.
 scripts/vendor-codemax.sh
 scripts/vendor-agent.sh
+xcodegen generate -q
 
 # Build unsigned; everything is signed below, inside out, with the identity and entitlements each part needs.
 rm -rf "$APP"   # so a failed build can never package the previous one

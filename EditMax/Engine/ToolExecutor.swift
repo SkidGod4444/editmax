@@ -25,6 +25,7 @@ struct ToolExecutor {
             var multicam: MulticamInfo?                // angles, cuts and the audio angle, only for multicam clips
             var sequence: String?                      // name of the nested sequence this clip plays, if any
             var stabilized: Bool?                      // true when stabilize_clip has run on the clip
+            var gradeLayers: [ToolExecutor.LayerInfo]? = nil, finish: ClipFinish? = nil   // color layers and finishing, only when set (ColorTools.swift)
         }
         struct KeyframeInfo: Codable { var time: Double, value: Double, ease: String }
         struct MarkerInfo: Codable { var id: String, time: Double, name: String, color: String }
@@ -53,6 +54,7 @@ struct ToolExecutor {
                                    multicam: c.multicam.map { multicamInfo(c, $0) },
                                    sequence: p.sequence(of: c)?.name,
                                    stabilized: c.stabilization == nil ? nil : true))
+                if !c.grades.isEmpty || c.finish != nil { clips[clips.count - 1].gradeLayers = c.grades.isEmpty ? nil : layersResult(c.id, "").layers; clips[clips.count - 1].finish = c.finish }
             }
         }
         return TimelineSummary(
@@ -566,6 +568,8 @@ struct ToolExecutor {
         var blackClipped: Double, whiteClipped: Double   // fraction of pixels at or below 2/255, at or above 253/255
         var lumaHistogram: [Int]                           // 16 bins, dark to bright
         var note: String
+        var parade: ColorScopes.ParadeStats? = nil         // per-channel levels and the vectorscope summary (ColorScopes.swift)
+        var vectorscope: ColorScopes.VectorStats? = nil
     }
 
     /// Numbers about the composed frame at a time (what the scopes show), so an agent can grade without looking at pixels.
@@ -595,8 +599,10 @@ struct ToolExecutor {
         var note = "Means are 0–255 after the clip's color and looks."
         if Double(black) / n > 0.3 { note += " Over 30% of the frame is crushed black." }
         if Double(white) / n > 0.1 { note += " Over 10% of the frame is clipped white." }
-        return FrameStats(time: r(seconds), width: frame.width, height: frame.height, meanRGB: sum.map { r($0 / n) }, lumaMean: r(mean), lumaMedian: r(lumas[lumas.count / 2]),
-                          blackClipped: r(Double(black) / n), whiteClipped: r(Double(white) / n), lumaHistogram: hist, note: note)
+        var stats = FrameStats(time: r(seconds), width: frame.width, height: frame.height, meanRGB: sum.map { r($0 / n) }, lumaMean: r(mean), lumaMedian: r(lumas[lumas.count / 2]),
+                               blackClipped: r(Double(black) / n), whiteClipped: r(Double(white) / n), lumaHistogram: hist, note: note)
+        (stats.parade, stats.vectorscope) = ColorScopes.stats(rgba: px)
+        return stats
     }
 
     func setClipFades(_ clip: String, fadeIn: Double?, fadeOut: Double?) throws {

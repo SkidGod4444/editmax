@@ -28,6 +28,8 @@ enum ProjectDiff {
             if x.animations != y.animations { c.append("keyframes") }
             if x.multicam != y.multicam { c.append("multicam") }
             if x.stabilization != y.stabilization { c.append(y.stabilization.map { "stabilized (zoom \(fmt($0.zoom))×)" } ?? "stabilization removed") }
+            if x.grades != y.grades { c.append("grade layers (\(y.grades.count))") }
+            if x.finish != y.finish { c.append(y.finish.map { "finishing: " + fields(x.finish ?? ClipFinish(), $0) } ?? "finishing removed") }
             if c.isEmpty { c.append("changed") }
             parts.append("\(y.name): " + c.joined(separator: ", "))
         }

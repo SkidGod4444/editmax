@@ -450,7 +450,10 @@ struct ClipInspector: View {
                 if track.kind == .video {
                     transformCard
                     colorCard
+                    ColorWheelsCard(document: document, clip: clip)   // UI/ColorWheelsSection.swift
+                    CurvesCard(document: document, clip: clip)        // UI/CurvesSection.swift
                     lookCard
+                    ColorStackSections(document: document, clip: clip)   // shot match, grade layers, finishing (UI/ColorStackSections.swift)
                 }
                 audioCard
                 eqCard

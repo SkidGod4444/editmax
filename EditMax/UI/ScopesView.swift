@@ -2,12 +2,14 @@ import SwiftUI
 import AVFoundation
 import CoreVideo
 
-/// What the scopes show for one frame: an RGB histogram and a luma waveform.
+/// What the scopes show for one frame: an RGB histogram, a luma waveform, the RGB parade and the vectorscope.
 struct ScopeData {
     var histogram: [[Int]]      // 3 channels × 64 bins
     var waveform: CGImage       // 128 columns × 64 rows, bright = many pixels at that luma in that column
     var lumaMean: Double
     var peak: Int               // tallest histogram bin, for scaling
+    var parade: CGImage? = nil       // RGB parade and vectorscope (ColorScopes.swift)
+    var vectorscope: CGImage? = nil
 }
 
 enum ScopeSampler {
@@ -47,13 +49,15 @@ enum ScopeSampler {
         guard let provider = CGDataProvider(data: Data(gray) as CFData),
               let img = CGImage(width: 128, height: 64, bitsPerComponent: 8, bitsPerPixel: 8, bytesPerRow: 128, space: CGColorSpaceCreateDeviceGray(),
                                 bitmapInfo: CGBitmapInfo(rawValue: 0), provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent) else { return nil }
-        return ScopeData(histogram: hist, waveform: img, lumaMean: lumaSum / Double(n), peak: max(1, hist.flatMap { $0 }.max() ?? 1))
+        let (parade, vectorscope) = ColorScopes.images(p, width: w, height: h, stride: stride, bgra: true, step: step)
+        return ScopeData(histogram: hist, waveform: img, lumaMean: lumaSum / Double(n), peak: max(1, hist.flatMap { $0 }.max() ?? 1), parade: parade, vectorscope: vectorscope)
     }
 }
 
-/// The scopes panel under the preview: luma waveform on the left, RGB histogram on the right.
+/// The scopes panel under the preview: luma waveform, RGB parade, vectorscope and RGB histogram.
 struct ScopesView: View {
     let data: ScopeData?
+    var height: CGFloat = 110
 
     var body: some View {
         HStack(spacing: 10) {
@@ -71,6 +75,8 @@ struct ScopesView: View {
                 Text("Waveform").font(.system(size: 9)).foregroundStyle(.white.opacity(0.5)).padding(3)
             }
             .clipShape(RoundedRectangle(cornerRadius: 4))
+            ParadePane(image: data?.parade)
+            VectorscopePane(image: data?.vectorscope)
             ZStack(alignment: .topLeading) {
                 Rectangle().fill(Color.black)
                 if let d = data {
@@ -94,7 +100,7 @@ struct ScopesView: View {
             .clipShape(RoundedRectangle(cornerRadius: 4))
         }
         .padding(6)
-        .frame(height: 110)
+        .frame(height: height)
         .background(Color(nsColor: .windowBackgroundColor))
     }
 }

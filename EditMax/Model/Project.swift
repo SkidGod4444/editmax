@@ -107,6 +107,10 @@ struct ClipColor: Codable, Equatable {
     /// A look: a built-in name (`Looks.builtin`) or the path of a `.cube` file, blended by `lutMix`.
     var lut: String? = nil
     var lutMix: Double = 1
+    /// Lift, gamma, gain and offset wheels (`ColorGrading.swift`); nil = off.
+    var wheels: ColorWheels? = nil
+    /// Custom curves: master, R, G, B and hue vs saturation; nil = off.
+    var curves: ColorCurves? = nil
     var isIdentity: Bool { self == ClipColor() }
     static let identity = ClipColor()
     /// A grade on top of the conversion: anything but the input LUT. The before/after view compares exactly this.
@@ -127,6 +131,8 @@ struct ClipColor: Codable, Equatable {
         inputLut = try c.decodeIfPresent(String.self, forKey: .inputLut)
         lut = try c.decodeIfPresent(String.self, forKey: .lut)
         lutMix = try c.decodeIfPresent(Double.self, forKey: .lutMix) ?? 1
+        wheels = try c.decodeIfPresent(ColorWheels.self, forKey: .wheels)
+        curves = try c.decodeIfPresent(ColorCurves.self, forKey: .curves)
     }
 }
 
@@ -201,6 +207,10 @@ struct Clip: Codable, Identifiable, Equatable {
     var audioSourceIn: Double? = nil
     /// Camera-shake correction from `stabilize_clip`; nil = none.
     var stabilization: Stabilization? = nil
+    /// Grade layers applied in order after the primary grade (`ColorGrading.swift`); empty = none.
+    var grades: [GradeLayer] = []
+    /// Grain, glow, vignette, sharpen and noise reduction after the grade; nil = none.
+    var finish: ClipFinish? = nil
     var end: Double { start + duration }
     /// Where the clip's media ends in the asset: with a speed ramp, the integral of speed over the clip.
     var sourceOut: Double { sourceIn + sourceOffset(at: duration) }
@@ -233,6 +243,8 @@ struct Clip: Codable, Identifiable, Equatable {
         audioAssetID = try c.decodeIfPresent(UUID.self, forKey: .audioAssetID)
         audioSourceIn = try c.decodeIfPresent(Double.self, forKey: .audioSourceIn)
         stabilization = try c.decodeIfPresent(Stabilization.self, forKey: .stabilization)
+        grades = try c.decodeIfPresent([GradeLayer].self, forKey: .grades) ?? []
+        finish = try c.decodeIfPresent(ClipFinish.self, forKey: .finish)
     }
 
     /// The two clips a split at `local` seconds produces; the right one gets a new id and no transition or fade-in.
@@ -548,7 +560,7 @@ struct Project: Codable, Equatable {
     var allClips: [Clip] { tracks.flatMap(\.clips) }
     /// Any clip carries a color grade (beyond its conversion LUT), plain or keyframed: the before/after view has something to show.
     var hasColorGrade: Bool {
-        allClips.contains { c in c.color.hasGrade || [ClipParam.exposure, .contrast, .saturation, .temperature, .tint].contains(where: c.isAnimated) }
+        allClips.contains { c in c.color.hasGrade || [ClipParam.exposure, .contrast, .saturation, .temperature, .tint].contains(where: c.isAnimated) || c.hasColorExtras }
     }
 
     /// Copy of this project with history (and the transcript cache) stripped, for snapshots and resource reads.

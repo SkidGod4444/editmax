@@ -207,7 +207,7 @@ enum FrameRenderer {
         if bypassColor {
             // "Before" keeps the technical conversion (log → video) and drops only the grade on top of it.
             if let lut = color.inputLut, !lut.isEmpty { img = Looks.apply(img, key: lut, mix: 1) }
-        } else if !color.isIdentity { img = graded(img, color) }
+        } else { img = ColorPipeline.apply(img, clip: clip, color: color, at: t, size: size) }   // grade, grade layers, finishing (GradeStack.swift)
         let alpha = clip.opacity(at: local) * fade(clip, at: t)
         if alpha < 1 { img = withAlpha(img, alpha) }
         return img.cropped(to: CGRect(origin: .zero, size: size))
@@ -233,6 +233,7 @@ enum FrameRenderer {
                                                                  "inputPoint3": p(0.75, c.highlights), "inputPoint4": CIVector(x: 1, y: 1)])
         }
         if c.vibrance != 0 { out = out.applyingFilter("CIVibrance", parameters: ["inputAmount": c.vibrance]) }
+        out = ColorCorrection.apply(out, wheels: c.wheels, curves: c.curves)   // color wheels, then custom curves (ColorWheels.swift)
         if let lut = c.lut, !lut.isEmpty { out = Looks.apply(out, key: lut, mix: c.lutMix) }
         return out
     }

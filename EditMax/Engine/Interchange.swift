@@ -685,6 +685,7 @@ enum Interchange {
         }
         let stab = inFile.filter { $0.stabilization != nil }
         if !stab.isEmpty { no.append("Stabilization on \(n(stab.count, "clip"))") }
+        no += ColorPipeline.notTransferred(inFile)   // wheels, curves, grade layers, masks, finishing (GradeStack.swift)
         let keyed = inFile.filter { c in c.animations.contains { $0.key != ClipParam.speed.rawValue && !$0.value.isEmpty } }
         if !keyed.isEmpty { no.append("Keyframes on \(n(keyed.count, "clip")) (animated transform, auto-reframe, color, opacity or volume)") }
         let cropped = inFile.filter { $0.transform.cropLeft != 0 || $0.transform.cropRight != 0 || $0.transform.cropTop != 0 || $0.transform.cropBottom != 0 }

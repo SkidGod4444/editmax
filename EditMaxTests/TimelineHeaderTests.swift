@@ -60,7 +60,9 @@ final class TimelineHeaderTests: XCTestCase {
         }
         let rep = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
         host.cacheDisplay(in: host.bounds, to: rep)
-        let frames = (UIRegistry.shared.frame("ruler"), UIRegistry.shared.frame("lane.V1"))
+        // What a user sees in this window. V1 scrolls under the ruler, so A1 (fully in view both times) shows the lanes moving.
+        let seen = UIRegistry.shared.elements(in: window).visible
+        let frames = (seen.first { $0.id == "ruler" }?.rect, seen.first { $0.id == "lane.A1" }?.rect)
         window.contentView = nil
         return (try XCTUnwrap(rep.cgImage), frames.0, frames.1)
     }

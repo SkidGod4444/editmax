@@ -700,23 +700,15 @@ enum UIDriver {
         }
     }
 
-    /// The part of a display to capture so the picture holds the window and everything attached to it (a popover can
-    /// stick out past the window's edge), in that display's points; nil when the window is not wholly on the display.
-    static func captureArea(window: CGRect, attached: [CGRect], display: CGRect) -> CGRect? {
-        guard display.insetBy(dx: -1, dy: -1).contains(window) else { return nil }
-        let area = attached.reduce(window) { $0.union($1) }.intersection(display)
-        return area.offsetBy(dx: -display.minX, dy: -display.minY)
-    }
-
     /// The EditMax window's own pixels through ScreenCaptureKit, when the Screen Recording permission is already granted.
     /// The tool never asks for it: a debug build is re-signed on every build, so macOS would forget the grant and nag
     /// again each time. Only EditMax's windows are ever in the picture, never another app's or the desktop.
     ///
-    /// On screen, the display is captured with a filter that includes only the window, and ScreenCaptureKit draws the
-    /// window's child windows (popovers, sheets) in place, exactly as they look. On another Space the window is captured
-    /// on its own, and its popovers are left out (said in the answer). An open menu or another EditMax window over it is
-    /// left out too: captured one by one they came back as a shrunken copy of the whole window. Without the permission,
-    /// or when capture fails, the window's layer tree is rendered instead and the answer gives the real reason.
+    /// Only the window itself is captured, never the display (the user's rule, after a display capture once photographed
+    /// another app). Popovers and sheets are in the picture when macOS draws them with the window; the answer says when
+    /// some are attached. An open menu or another EditMax window over it is left out: captured one by one they came back
+    /// as a shrunken copy of the whole window. Without the permission, or when capture fails, the window's layer tree is
+    /// rendered instead and the answer gives the real reason.
     static func screenshot(maxWidth: Int, in root: NSWindow? = nil) async throws -> (png: Data, method: String) {
         await AgentFollow.shared.settle()   // an agent edit that just landed is still animating into place
         let w = try root ?? requireWindow()
@@ -756,7 +748,6 @@ enum UIDriver {
         catch { throw CaptureFailure.failed("listing windows: \(error.localizedDescription)") }
         guard let win = content.windows.first(where: { $0.windowID == wid }) else { throw CaptureFailure.notListed }
         let scale = w.backingScaleFactor
-        let members = attached.compactMap { a in CGWindowID(exactly: max(0, a.windowNumber)).flatMap { id in content.windows.first { $0.windowID == id } } }
         // ui_layout's points start at the content's top-left; the picture starts at the window's (title bar included) or
         // further out for a popover sticking out. The answer says where, so the two can be lined up.
         let inset = CGPoint(x: w.contentView?.frame.minX ?? 0, y: w.frame.height - (w.contentView?.frame.maxY ?? w.frame.height))
@@ -765,36 +756,19 @@ enum UIDriver {
             return abs(o.x) > 0.5 || abs(o.y) > 0.5 ? "; the image's top-left is (\(Int(o.x)), \(Int(o.y))) in ui_layout points" : ""
         }
 
-        var displayError: String?
-        if win.isOnScreen, let display = content.displays.first(where: { $0.frame.contains(CGPoint(x: win.frame.midX, y: win.frame.midY)) }),
-           let area = captureArea(window: win.frame, attached: members.map(\.frame), display: display.frame) {
-            let cfg = SCStreamConfiguration()
-            cfg.showsCursor = false
-            cfg.captureResolution = .best
-            cfg.sourceRect = area
-            cfg.width = Int(area.width * scale); cfg.height = Int(area.height * scale)
-            cfg.includeChildWindows = true
-            cfg.ignoreShadowsDisplay = true
-            cfg.backgroundColor = CGColor.clear
-            do {
-                let img = try await SCScreenshotManager.captureImage(contentFilter: SCContentFilter(display: display, including: [win] + members), configuration: cfg)
-                let method = "window-pixels" + (attached.isEmpty ? "" : " with the \(attached.map(kind).joined(separator: " and ")) over it")
-                return (img, method + origin(CGPoint(x: area.minX + display.frame.minX, y: area.minY + display.frame.minY)))
-            } catch {
-                displayError = error.localizedDescription   // try the window on its own
-            }
-        }
+        // Only ever the window itself (the user's rule): never a capture of the display, even filtered to EditMax's
+        // windows, since a display capture once photographed another app. macOS draws the window's attached popovers
+        // and sheets into this picture when it can; when it cannot, the answer says so instead of reaching for the screen.
         let cfg = SCStreamConfiguration()
         cfg.showsCursor = false
         cfg.captureResolution = .best
         cfg.width = Int(win.frame.width * scale); cfg.height = Int(win.frame.height * scale)
         let img: CGImage
         do { img = try await SCScreenshotManager.captureImage(contentFilter: SCContentFilter(desktopIndependentWindow: win), configuration: cfg) }
-        catch { throw CaptureFailure.failed(error.localizedDescription + (displayError.map { "; on its display: \($0)" } ?? "")) }
+        catch { throw CaptureFailure.failed(error.localizedDescription) }
         var method = "window-pixels" + origin(win.frame.origin)
         if !attached.isEmpty {
-            let why = displayError.map { "capturing it with the window failed: \($0)" } ?? "the window is not on screen here (another Space), where only the window itself can be captured"
-            method += "; the \(attached.map(kind).joined(separator: " and ")) over it is not in the picture (\(why))"
+            method += "; the \(attached.map(kind).joined(separator: " and ")) over it is in the picture only if macOS drew it with the window (screenshots never capture the display)"
         }
         return (img, method)
     }

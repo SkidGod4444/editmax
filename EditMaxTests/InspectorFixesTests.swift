@@ -33,7 +33,8 @@ final class OffscreenHost {
         for _ in 0..<rounds { host.layoutSubtreeIfNeeded(); RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
     }
 
-    func frame(_ id: String) -> CGRect? { UIRegistry.shared.frame(id) }
+    /// What a user can see of `id` in this window (the driver only reports elements of the window it works on).
+    func frame(_ id: String) -> CGRect? { UIRegistry.shared.elements(in: window).visible.first { $0.id == id }?.rect }
 
     /// Writes the whole view, or the band `rows` (window points) of it, as a PNG under $EDITMAX_PREVIEW_DIR/inspector-fixes.
     func save(_ name: String, rows: ClosedRange<CGFloat>? = nil) {
@@ -373,19 +374,21 @@ final class InspectorFixesPreviewTests: XCTestCase {
                 XCTAssertGreaterThanOrEqual(f.minY, 0); XCTAssertLessThanOrEqual(f.maxY, size.height, "\(id) is below the pane: \(f)")
                 XCTAssertGreaterThanOrEqual(f.height, 20, "\(id) is \(f.size)")
             }
-            for t in names {
-                let g = try XCTUnwrap(h.frame("mixer.\(t).gain.slider")), pan = try XCTUnwrap(h.frame("mixer.\(t).pan.slider"))
-                XCTAssertGreaterThanOrEqual(g.width, 180, "\(t) gain slider is \(g.width) pt"); XCTAssertGreaterThanOrEqual(pan.width, 180)
-                let m = try XCTUnwrap(h.frame("mixer.\(t).mute"))
-                XCTAssertGreaterThanOrEqual(m.height, 20); XCTAssertGreaterThanOrEqual(m.width, 20)
-            }
-            let trash = try XCTUnwrap(h.frame("mixer.bus.Music.remove"))
-            XCTAssertGreaterThanOrEqual(trash.width, 20); XCTAssertGreaterThanOrEqual(trash.height, 20)
             h.save("l9-mixer-380x383-\(dark ? "dark" : "light")")
             h.close()
         }
-        // The pane scrolled to the end, so the buses' footer (no framework names) is in the picture too.
+        // Sizes are measured where every row is in view: the short pane scrolls its tracks, and a scrolled-away row is
+        // (rightly) not something a user can see or click.
         let tall = OffscreenHost(MixerPane(document: doc, player: nil), size: CGSize(width: 380, height: 760), dark: true)
+        for t in names {
+            let g = try XCTUnwrap(tall.frame("mixer.\(t).gain.slider"), t), pan = try XCTUnwrap(tall.frame("mixer.\(t).pan.slider"), t)
+            XCTAssertGreaterThanOrEqual(g.width, 180, "\(t) gain slider is \(g.width) pt"); XCTAssertGreaterThanOrEqual(pan.width, 180)
+            let m = try XCTUnwrap(tall.frame("mixer.\(t).mute"), t)
+            XCTAssertGreaterThanOrEqual(m.height, 20); XCTAssertGreaterThanOrEqual(m.width, 20)
+        }
+        let trash = try XCTUnwrap(tall.frame("mixer.bus.Music.remove"))
+        XCTAssertGreaterThanOrEqual(trash.width, 20); XCTAssertGreaterThanOrEqual(trash.height, 20)
+        // The buses' footer (no framework names) is in this picture too.
         tall.save("l9-mixer-380x760-dark")
         tall.close()
         // What the pane shows while a measurement runs.
@@ -446,7 +449,7 @@ final class LibraryDoubleClickTests: LibraryTestCase {
         doc.project.assets = [Asset(name: item.name, path: item.path, kind: .video, duration: 2, width: 1920, height: 1080)]
         let h = OffscreenHost(LibraryPanelList(document: doc) { _ in }, size: CGSize(width: 260, height: 160), dark: true)
         defer { h.close() }
-        let tap = try XCTUnwrap(UIRegistry.shared.tapHandlers["media.library.\(item.name)"]?[2], "the row takes a double-click")
+        let tap = try XCTUnwrap(UIRegistry.shared.tap("media.library.\(item.name)", count: 2), "the row takes a double-click")
         tap()
         h.settle()
         XCTAssertEqual(doc.project.assets.count, 1, "nothing is added twice")

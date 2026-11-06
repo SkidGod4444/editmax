@@ -188,10 +188,9 @@ window's own key equivalents (a default button, a SwiftUI `.keyboardShortcut`), 
 does (posted when EditMax is active, `performKeyEquivalent` on the main menu when not).
 
 `ui_screenshot` never asks for Screen Recording (a debug build is re-signed on every build, so macOS would forget the
-grant). With it, and the window on screen, the display is captured through a filter that includes only the editor
-window and the windows attached to it, and ScreenCaptureKit draws child windows (popovers, sheets) in place
-(`includeChildWindows`; the single-window filter `desktopIndependentWindow` leaves them out). On another Space only the
-window itself can be captured and the answer says its popover is missing. Menus and other EditMax windows over it are
+grant). With it, only the editor window itself is captured (`desktopIndependentWindow`), never the display, not even
+filtered to EditMax's windows: a display capture once photographed another app. A popover or sheet is in the picture
+only when macOS draws it with the window, and the answer says when one is attached. Menus and other EditMax windows over it are
 left out: captured one by one, a menu came back as a shrunken copy of the whole window. Without the permission, or when
 capture fails, the layer tree is rendered and the answer carries the real reason (only a missing permission is called
 one).

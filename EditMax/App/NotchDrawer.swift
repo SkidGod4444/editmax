@@ -275,23 +275,34 @@ final class NotchDrawer: ObservableObject {
         return p.frame.contains(NSEvent.mouseLocation)
     }
 
-    /// Changes the state: the panel grows to the new size first and the shape springs into it; when folding, the
-    /// shape springs back first and the panel shrinks after.
+    /// Changes the state: the panel first grows to hold both the old and the new shape, then the shape springs from one
+    /// to the other, and once the spring has settled the panel takes the new size.
+    ///
+    /// Both sizes are centred on the notch, so the panel only ever grows outward and down. It is laid out at once, outside
+    /// the spring: left to the next pass, SwiftUI animated the shape's move to the wider panel's centre together with its
+    /// size, so the drawer slid in from the left instead of growing out from behind the camera.
     private func set(_ new: Mode) {
         guard new != mode else { return }
         if new != .peek { peeking = nil }
         // macOS said no to Downloads earlier: try again when the drawer opens, in case the user has since allowed it.
         if new == .open, downloadsDenied, started, AppSettings.shared.notchDrawer, AppSettings.shared.watchDownloads { startWatching() }
-        let g = geometry
-        if let p = panel, let g, new != .collapsed { p.setFrame(frame(for: new, in: g), display: true) }
-        withAnimation(Self.spring) { mode = new }
-        if new == .collapsed, let p = panel, let g {
-            Task { [weak self] in
-                try? await Task.sleep(for: .milliseconds(420))
-                guard let self, self.mode == .collapsed else { return }
-                p.setFrame(g.collapsedFrame, display: true)
+        if let p = panel, let g = geometry {
+            let target = frame(for: new, in: g)
+            let room = p.frame.union(target)
+            if room != p.frame {
+                p.setFrame(room, display: false)
+                p.contentView?.layoutSubtreeIfNeeded()
+            }
+            if room != target {
+                Task { [weak self] in
+                    try? await Task.sleep(for: .milliseconds(420))
+                    guard let self, self.mode == new else { return }
+                    p.setFrame(target, display: true)
+                    p.contentView?.layoutSubtreeIfNeeded()
+                }
             }
         }
+        withAnimation(Self.spring) { mode = new }
         DebugLog.event("drawer-mode", ["mode": "\(new)"])
     }
 

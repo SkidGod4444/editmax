@@ -313,17 +313,6 @@ final class UIDriverTests: XCTestCase {
 
     // MARK: L12 — screenshots
 
-    func testCaptureAreaHoldsTheWindowAndWhatHangsOverIt() {
-        let display = CGRect(x: 1440, y: 0, width: 1920, height: 1080)   // a second display to the right
-        let win = CGRect(x: 1540, y: 100, width: 1400, height: 800)
-        XCTAssertEqual(UIDriver.captureArea(window: win, attached: [], display: display), CGRect(x: 100, y: 100, width: 1400, height: 800))
-        // A popover sticking out above the window widens the picture to hold it.
-        let pop = CGRect(x: 2000, y: 60, width: 300, height: 200)
-        XCTAssertEqual(UIDriver.captureArea(window: win, attached: [pop], display: display), CGRect(x: 100, y: 60, width: 1400, height: 840))
-        // Half off the display: not captured from the display (the window alone is captured instead).
-        XCTAssertNil(UIDriver.captureArea(window: CGRect(x: 1000, y: 100, width: 1400, height: 800), attached: [], display: display))
-    }
-
     func testFallbackReasonIsTheRealOne() {
         XCTAssertTrue(UIDriver.CaptureFailure.notGranted.reason.contains("not granted"))
         for f in [UIDriver.CaptureFailure.failed("audio/video capture failure"), .offScreen, .notListed] {

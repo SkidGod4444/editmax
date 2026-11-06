@@ -13,13 +13,17 @@ struct TimelineView: View {
     @State private var dropError: String?
     @State private var trackDropTarget: UUID?   // header row a dragged track hovers over
     @State private var hoveredHeader: UUID?
+    /// How far the lanes are scrolled down: the ruler and the corner above the headers are held at the top by it.
+    @State private var vertical = PinnedOffset()
     private var actions: EditorActions { EditorActions(document: document, state: state, player: player) }
 
-    private let headerWidth: CGFloat = 132
+    private let headerWidth: CGFloat = 150
     private let rowHeight: CGFloat = 66
-    private let rulerHeight: CGFloat = 24
+    /// Two bands: timecodes along the top, marker pins and names along the bottom, so a marker never covers a time.
+    private let rulerHeight: CGFloat = 30
 
     private var pps: CGFloat { CGFloat(state.pixelsPerSecond) }
+    private var fps: Double { document.project.settings.fps }
     private var contentWidth: CGFloat { max(800, CGFloat(document.project.duration + 10) * pps) }
 
     var body: some View {
@@ -27,16 +31,20 @@ struct TimelineView: View {
             toolbar
             Divider()
             GeometryReader { geo in
-                // Track headers stay put while the lanes scroll sideways; both scroll together vertically.
+                // Track headers stay put while the lanes scroll sideways; both scroll together vertically. The ruler
+                // scrolls sideways with the lanes (it lives in their scroll view) and is held at the top when they
+                // scroll down, as is the corner above the headers.
                 ScrollView(.vertical) {
                     HStack(alignment: .top, spacing: 0) {
                         headers.frame(width: headerWidth, alignment: .leading).clipped().frame(minHeight: geo.size.height, alignment: .top)
+                            .overlay(alignment: .top) { PinnedToTop(offset: vertical) { corner } }
                         ScrollView(.horizontal) {
                             // The lanes, grid and playhead fill the whole pane, so an empty project still reads as a timeline.
                             ZStack(alignment: .topLeading) {
                                 grid
                                 tracksArea
                                 playhead
+                                PinnedToTop(offset: vertical) { rulerStrip }
                             }
                             .frame(width: max(contentWidth, geo.size.width - headerWidth), alignment: .topLeading).frame(minHeight: geo.size.height, alignment: .topLeading)
                         }
@@ -45,9 +53,27 @@ struct TimelineView: View {
                         .onChange(of: player.currentTime) { _, t in followPlayhead(t) }
                     }
                 }
+                .onScrollGeometryChange(for: CGFloat.self) { g in max(0, g.contentOffset.y + g.contentInsets.top) } action: { _, y in vertical.y = y }
             }
             .background(Color(nsColor: .underPageBackgroundColor))
         }
+    }
+
+    /// Above the headers, level with the ruler: opaque, so header rows scrolled up pass under it.
+    private var corner: some View {
+        Rectangle().fill(Color(nsColor: .controlBackgroundColor))
+            .frame(width: headerWidth, height: rulerHeight)
+            .overlay(alignment: .bottom) { Rectangle().fill(Color.primary.opacity(0.15)).frame(height: 1) }
+    }
+
+    /// The ruler and the playhead's head, on an opaque ground so lanes scrolled up pass under them.
+    private var rulerStrip: some View {
+        ZStack(alignment: .topLeading) {
+            ruler
+            playheadHead
+        }
+        .frame(height: rulerHeight)
+        .background(Color(nsColor: .underPageBackgroundColor))
     }
 
     /// Fixed strip above the ruler: transport | timecode HUD | undo/redo | icon-only edit actions in purpose groups | zoom.
@@ -126,8 +152,7 @@ struct TimelineView: View {
 
     private var headers: some View {
         VStack(spacing: 0) {
-            Color.clear.frame(height: rulerHeight)
-            Divider()
+            Color.clear.frame(height: rulerHeight)   // under the pinned corner; rows then line up with the lanes
             ForEach(document.project.rows) { row in
                 switch row {
                 case .text: textHeader
@@ -157,30 +182,39 @@ struct TimelineView: View {
         }
     }
 
-    private func headerIcon(_ symbol: String, on: Bool, help: String, id: String, action: @escaping () -> Void) -> some View {
+    /// `on` draws the icon in `tint` (orange for hide and mute, yellow for solo, as in the mixer); `faded` greys an icon
+    /// whose state is overridden elsewhere (a track silenced because another one is soloed).
+    private func headerIcon(_ symbol: String, on: Bool, tint: Color = .orange, faded: Bool = false, help: String, id: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol).font(.system(size: 10, weight: .medium)).imageScale(.medium)
                 .frame(width: 20, height: 20).contentShape(Rectangle())
         }
         .buttonStyle(.borderless).focusable(false)
-        .foregroundStyle(on ? Color.orange : Color.secondary)
+        .foregroundStyle(on ? tint : faded ? Color.secondary.opacity(0.4) : Color.secondary)
         .help(help).pointer().uiFrame(id)
     }
 
     private func trackHeader(_ track: Track) -> some View {
-                HStack(spacing: 6) {
+                let silencedBySolo = !track.isMuted && Mixer.isSilencedBySolo(track, in: document.project)
+                return HStack(spacing: 6) {
                     Image(systemName: "line.3.horizontal").font(.system(size: 9)).foregroundStyle(hoveredHeader == track.id ? .secondary : .quaternary)
                     headerTitle(track.name, kind: track.kind == .video ? "Video" : "Audio")
                     Spacer(minLength: 2)
+                    // Hide | mute | solo in fixed slots, so the icons line up across rows.
                     HStack(spacing: 0) {
                         if track.kind == .video {
                             headerIcon(track.isHidden ? "eye.slash" : "eye", on: track.isHidden, help: track.isHidden ? "Hidden; click to show" : "Hide this track", id: "header.\(track.name).hide") { toggleHidden(track) }
                         } else {
                             Color.clear.frame(width: 20, height: 20)
                         }
-                        headerIcon(track.isMuted ? "speaker.slash" : "speaker.wave.2", on: track.isMuted, help: track.isMuted ? "Muted; click to unmute" : "Mute this track", id: "header.\(track.name).mute") { toggleMute(track) }
+                        headerIcon(track.isMuted || silencedBySolo ? "speaker.slash" : "speaker.wave.2", on: track.isMuted, faded: silencedBySolo,
+                                   help: track.isMuted ? "Muted; click to unmute" : silencedBySolo ? "Silent while another track is soloed; click to mute it as well" : "Mute this track",
+                                   id: "header.\(track.name).mute") { toggleMute(track) }
+                        headerIcon("headphones", on: track.mix.solo, tint: .yellow,
+                                   help: track.mix.solo ? "Soloed: only soloed tracks are heard; click to unsolo" : "Solo: hear only this track (and any other soloed one)",
+                                   id: "header.\(track.name).solo") { toggleSolo(track) }
                     }
-                    .frame(width: 40)
+                    .frame(width: 60)
                 }
                 .padding(.leading, 8).padding(.trailing, 4).frame(height: rowHeight)
                 .contentShape(Rectangle())
@@ -197,6 +231,7 @@ struct TimelineView: View {
                 .uiFrame("header.\(track.name)")
                 .contextMenu {
                     Button(track.isMuted ? "Unmute" : "Mute", systemImage: track.isMuted ? "speaker.wave.2" : "speaker.slash") { toggleMute(track) }
+                    Button(track.mix.solo ? "Unsolo" : "Solo", systemImage: "headphones") { toggleSolo(track) }
                     if track.kind == .video { Button(track.isHidden ? "Show" : "Hide", systemImage: track.isHidden ? "eye" : "eye.slash") { toggleHidden(track) } }
                     Divider()
                     Button(track.clips.isEmpty ? "Delete track" : "Delete track and \(track.clips.count) clip\(track.clips.count == 1 ? "" : "s")", systemImage: "trash", role: .destructive) {
@@ -211,7 +246,7 @@ struct TimelineView: View {
         let id = Project.textRowID
         return HStack(spacing: 6) {
             Image(systemName: "line.3.horizontal").font(.system(size: 9)).foregroundStyle(hoveredHeader == id ? .secondary : .quaternary)
-            headerTitle("Text", kind: "Titles & captions")
+            headerTitle("Text", kind: "Titles & captions")   // no icons on this row, so the kind has the room
             Spacer(minLength: 2)
         }
         .padding(.leading, 8).padding(.trailing, 4).frame(height: rowHeight)
@@ -275,7 +310,7 @@ struct TimelineView: View {
 
     private var tracksArea: some View {
         VStack(spacing: 0) {
-            ruler.frame(height: rulerHeight)
+            Color.clear.frame(height: rulerHeight)   // the ruler itself is pinned above the lanes (rulerStrip)
             ForEach(document.project.rows) { row in
                 switch row {
                 case .track(let track):
@@ -399,14 +434,16 @@ struct TimelineView: View {
             ctx.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.black.opacity(0.18)))
             let step: Double = pps >= 120 ? 0.5 : pps >= 40 ? 1 : pps >= 20 ? 2 : 5
             let minor = step / 5
+            // Timecodes in the top band; ticks and marker pins share the bottom band (markers are drawn after, on top).
+            let labelY: CGFloat = 8, markerTop = size.height - 14
             var i = 0
             while CGFloat(Double(i) * minor) * pps < size.width {
                 let t = Double(i) * minor   // computed, not accumulated, so labels stay exact
                 let x = CGFloat(t) * pps
                 let isMajor = i % 5 == 0
-                let h: CGFloat = isMajor ? 9 : 4
+                let h: CGFloat = isMajor ? 8 : 4
                 ctx.stroke(Path { $0.move(to: CGPoint(x: x, y: size.height)); $0.addLine(to: CGPoint(x: x, y: size.height - h)) }, with: .color(.primary.opacity(isMajor ? 0.5 : 0.22)), lineWidth: 1)
-                if isMajor { ctx.draw(Text(Timecode.string(t)).font(.system(size: 9, weight: .medium, design: .rounded)).foregroundColor(.secondary), at: CGPoint(x: x + 4, y: 7), anchor: .leading) }
+                if isMajor { ctx.draw(Text(Timecode.string(t, fps: fps)).font(.system(size: 9, weight: .medium, design: .rounded)).foregroundColor(.secondary), at: CGPoint(x: x + 4, y: labelY), anchor: .leading) }
                 i += 1
             }
             if let i = state.inPoint, let o = state.outPoint, o > i {
@@ -417,14 +454,14 @@ struct TimelineView: View {
             }
             for m in document.project.markers {
                 let x = CGFloat(m.time) * pps
-                let flag = Path { p in p.move(to: CGPoint(x: x, y: 2)); p.addLine(to: CGPoint(x: x + 7, y: 2)); p.addLine(to: CGPoint(x: x + 7, y: 8)); p.addLine(to: CGPoint(x: x, y: 8)); p.addLine(to: CGPoint(x: x, y: size.height)) }
-                ctx.fill(Path(CGRect(x: x, y: 2, width: 7, height: 6)), with: .color(Color(hex: m.colorHex)))
+                let flag = Path { p in p.move(to: CGPoint(x: x, y: markerTop)); p.addLine(to: CGPoint(x: x + 7, y: markerTop)); p.addLine(to: CGPoint(x: x + 7, y: markerTop + 6)); p.addLine(to: CGPoint(x: x, y: markerTop + 6)); p.addLine(to: CGPoint(x: x, y: size.height)) }
+                ctx.fill(Path(CGRect(x: x, y: markerTop, width: 7, height: 6)), with: .color(Color(hex: m.colorHex)))
                 ctx.stroke(flag, with: .color(Color(hex: m.colorHex)), lineWidth: 1)
                 if !m.name.isEmpty {
-                    // A tag in the marker's colour: the name sits over the timecode labels, so it needs its own ground.
+                    // A tag in the marker's colour beside the pin, in the bottom band: it covers ticks, never a timecode.
                     let label = ctx.resolve(Text(m.name).font(.system(size: 8, weight: .medium)).foregroundColor(.white))
                     let s = label.measure(in: CGSize(width: 120, height: 12))
-                    let tag = CGRect(x: x + 10, y: 1, width: s.width + 6, height: 10)
+                    let tag = CGRect(x: x + 10, y: markerTop - 1, width: s.width + 6, height: 11)
                     ctx.fill(Path(roundedRect: tag, cornerRadius: 3), with: .color(Color(hex: m.colorHex).opacity(0.9)))
                     ctx.draw(label, at: CGPoint(x: tag.minX + 3, y: tag.midY), anchor: .leading) }
             }
@@ -441,7 +478,7 @@ struct TimelineView: View {
             if !document.project.markers.isEmpty {
                 Divider()
                 ForEach(document.project.markers) { m in
-                    Button("Remove marker \(m.name.isEmpty ? Timecode.string(m.time) : m.name)", systemImage: "flag.slash") { document.apply("Remove marker", origin: .user) { p in p.markers.removeAll { $0.id == m.id } } }
+                    Button("Remove marker \(m.name.isEmpty ? Timecode.string(m.time, fps: fps) : m.name)", systemImage: "flag.slash") { document.apply("Remove marker", origin: .user) { p in p.markers.removeAll { $0.id == m.id } } }
                 }
             }
         }
@@ -455,7 +492,7 @@ struct TimelineView: View {
         return TimelineBar(id: clip.id, uiID: "clip.\(clip.id.short)", start: clip.start, duration: clip.duration, pps: pps, height: rowHeight - 10,
                            minStart: TrimLimitsUI.minStart(clip, asset: asset, project: document.project),
                            maxEnd: TrimLimitsUI.maxEnd(clip, asset: asset, project: document.project),
-                           help: "\(clip.name)  \(Timecode.string(clip.start)) → \(Timecode.string(clip.end))",
+                           help: "\(clip.name)  \(Timecode.string(clip.start, fps: fps)) → \(Timecode.string(clip.end, fps: fps))",
                            snaps: snapTimes(excluding: clip.id),
                            onSelect: { drag in select(clip.id, keepGroup: drag) },
                            onMove: { newStart in
@@ -468,7 +505,8 @@ struct TimelineView: View {
                            onTrimEnd: { try? x.trimClip(clip.id.uuidString, start: nil, end: $0) },
                            editing: BarEditing.make(clip: clip, track: track, document: document, tool: state.editTool, strip: thumbnails.strips[clip.assetID], peaks: waveforms.peaks[clip.assetID] ?? [])) {
             ClipBody(clip: clip, kind: track.kind, selected: selected, height: rowHeight - 10, pps: pps,
-                     peaks: waveforms.peaks[clip.assetID] ?? [], strip: thumbnails.strips[clip.assetID])
+                     peaks: waveforms.peaks[clip.assetID] ?? [], strip: thumbnails.strips[clip.assetID],
+                     off: ClipBody.Off(track: track, in: document.project))
                 .equatable()
                 .onAppear { if let asset { waveforms.request(asset); thumbnails.request(asset) } }
                 .contextMenu {
@@ -491,7 +529,7 @@ struct TimelineView: View {
             document.apply(label, origin: .user) { p in if let i = p.texts.firstIndex(where: { $0.id == t.id }) { body(&p.texts[i]) } }
         }
         return TimelineBar(id: t.id, uiID: "text.\(t.id.short)", start: t.start, duration: t.duration, pps: pps, height: 30, minStart: 0, maxEnd: .infinity,
-                           help: "\(t.text)  \(Timecode.string(t.start)) → \(Timecode.string(t.end))", snaps: snapTimes(excluding: t.id),
+                           help: "\(t.text)  \(Timecode.string(t.start, fps: fps)) → \(Timecode.string(t.end, fps: fps))", snaps: snapTimes(excluding: t.id),
                            onSelect: { _ in state.selectedTextID = t.id; state.selectedClipIDs = [] },
                            onMove: { s in edit("Move text to \(s)s") { $0.start = s } },
                            onTrimStart: { s in edit("Trim text") { $0.duration = t.end - s; $0.start = s } },
@@ -512,15 +550,18 @@ struct TimelineView: View {
 
     private var playhead: some View {
         let x = CGFloat(player.currentTime) * pps
-        return ZStack(alignment: .topLeading) {
-            Rectangle().fill(Color.red).frame(width: 1).frame(maxHeight: .infinity).offset(x: x)
-            // Head in the ruler: a small downward triangle whose tip meets the line at the ruler's bottom edge.
-            Path { p in
-                p.move(to: CGPoint(x: 0, y: rulerHeight - 8)); p.addLine(to: CGPoint(x: 10, y: rulerHeight - 8))
-                p.addLine(to: CGPoint(x: 5, y: rulerHeight)); p.closeSubpath()
-            }
-            .fill(Color.red).frame(width: 10, height: rulerHeight).offset(x: x - 4.5)
+        return Rectangle().fill(Color.red).frame(width: 1).frame(maxHeight: .infinity).offset(x: x)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .allowsHitTesting(false)
+    }
+
+    /// The playhead's head in the ruler: a small downward triangle whose tip meets the line at the ruler's bottom edge.
+    private var playheadHead: some View {
+        Path { p in
+            p.move(to: CGPoint(x: 0, y: rulerHeight - 8)); p.addLine(to: CGPoint(x: 10, y: rulerHeight - 8))
+            p.addLine(to: CGPoint(x: 5, y: rulerHeight)); p.closeSubpath()
         }
+        .fill(Color.red).frame(width: 10, height: rulerHeight).offset(x: CGFloat(player.currentTime) * pps - 4.5)
         .allowsHitTesting(false)
     }
 
@@ -553,6 +594,11 @@ struct TimelineView: View {
             if let i = p.tracks.firstIndex(where: { $0.id == track.id }) { p.tracks[i].isMuted.toggle() }
         }
     }
+    /// The same solo as the mixer's S button (one history entry, same label).
+    private func toggleSolo(_ track: Track) {
+        let x = ToolExecutor(document: document, origin: .user)
+        Task { _ = try? await x.setTrackMix(track.id.uuidString, gain: nil, pan: nil, solo: !track.mix.solo, mute: nil, bus: nil) }
+    }
 }
 
 /// The look of a clip: frames on top and a waveform band for video, a full waveform for audio, the name in a pill.
@@ -565,10 +611,26 @@ struct ClipBody: View, Equatable {
     let pps: CGFloat
     let peaks: [Float]
     let strip: ThumbnailStore.Strip?
+    /// What of the clip is left out of the program by its track, so the bar can say so (dimmed).
+    var off = Off()
+
+    /// A hidden track leaves its clips out of the program entirely (picture and sound); a muted track, or one silenced
+    /// because another track is soloed, leaves out their sound only.
+    struct Off: Equatable {
+        var picture = false
+        var sound = false
+        init(picture: Bool = false, sound: Bool = false) { self.picture = picture; self.sound = sound }
+        init(track: Track, in project: Project) {
+            picture = track.isHidden
+            sound = track.isHidden || track.isMuted || Mixer.isSilencedBySolo(track, in: project)
+        }
+        /// The whole bar dims: a hidden track, or an audio clip that is not heard.
+        func whole(_ kind: TrackKind) -> Bool { picture || (kind == .audio && sound) }
+    }
 
     static func == (a: ClipBody, b: ClipBody) -> Bool {
         a.clip == b.clip && a.kind == b.kind && a.selected == b.selected && a.height == b.height && a.pps == b.pps
-            && a.peaks.count == b.peaks.count && a.strip?.frames.count == b.strip?.frames.count
+            && a.peaks.count == b.peaks.count && a.strip?.frames.count == b.strip?.frames.count && a.off == b.off
     }
 
     /// Transition wedge at the head, fade ramps at both ends, as other editors draw them.
@@ -614,6 +676,7 @@ struct ClipBody: View, Equatable {
     var body: some View {
         let waveBand: CGFloat = kind == .video ? 18 : height
         let base = kind == .video ? Color(red: 0.16, green: 0.32, blue: 0.62) : Color(red: 0.15, green: 0.45, blue: 0.3)
+        let whole = off.whole(kind), soundBand = kind == .video && off.sound && !off.picture
         RoundedRectangle(cornerRadius: 6)
             .fill(base.opacity(selected ? 1 : 0.85))
             .overlay {
@@ -636,18 +699,27 @@ struct ClipBody: View, Equatable {
                         }
                     }
                     .frame(height: waveBand)
+                    .saturation(soundBand ? 0 : 1).opacity(soundBand ? 0.35 : 1)   // a muted video track: picture plays, sound does not
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 6))
             }
             .overlay { if clip.transitionIn != nil || clip.fadeIn > 0 || clip.fadeOut > 0 || clip.isAnimated || clip.multicam != nil { marks.clipShape(RoundedRectangle(cornerRadius: 6)) } }
+            // Left out of the program (hidden track, audio not heard): greyed and faded, as other editors show a disabled
+            // clip; the selection ring and the name stay readable.
+            .saturation(whole ? 0.1 : 1).opacity(whole ? 0.4 : 1)
             // Selection: a slight brightening plus a 1.5 pt accent ring; at rest a hairline edge.
             .overlay { if selected { RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.08)).allowsHitTesting(false) } }
             .overlay(RoundedRectangle(cornerRadius: 6).stroke(selected ? Color.accentColor : Color.white.opacity(0.12), lineWidth: selected ? 1.5 : 0.5))
             .overlay(alignment: .topLeading) {
-                Text(clip.name).font(.caption2.weight(.medium)).lineLimit(1).foregroundStyle(.white)
-                    .padding(.horizontal, 5).padding(.vertical, 2)
-                    .background(Color.black.opacity(0.6), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
-                    .padding(4)
+                HStack(spacing: 3) {
+                    if off.picture { Image(systemName: "eye.slash").font(.system(size: 8, weight: .semibold)) }
+                    else if off.sound { Image(systemName: "speaker.slash").font(.system(size: 8, weight: .semibold)) }
+                    Text(clip.name).font(.caption2.weight(.medium)).lineLimit(1)
+                }
+                .foregroundStyle(.white.opacity(whole ? 0.75 : 1))
+                .padding(.horizontal, 5).padding(.vertical, 2)
+                .background(Color.black.opacity(0.6), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+                .padding(4)
             }
     }
 }
@@ -820,5 +892,21 @@ private struct TimelineBar<Content: View>: View {
                     if editing?.kind(edge: leading) != nil { toolDragEnded(); return }
                     let dx = snappedTrim(leading: leading, v.translation.width); trim = nil; commitTrim(leading: leading, dx: dx)
                 })
+    }
+}
+
+/// How far a scroll view is scrolled, shared with the views it pins. Observable, so a scroll redraws only the pinned
+/// views (they read `y`), not the whole timeline that owns it.
+@Observable final class PinnedOffset {
+    var y: CGFloat = 0
+}
+
+/// Holds `content` at the top of the visible part of an enclosing vertical scroll view: offset down by as much as the
+/// scroll view has scrolled. Inside a horizontal scroll view it still scrolls sideways with its neighbours.
+struct PinnedToTop<Content: View>: View {
+    let offset: PinnedOffset
+    @ViewBuilder let content: () -> Content
+    var body: some View {
+        content().offset(y: offset.y).zIndex(1)
     }
 }

@@ -314,6 +314,11 @@ private struct AdvancedSettings: View {
                 Text("Agents reach the timeline through this local server. A new port takes effect after you relaunch EditMax; the token is written into the agents' config for you.")
             }
             Section {
+                Toggle("Follow the agent in the window", isOn: $s.followAgent).pointer().uiFrame("settings.advanced.followAgent")
+            } footer: {
+                Text("While an agent edits, the window shows where: the clip is selected, the playhead moves onto it, the inspector scrolls to the setting that changes and the mixer opens for a mix change. It waits while you are using the mouse or keyboard.")
+            }
+            Section {
                 HStack(spacing: 8) {
                     Button("Reveal Logs") { DebugLog.reveal() }.controlSize(.small).pointer().uiFrame("settings.advanced.logs")
                     Button("Export Diagnostics…") { export() }.controlSize(.small).pointer().uiFrame("settings.advanced.export")

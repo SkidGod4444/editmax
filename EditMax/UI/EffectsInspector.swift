@@ -47,9 +47,9 @@ struct ClipEffectsSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: InspectorStyle.gap) {
-            keyCard
-            blendCard
-            blurCard
+            keyCard.revealAnchor(.key)
+            blendCard.revealAnchor(.blend)
+            blurCard.revealAnchor(.faceBlur)
         }
         .onChange(of: clip.id) { _, _ in blurTask?.cancel(); blurTask = nil; blurProgress = nil; blurNote = nil; keyNote = nil }
     }
@@ -241,8 +241,8 @@ struct TextEffectsSection: View {
                         apply { try slide.setTextAnimation(id, inKind: nil, inDuration: nil, outKind: nil, outDuration: (v * 100).rounded() / 100) }
                     }
                 }
-            }
-            if !text.isCaption { lowerThirdCard }
+            }.revealAnchor(.textAnimation)
+            if !text.isCaption { lowerThirdCard.revealAnchor(.lowerThird) }
         }
         .onAppear { roleDraft = text.lowerThird?.role ?? "" }
         .onChange(of: text.id) { _, _ in roleDraft = text.lowerThird?.role ?? ""; note = nil }

@@ -19,6 +19,7 @@ final class AppSettings: ObservableObject {
         static let showSplash = "showSplash", appearance = "appearance", library = "libraryDirectory"
         static let autoUpdate = "autoUpdateRuntime", mcpPort = "mcpPort", liquidGlass = "useLiquidGlass"
         static let chatBackend = "chatBackend", chatAgent = "chatAgent", chatProvider = "chatProvider", chatModel = "chatModel"
+        static let followAgent = "followAgent"
     }
 
     /// A Bool default with a default: UserDefaults reads an unset key as false.
@@ -36,6 +37,7 @@ final class AppSettings: ObservableObject {
     @Published var autoUpdateRuntime: Bool { didSet { d.set(autoUpdateRuntime, forKey: Key.autoUpdate) } }
     @Published var mcpPort: Int { didSet { d.set(mcpPort, forKey: Key.mcpPort) } }
     @Published var useLiquidGlass: Bool { didSet { d.set(useLiquidGlass, forKey: Key.liquidGlass) } }
+    @Published var followAgent: Bool { didSet { d.set(followAgent, forKey: Key.followAgent) } }
 
     @Published var chatBackend: String { didSet { d.set(chatBackend, forKey: Key.chatBackend); broadcast() } }
     @Published var chatAgent: String { didSet { d.set(chatAgent, forKey: Key.chatAgent); broadcast() } }
@@ -49,6 +51,7 @@ final class AppSettings: ObservableObject {
         autoUpdateRuntime = Self.bool(Key.autoUpdate, default: true)
         mcpPort = d.integer(forKey: Key.mcpPort).nonZero ?? 19790
         useLiquidGlass = Self.bool(Key.liquidGlass, default: true)
+        followAgent = Self.bool(Key.followAgent, default: true)
         chatBackend = d.string(forKey: Key.chatBackend) ?? "Agent"
         chatAgent = d.string(forKey: Key.chatAgent) ?? "claude"
         chatProvider = d.string(forKey: Key.chatProvider) ?? "claude-agent"

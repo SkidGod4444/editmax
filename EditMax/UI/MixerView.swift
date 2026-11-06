@@ -7,11 +7,32 @@ struct MixerSplit<Content: View>: View {
     let player: PlayerController
     @ViewBuilder let content: () -> Content
     @AppStorage("mixerOpen") private var open = false
+    /// The mixer's width, kept between launches. (A split view opened it at half the window on every launch.)
+    @AppStorage("mixerWidth") private var width = 380.0
+    @State private var dragStart: Double?
 
     var body: some View {
-        HSplitView {
-            content().frame(minWidth: 400)
-            if open { MixerPane(document: document, player: player).frame(minWidth: 380, idealWidth: 460, maxWidth: 720) }
+        GeometryReader { geo in
+            let w = min(max(width, 380), min(720, geo.size.width - 406))
+            HStack(spacing: 0) {
+                content().frame(maxWidth: .infinity)
+                if open {
+                    // The edge between them: drag it to make the mixer wider or narrower.
+                    Color.clear.frame(width: 6).contentShape(Rectangle())
+                        .overlay(Divider())
+                        .onHover { inside in if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() } }
+                        .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                            .onChanged { g in
+                                let start = dragStart ?? w
+                                if dragStart == nil { dragStart = w }
+                                width = min(max(start - g.translation.width, 380), 720)
+                            }
+                            .onEnded { _ in dragStart = nil })
+                        .uiFrame("mixer.resize")
+                        .uiDrag("mixer.resize", key: "\(w)") { dx in width = min(max(w - dx, 380), 720) }
+                    MixerPane(document: document, player: player).frame(width: max(w, 380))
+                }
+            }
         }
     }
 }

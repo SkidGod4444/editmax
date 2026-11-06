@@ -63,6 +63,9 @@ The current download (0.1.1) does not have these yet. They are on `main` and shi
   with pan, solo, buses and a master limiter. [docs/audio.md](docs/audio.md)
 - **Editing:** roll, slip and slide trims, J and L cuts, a source viewer with insert, overwrite and fit to fill, match
   frame, scene cut detection, relink and consolidate media, smooth slow motion. [docs/editing.md](docs/editing.md)
+- **Follow the agent:** while an agent edits, the window shows where: the clip is selected, the playhead moves onto
+  it, the inspector scrolls to the setting that changes and the mixer opens for a mix change. It waits while you use
+  the mouse or keyboard, and can be turned off in Settings.
 - 105 MCP tools (63 in 0.1.1).
 
 ## Highlights

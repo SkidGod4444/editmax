@@ -295,6 +295,7 @@ enum UIDriver {
     /// re-signed on every build, so macOS would forget the grant and nag again each time. Without the permission it
     /// renders the window's layer tree instead, which misses some inspector controls.
     static func screenshot(maxWidth: Int) async throws -> (png: Data, method: String) {
+        await AgentFollow.shared.settle()   // an agent edit that just landed is still animating into place
         guard let w = window else { throw EditError.invalid("no window") }
         var method = "window-pixels"
         var cg: CGImage

@@ -21,12 +21,12 @@ struct ClipAudioSections: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: InspectorStyle.gap) {
-            compressorCard
-            limiterCard
-            deEsserCard
-            humCard
-            mixCard
-            if track.kind == .audio { crossfadeCard }
+            compressorCard.revealAnchor(.compressor)
+            limiterCard.revealAnchor(.limiter)
+            deEsserCard.revealAnchor(.deEsser)
+            humCard.revealAnchor(.hum)
+            mixCard.revealAnchor(.gainPan)
+            if track.kind == .audio { crossfadeCard.revealAnchor(.crossfade) }
         }
         .task(id: clip.assetID) { channels = await AudioChannels.count(of: clip, in: document.project) }
     }

@@ -157,7 +157,25 @@ control's own tap, drag or key handler and say so. `ui_screenshot` uses ScreenCa
 (it asks for Screen Recording once; without it, the layer tree is rendered instead).
 
 Things learned driving it: a single click on a Home card selects it, a double click opens; SwiftUI sliders ignore
-posted events (use the `set_clip_*` tools); Form toggles take the click at their right edge.
+posted events (use the `set_clip_*` tools); Form toggles take the click at their right edge. A new SwiftUI drag
+gesture needs a `.uiDrag(id, key:)` handler (and a tap a `.uiTap`), or `ui_drag` can only report the fallback.
+
+### Follow the agent
+
+Every tool call goes through `AgentFollowDriver.run` (`MCP/FollowPlans.swift`). `FollowPlans.plans` says where each
+tool's edit lands: the clip, text or project it selects, the inspector card (`InspectorAnchor`), a grade layer, a time
+for the playhead, the mixer. `FollowPlans.none` lists the tools that change nothing worth following (reads, captures,
+exports, the `ui_*` tools); `FollowPlansTests` fails on a tool in neither list. Before the edit the window moves
+(`FollowUI.apply`, registered per window in `EditorRootView`) and waits 280 ms if it is on screen; the edit then runs
+through `ToolExecutor` as before, animated (`EditMaxDocument.animateAgentEdits`, agent edits only); what the call
+created is selected after. Cards opt in with `.revealAnchor(...)`; `RevealScroller` scrolls the inspector to the card
+and outlines it for 1.6 s. Reveal state is a separate `RevealState` in the environment, so a card drawn on its own (the
+tests do) needs nothing.
+
+It stands aside while the user works: real mouse, key and scroll events (not the driver's own) set
+`AgentFollow.lastUserInput`, and for 2.5 s after one, or while a button is held, edits apply without moving the window.
+It never switches away from the Chat tab or the focus layout, never moves a playing playhead, and is off in tests.
+`ui_screenshot` waits for an edit's animation to finish. Settings > Advanced has the switch (`followAgent`).
 
 ## UI conventions
 

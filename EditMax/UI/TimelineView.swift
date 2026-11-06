@@ -67,6 +67,7 @@ struct TimelineView: View {
                 Text(Timecode.string(player.currentTime, fps: fps)).font(.system(size: 13, weight: .semibold, design: .monospaced)).monospacedDigit()
                 Text(Timecode.string(document.project.duration, fps: fps)).font(.system(size: 11, design: .monospaced)).monospacedDigit().foregroundStyle(.secondary)
             }
+            .fixedSize()   // a narrow timeline (the mixer open) squeezes the zoom slider, never the time
             .padding(.horizontal, 10).frame(height: 24)
             .background(Color.black.opacity(0.18), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color.primary.opacity(0.08), lineWidth: 1))

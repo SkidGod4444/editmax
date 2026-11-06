@@ -21,6 +21,11 @@ enum InteractionLog {
         NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .leftMouseUp, .leftMouseDragged, .keyDown]) { e in
             log(e); return e
         }
+        // The user's own input pauses "follow the agent" for a moment (the driver's posted events do not).
+        NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown, .leftMouseDragged, .keyDown, .scrollWheel]) { e in
+            if !synthetic { MainActor.assumeIsolated { AgentFollow.shared.lastUserInput = Date() } }
+            return e
+        }
         Watchdog.start()
         NotificationCenter.default.addObserver(forName: NSMenu.didSendActionNotification, object: nil, queue: .main) { n in
             guard let item = n.userInfo?["MenuItem"] as? NSMenuItem else { return }

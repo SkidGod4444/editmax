@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 
 /// The clip inspector's color sections after the look: shot match, grade layers (with the selected layer's own
 /// controls and mask) and finishing. One line in `ClipInspector` shows them for video clips.
@@ -6,10 +7,16 @@ struct ColorStackSections: View {
     @ObservedObject var document: EditMaxDocument
     let clip: Clip
     @State private var selected: UUID?
+    @Environment(\.reveal) private var reveal
 
     var body: some View {
-        ShotMatchCard(document: document, clip: clip)
-        GradeLayersCard(document: document, clip: clip, selected: $selected)
+        ShotMatchCard(document: document, clip: clip).revealAnchor(.shotMatch)
+        GradeLayersCard(document: document, clip: clip, selected: $selected).revealAnchor(.gradeLayers)
+            // The agent is working on a layer: open its cards, as a click on its row would.
+            .onReceive(reveal?.$layer.eraseToAnyPublisher() ?? Empty().eraseToAnyPublisher()) { id in
+                // Only a reveal that has just happened: an old one must not reopen a layer when the clip is clicked later.
+                if let id, let at = reveal?.at, Date().timeIntervalSince(at) < 1.5, clip.grades.contains(where: { $0.id == id }) { selected = id }
+            }
         if let id = selected, let i = clip.grades.firstIndex(where: { $0.id == id }) {
             let layer = clip.grades[i]
             let info = ColorTargetInfo(target: .layer(id), idPrefix: "layer.\(i + 1).")
@@ -18,7 +25,7 @@ struct ColorStackSections: View {
             CurvesCard(document: document, clip: clip, info: info, title: "\(layer.name): curves")
             LayerMaskCard(document: document, clip: clip, layer: layer, info: info)
         }
-        FinishCard(document: document, clip: clip)
+        FinishCard(document: document, clip: clip).revealAnchor(.finish)
     }
 }
 

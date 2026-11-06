@@ -22,6 +22,8 @@ final class EditorState: ObservableObject {
     @Published var viewingVersion: ProjectVersion?
     /// Timeline edit tool: select (move/trim), roll, slip or slide (TrimTools.swift).
     @Published var editTool: EditTool = .select
+    /// Follow the agent (AgentFollow.swift): where in the inspector an agent edit lands.
+    let reveal = RevealState()
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {

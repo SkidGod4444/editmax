@@ -44,6 +44,8 @@ final class EditMaxDocument: ReferenceFileDocument, ObservableObject {
 
     static let maxHistory = 200
     static let maxUndo = 100
+    /// Set by `AgentFollowDriver` around an agent call the window is following.
+    @MainActor static var animateAgentEdits = false
 
     /// ⌘Z / ⇧⌘Z stacks: the state before each edit, and the states undone. Undo and redo are themselves recorded in
     /// History, so the History tab stays a complete log.
@@ -84,7 +86,13 @@ final class EditMaxDocument: ReferenceFileDocument, ObservableObject {
             next.history.append(HistoryEntry(label: label, origin: origin, project: data))
             if next.history.count > Self.maxHistory { next.history.removeFirst(next.history.count - Self.maxHistory) }
         }
-        project = next
+        // Follow the agent: an agent's edit animates into place (wheel dots, faders, clips sliding) when the window is
+        // following it. Never the user's own edits: a slider drag must track the pointer.
+        if origin == .agent && Self.animateAgentEdits {
+            withAnimation(.easeInOut(duration: 0.35)) { project = next }
+        } else {
+            project = next
+        }
         revision += 1
         scheduleAutosave()
     }

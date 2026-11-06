@@ -14,9 +14,9 @@ struct EditingInspectorCards: View {
     private var x: ToolExecutor { ToolExecutor(document: document, origin: .user, coalesce: true) }
 
     var body: some View {
-        if track.kind == .video, asset?.kind == .video { splitEditCard }
-        if track.kind == .video, asset?.kind == .video, clip.multicam == nil, InterpolatedVideo.slowest(clip) < 0.999 || clip.smoothSlowMotion != .off { SlowMotionCard(document: document, clip: clip) }
-        if track.kind == .video, asset?.kind == .video || asset?.kind == .sequence, clip.multicam == nil { SceneCutsCard(document: document, clip: clip) }
+        if track.kind == .video, asset?.kind == .video { splitEditCard.revealAnchor(.splitEdit) }
+        if track.kind == .video, asset?.kind == .video, clip.multicam == nil, InterpolatedVideo.slowest(clip) < 0.999 || clip.smoothSlowMotion != .off { SlowMotionCard(document: document, clip: clip).revealAnchor(.slowMotion) }
+        if track.kind == .video, asset?.kind == .video || asset?.kind == .sequence, clip.multicam == nil { SceneCutsCard(document: document, clip: clip).revealAnchor(.scenes) }
     }
 
     // MARK: J / L cut

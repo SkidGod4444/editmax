@@ -79,12 +79,17 @@ struct EditorRootView: View {
             }
         }
         .environmentObject(state)
+        .environment(\.reveal, state.reveal)
         .environmentObject(player)
         .focusedSceneObject(document)
         .background(KeyMonitor { e in EditorActions(document: document, state: state, player: player).handle(e) })
         .onAppear {
             UIRegistry.shared.playheads[document.id] = { [weak player] in player?.currentTime }
             UIRegistry.shared.playing[document.id] = { [weak player] in player?.isRunning ?? false }
+            AgentFollow.shared.register(document.id) { [weak document, weak state, weak player] t in
+                guard let document, let state, let player else { return false }
+                return FollowUI.apply(t, document: document, state: state, player: player)
+            }
         }
         .frame(minWidth: 1000, minHeight: 640)
         .onAppear { document.fileURL = fileURL; DocumentRegistry.shared.register(document); player.bind(to: document); if state.chat == nil { state.chat = ChatSession(document: document) }
@@ -98,7 +103,7 @@ struct EditorRootView: View {
             }
         }
         .onChange(of: fileURL) { _, new in document.fileURL = new }
-        .onDisappear { DocumentRegistry.shared.unregister(document); player.pause() }
+        .onDisappear { DocumentRegistry.shared.unregister(document); AgentFollow.shared.unregister(document.id); player.pause() }
         .background(WindowFocusObserver { DocumentRegistry.shared.activate(document) })
         .modifier(EditingSheets(document: document))   // relink on open, consolidate (RelinkSheet.swift)
         .onReceive(NotificationCenter.default.publisher(for: .editmaxCompare)) { _ in

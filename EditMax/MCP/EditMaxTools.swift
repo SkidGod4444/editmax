@@ -349,7 +349,8 @@ enum EditMaxTools {
             let t0 = Date()
             let args = loggableArgs(params.arguments ?? [:])
             do {
-                let payload = try await call(params.name, params.arguments ?? [:])
+                // The window follows the agent's edit (FollowPlans.swift); reads and the UI driver run as they are.
+                let payload = try await AgentFollowDriver.run(params.name, params.arguments ?? [:]) { try await call(params.name, params.arguments ?? [:]) }
                 var f: [String: Any] = ["tool": params.name, "args": String(args.prefix(500)), "ms": Int(Date().timeIntervalSince(t0) * 1000), "image": payload.image != nil]
                 // Transcript and caption results are the footage's dialogue: the log keeps their length, not their words.
                 if contentTools.contains(params.name) { f["resultChars"] = payload.text.count } else { f["result"] = String(payload.text.prefix(200)) }

@@ -439,33 +439,33 @@ struct ClipInspector: View {
     private var asset: Asset? { document.project.asset(clip.assetID) }
 
     var body: some View {
-        ScrollView {
+        RevealScroller { ScrollView {
             VStack(alignment: .leading, spacing: InspectorStyle.gap) {
-                headerCard
-                timingCard
+                headerCard.revealAnchor(.header)
+                timingCard.revealAnchor(.timing)
                 if let seq = document.project.sequence(of: clip) { sequenceCard(seq) }
-                if let mc = clip.multicam { multicamCard(mc) }
-                speedCard
+                if let mc = clip.multicam { multicamCard(mc).revealAnchor(.multicam) }
+                speedCard.revealAnchor(.speed)
                 if let asset, asset.kind == .video || asset.kind == .audio { TranscriptSection(document: document, clip: clip) }
                 if track.kind == .video {
-                    transformCard
-                    colorCard
-                    ColorWheelsCard(document: document, clip: clip)   // UI/ColorWheelsSection.swift
-                    CurvesCard(document: document, clip: clip)        // UI/CurvesSection.swift
-                    lookCard
+                    transformCard.revealAnchor(.transform)
+                    colorCard.revealAnchor(.color)
+                    ColorWheelsCard(document: document, clip: clip).revealAnchor(.wheels)   // UI/ColorWheelsSection.swift
+                    CurvesCard(document: document, clip: clip).revealAnchor(.curves)        // UI/CurvesSection.swift
+                    lookCard.revealAnchor(.look)
                     ColorStackSections(document: document, clip: clip)   // shot match, grade layers, finishing (UI/ColorStackSections.swift)
                     ClipEffectsSection(document: document, clip: clip)   // green screen, blend, face blur (EffectsInspector.swift)
                 }
-                audioCard
-                eqCard
+                audioCard.revealAnchor(.audio)
+                eqCard.revealAnchor(.eq)
                 ClipAudioSections(document: document, clip: clip, track: track)
-                transitionCard
+                transitionCard.revealAnchor(.transition)
                 EditingInspectorCards(document: document, clip: clip, track: track)   // split edit, smooth slow motion (EditingInspector.swift)
                 Text("Clip \(clip.id.short)").font(.system(size: 11)).monospacedDigit().foregroundStyle(.tertiary).textSelection(.enabled)
                     .frame(maxWidth: .infinity).padding(.top, 4)
             }
             .padding(12)
-        }
+        } }
         .onAppear { nameDraft = clip.name }
         .onChange(of: clip.id) { _, _ in nameDraft = clip.name }
     }
@@ -790,7 +790,7 @@ struct TextInspector: View {
     @State private var draft = ""
 
     var body: some View {
-        ScrollView {
+        RevealScroller { ScrollView {
             VStack(alignment: .leading, spacing: InspectorStyle.gap) {
                 InspectorCard(text.isCaption ? "Caption" : "Title", footer: text.isCaption ? "Part of caption group \(text.group!.short). Style changes apply to this line only." : nil) {
                     TextField("Text", text: $draft, axis: .vertical).lineLimit(1...4).textFieldStyle(.roundedBorder)
@@ -805,7 +805,7 @@ struct TextInspector: View {
                         Spacer()
                     }
                     .controlSize(.small)
-                }
+                }.revealAnchor(.title)
                 InspectorCard("Look") {
                     InspectorRow("Style") {
                         Picker("Style", selection: Binding(get: { text.preset ?? "title" }, set: { v in
@@ -861,7 +861,7 @@ struct TextInspector: View {
                 }
             }
             .padding(12)
-        }
+        } }
         .onAppear { draft = text.text }
         .onChange(of: text.id) { _, _ in draft = text.text }
     }
@@ -934,20 +934,20 @@ struct ProjectInspector: View {
     private var x: ToolExecutor { ToolExecutor(document: document, origin: .user) }
 
     var body: some View {
-        ScrollView {
+        RevealScroller { ScrollView {
             VStack(alignment: .leading, spacing: InspectorStyle.gap) {
-                projectCard
+                projectCard.revealAnchor(.project)
                 proxiesCard
                 templatesCard
                 addTextCard
-                if !p.markers.isEmpty || state.inPoint != nil || state.outPoint != nil { markersCard }
-                if p.tracks.count > 1 { duckingCard }
+                if !p.markers.isEmpty || state.inPoint != nil || state.outPoint != nil { markersCard.revealAnchor(.markers) }
+                if p.tracks.count > 1 { duckingCard.revealAnchor(.ducking) }
                 cleanupCard
                 captionsCard
                 InspectorFootnote("Click a clip or a text bar on the timeline to edit it. The Agents tab connects Claude Code, Codex or Cursor; the Chat tab talks to them here.").padding(.horizontal, 4)
             }
             .padding(12)
-        }
+        } }
     }
 
     private var projectCard: some View {

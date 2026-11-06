@@ -45,7 +45,8 @@ final class EngineTests: XCTestCase {
         XCTAssertGreaterThan(png.count, 100)
     }
 
-    func testRenderFrameFailsOnAnEmptyTimeline() async {
+    func testRenderFrameFailsOnAnEmptyTimeline() async throws {
+        try requireRendering()
         do { _ = try await x.renderFrame(at: 0); XCTFail("expected an error") } catch {}
     }
 

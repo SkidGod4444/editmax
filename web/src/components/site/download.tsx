@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useSyncExternalStore } from "react";
-import { download, repo } from "./links";
+import { download, github } from "./links";
 
 type Platform = { kind: "mac" } | { kind: "intel" } | { kind: "desktop"; name: string } | { kind: "mobile"; name: string };
 type UAData = { platform?: string; getHighEntropyValues?: (hints: string[]) => Promise<{ architecture?: string }> };
@@ -66,7 +66,7 @@ const usePlatform = () => useSyncExternalStore(subscribe, current, () => mac);
 // is no release yet, or the API is unreachable, the button falls back to the releases page.
 let lookup: Promise<string> | null = null;
 const latestDmg = () =>
-  (lookup ??= fetch(`${repo.replace("https://github.com/", "https://api.github.com/repos/")}/releases/latest`, { headers: { Accept: "application/vnd.github+json" } })
+  (lookup ??= fetch(`${github.replace("https://github.com/", "https://api.github.com/repos/")}/releases/latest`, { headers: { Accept: "application/vnd.github+json" } })
     .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
     .then((j: { assets?: { name: string; browser_download_url: string }[] }) => j.assets?.find((a) => a.name.endsWith(".dmg"))?.browser_download_url ?? download)
     .catch(() => download));

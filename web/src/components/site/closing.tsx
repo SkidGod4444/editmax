@@ -1,14 +1,14 @@
 import Image from "next/image";
 import { DownloadButton, DownloadNote } from "./download";
-import { commercial, license, repo } from "./links";
+import { commercial, github, license, repo } from "./links";
 import { Reveal } from "./motion";
 
-const readme = (anchor: string) => `${repo}#${anchor}`;
+const readme = (anchor: string) => `${github}#${anchor}`;
 const columns: [string, [string, string][]][] = [
-  ["Product", [["Features", "#features"], ["Looks", "#looks"], ["Agents", "#agents"], ["Release notes", `${repo}/releases`]]],
+  ["Product", [["Features", "#features"], ["Looks", "#looks"], ["Agents", "#agents"], ["Release notes", `${github}/releases`]]],
   ["Docs", [["Install", readme("install")], ["Editing guide", readme("editing-guide")], ["Work with an agent", readme("work-with-an-agent")], ["MCP tools", readme("the-tools")]]],
-  ["Open source", [["Source code", repo], ["Report an issue", `${repo}/issues`], ["Contributing", readme("contributing")], ["Build it yourself", readme("build")]]],
-  ["Legal", [["License", license], ["Commercial license", commercial], ["Third-party notices", `${repo}/blob/main/THIRD-PARTY-NOTICES.md`]]],
+  ["Open source", [["Source code", repo], ["Report an issue", `${github}/issues`], ["Contributing", readme("contributing")], ["Build it yourself", readme("build")]]],
+  ["Legal", [["License", license], ["Commercial license", commercial], ["Third-party notices", `${github}/blob/main/THIRD-PARTY-NOTICES.md`]]],
 ];
 
 export function Closing() {

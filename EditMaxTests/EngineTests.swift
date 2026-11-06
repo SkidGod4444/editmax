@@ -1,5 +1,6 @@
 import XCTest
 import AVFoundation
+import VideoToolbox
 @testable import EditMax
 
 /// The engine against a real 2-second 1920×1080 clip (Fixtures/base.mp4): import, frame render, export.
@@ -14,6 +15,14 @@ final class EngineTests: XCTestCase {
         _ = try await x.importMedia(paths: [fixture.path])
     }
 
+    /// GitHub's macOS runners are VMs without a hardware video decoder, and AVFoundation fails on H.264 there
+    /// (error -12780). Decoding tests run on every developer Mac and skip only on such a CI machine.
+    private func requireVideoDecoding() throws {
+        if ProcessInfo.processInfo.environment["CI"] != nil, !VTIsHardwareDecodeSupported(kCMVideoCodecType_H264) {
+            throw XCTSkip("no hardware H.264 decoder on this CI runner")
+        }
+    }
+
     func testImportProbesTheFile() throws {
         let a = x.listAssets()
         XCTAssertEqual(a.count, 1)
@@ -26,6 +35,7 @@ final class EngineTests: XCTestCase {
     }
 
     func testRenderFrameHasTheProjectSize() async throws {
+        try requireVideoDecoding()
         _ = try x.insertClip(asset: "base.mp4")
         let (img, size) = try await x.renderFrame(at: 1)
         XCTAssertEqual(Int(size.width), 1920)
@@ -40,6 +50,7 @@ final class EngineTests: XCTestCase {
     }
 
     func testExportWritesAPlayableMovieOfTheTimelineLength() async throws {
+        try requireVideoDecoding()
         _ = try x.insertClip(asset: "base.mp4")
         _ = try x.insertClip(asset: "base.mp4", duration: 1)   // 3 s total
         let out = FileManager.default.temporaryDirectory.appendingPathComponent("editmax-test-\(UUID().uuidString).mp4")
@@ -62,6 +73,7 @@ final class EngineTests: XCTestCase {
     }
 
     func testNestAndUnnestKeepTheClipCount() async throws {
+        try requireVideoDecoding()
         let a = try x.insertClip(asset: "base.mp4", duration: 1)
         let b = try x.insertClip(asset: "base.mp4", duration: 1)
         let seq = try await x.nestClips([a.id.short, b.id.short], name: "Intro")
@@ -76,6 +88,7 @@ final class EngineTests: XCTestCase {
     }
 
     func testFrameStatsSeesThePicture() async throws {
+        try requireVideoDecoding()
         _ = try x.insertClip(asset: "base.mp4")
         let s = try await x.frameStats(at: 1)
         XCTAssertGreaterThan(s.lumaMean, 0); XCTAssertEqual(s.lumaHistogram.count, 16)

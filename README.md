@@ -222,6 +222,8 @@ Three layers, all run by `.github/workflows/test.yml` on every push to `main` an
   templates), and the engine against `EditMaxTests/Fixtures/base.mp4` (import, frame render, frame stats, nest/unnest,
   export). Run them with `xcodebuild -project EditMax.xcodeproj -scheme EditMax -destination 'platform=macOS' test`
   or ⌘U in Xcode. Under XCTest the app skips its splash, Home, MCP server and updater (`AppDelegate.isTesting`).
+  The four tests that decode video skip on GitHub's runners (VMs without a hardware H.264 decoder); they run on
+  every developer Mac.
 - `agent/test/` (`bun test`): the API-key chat sidecar's engine loop and error mapping, against a mock model.
 - The UI sweep (see "Driving the real UI"): scripted through the MCP driver by hand before a release. It is not in
   CI: it needs a display and a running app.

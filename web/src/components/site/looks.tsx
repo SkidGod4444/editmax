@@ -90,7 +90,7 @@ export function Looks() {
               aria-checked={look === l.id}
               onClick={() => choose(l.id)}
               onPointerEnter={() => { const v = videos.current[l.id]; if (v && v.preload !== "auto") v.preload = "auto"; }}
-              className={`btn px-4 py-1.5 text-[13px] ${look === l.id ? "btn-white" : "btn-glass text-white/90 hover:text-white"}`}
+              className={`btn px-4 py-2 text-[13px] sm:py-1.5 ${look === l.id ? "btn-white" : "btn-glass text-white/90 hover:text-white"}`}
             >
               {l.label}
             </button>

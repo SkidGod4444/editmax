@@ -33,10 +33,14 @@ export function PromptDemo() {
   const done = ran === d.tools.length;
   return (
     <div className="mx-auto flex w-full max-w-[640px] flex-col items-center gap-3">
-      <div className="glass inline-flex max-w-full items-center gap-3 rounded-full py-2 pr-5 pl-2 font-mono text-[13px] text-white">
-        <span className="glass-sm rounded-full px-2.5 py-1 font-sans text-[11px] font-medium tracking-wide text-white/75 uppercase">You</span>
-        <span className="min-w-0 truncate" style={{ maxWidth: "calc(100vw - 9rem)" }}>{d.prompt.slice(0, chars)}</span>
-        <span className={`caret -ml-2 inline-block h-4 w-[7px] shrink-0 rounded-[1px] bg-glow shadow-[0_0_8px_var(--glow)] ${chars < d.prompt.length ? "" : "blink"}`} />
+      {/* On a phone the prompt wraps inside a full-width bubble that keeps room for its longest line count, so the page
+          below never jumps while it types; from sm up it is one line in a pill. */}
+      <div className="glass flex w-full items-start gap-3 rounded-[22px] py-2 pr-4 pl-2 font-mono text-[13px] text-white sm:inline-flex sm:w-auto sm:max-w-full sm:items-center sm:rounded-full sm:pr-5">
+        <span className="glass-sm shrink-0 rounded-full px-2.5 py-1 font-sans text-[11px] font-medium tracking-wide text-white/75 uppercase">You</span>
+        <span className="min-h-[4.2em] min-w-0 pt-[3px] text-left leading-[1.4] min-[400px]:min-h-[2.8em] sm:min-h-0 sm:pt-0 sm:whitespace-nowrap">
+          {d.prompt.slice(0, chars)}
+          <span className={`caret ml-0.5 inline-block h-4 w-[7px] translate-y-[3px] rounded-[1px] bg-glow shadow-[0_0_8px_var(--glow)] ${chars < d.prompt.length ? "" : "blink"}`} />
+        </span>
       </div>
       <div className="flex min-h-[30px] flex-wrap justify-center gap-1.5" aria-live="polite">
         <AnimatePresence mode="popLayout">

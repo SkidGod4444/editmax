@@ -55,10 +55,10 @@ export function Closing() {
             {columns.map(([title, links]) => (
               <div key={title}>
                 <p className="font-mono text-[11px] tracking-[0.16em] text-white/45 uppercase">{title}</p>
-                <ul className="mt-4 space-y-3">
+                <ul className="mt-3 space-y-1.5">
                   {links.map(([label, href]) => (
                     <li key={label}>
-                      <a href={href} className="group inline-flex items-center gap-1 text-[14px] text-white/65 transition-colors hover:text-white">
+                      <a href={href} className="group inline-flex items-center gap-1 py-1 text-[14px] text-white/65 transition-colors hover:text-white">
                         {label}
                         {!href.startsWith("#") && (
                           <span aria-hidden className="text-[11px] opacity-0 transition-opacity group-hover:opacity-60">↗</span>

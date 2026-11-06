@@ -124,7 +124,7 @@ export function Features() {
         </Reveal>
 
         <OnScreen>
-        <RevealGroup spotlight className="mt-4 grid gap-4 md:grid-cols-6">
+        <RevealGroup spotlight className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-6">
           <RevealItem className="glass spot flex flex-col rounded-3xl md:col-span-4">
             <div className="p-3 pb-0">
               <CaptionArt />

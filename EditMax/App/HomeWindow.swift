@@ -41,7 +41,7 @@ final class HomeWindow {
         // A fresh view each time: ordering a window out does not fire onDisappear, so a kept view would leave Home's
         // ids registered with the UI driver while the editor is up.
         if let w = window {
-            let frame = w.frame
+            let frame = savedFrame ?? w.frame   // hide() empties the window, which can collapse its frame; keep the real one
             let model = HomeModel()
             let split = NSSplitViewController()
             let sideVC = NSHostingController(rootView: HomeView(part: .sidebar, model: model))
@@ -56,13 +56,22 @@ final class HomeWindow {
             split.view.frame = NSRect(origin: .zero, size: frame.size)
             w.contentViewController = split
             w.setFrame(frame, display: false)
+            if !NSScreen.screens.contains(where: { $0.visibleFrame.intersects(w.frame) }) { w.center() }   // never off every screen
         }
         ProjectLibrary.shared.refresh()
         window?.makeKeyAndOrderFront(nil)   // orders within EditMax's own layer; never activates the app
         DebugLog.event("home-show", ["windowNumber": window?.windowNumber ?? -1])
     }
 
-    func hide() { window?.orderOut(nil); window?.contentViewController = nil }
+    var isVisible: Bool { window?.isVisible ?? false }
+    private var savedFrame: NSRect?
+
+    func hide() {
+        guard let w = window, w.isVisible else { return }
+        savedFrame = w.frame
+        w.orderOut(nil); w.contentViewController = nil
+        DebugLog.event("home-hide")
+    }
 }
 
 struct HomeView: View {

@@ -33,6 +33,7 @@ struct ToolExecutor {
         var project: String, projectID: String, width: Int, height: Int, fps: Double, duration: Double
         var tracks: [TrackInfo], clips: [ClipInfo], texts: [TextInfo], markers: [MarkerInfo], historyCount: Int
         var playhead: Double?
+        var useProxies: Bool
     }
 
     func inspectTimeline() -> TimelineSummary {
@@ -60,7 +61,7 @@ struct ToolExecutor {
             clips: clips.sorted { ($0.track, $0.start) < ($1.track, $1.start) },
             texts: p.texts.map { .init(id: $0.id.short, text: $0.text, start: r($0.start), end: r($0.end), preset: $0.preset, caption: $0.group?.short) },
             markers: p.markers.map { .init(id: $0.id.short, time: r($0.time), name: $0.name, color: $0.colorHex) },
-            historyCount: p.history.count, playhead: UIRegistry.shared.playheads[document.id]?().map(r))
+            historyCount: p.history.count, playhead: UIRegistry.shared.playheads[document.id]?().map(r), useProxies: p.settings.useProxies)
     }
 
     struct AssetInfo: Codable { var id: String, name: String, kind: String, duration: Double, width: Int?, height: Int?, path: String }
@@ -170,6 +171,7 @@ struct ToolExecutor {
     @discardableResult
     func addText(_ text: String, start: Double, duration: Double, fontSize: Double?, colorHex: String?, x: Double?, y: Double?, preset: String? = nil) throws -> TextOverlay {
         guard duration > 0 else { throw EditError.invalid("duration must be > 0") }
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw EditError.invalid("text is empty") }
         let style = try preset.map { try CaptionPresets.resolve($0) } ?? CaptionPresets.title
         var t: TextOverlay!
         document.apply("Add text \"\(text.prefix(20))\"", origin: origin) { p in

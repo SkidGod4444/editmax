@@ -11,10 +11,19 @@ final class DocumentRegistry: ObservableObject {
     func register(_ doc: EditMaxDocument) {
         if !documents.contains(where: { $0.id == doc.id }) { documents.append(doc) }
         activeID = doc.id
+        // Home is the launcher: it steps aside once a project is open (also when a file is opened from the Finder at
+        // launch, where it used to stay up behind the editor). ⇧⌘P or the toolbar's Home button bring it back.
+        if doc.fileURL != nil { HomeWindow.shared.hide() }   // not for the untitled one AppKit opens at launch (closed 0.3 s later)
     }
     func unregister(_ doc: EditMaxDocument) {
         documents.removeAll { $0.id == doc.id }
         if activeID == doc.id { activeID = documents.last?.id }
+        // The last project window closed: back to Home, unless the app is on its way out.
+        if documents.isEmpty {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                if self.documents.isEmpty, !AppDelegate.quitting, !HomeWindow.shared.isVisible { HomeWindow.shared.show() }
+            }
+        }
     }
     func activate(_ doc: EditMaxDocument) { activeID = doc.id }
 

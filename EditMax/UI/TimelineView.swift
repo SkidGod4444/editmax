@@ -411,7 +411,13 @@ struct TimelineView: View {
                 let flag = Path { p in p.move(to: CGPoint(x: x, y: 2)); p.addLine(to: CGPoint(x: x + 7, y: 2)); p.addLine(to: CGPoint(x: x + 7, y: 8)); p.addLine(to: CGPoint(x: x, y: 8)); p.addLine(to: CGPoint(x: x, y: size.height)) }
                 ctx.fill(Path(CGRect(x: x, y: 2, width: 7, height: 6)), with: .color(Color(hex: m.colorHex)))
                 ctx.stroke(flag, with: .color(Color(hex: m.colorHex)), lineWidth: 1)
-                if !m.name.isEmpty { ctx.draw(Text(m.name).font(.system(size: 8)).foregroundColor(.primary.opacity(0.8)), at: CGPoint(x: x + 10, y: 5), anchor: .leading) }
+                if !m.name.isEmpty {
+                    // A tag in the marker's colour: the name sits over the timecode labels, so it needs its own ground.
+                    let label = ctx.resolve(Text(m.name).font(.system(size: 8, weight: .medium)).foregroundColor(.white))
+                    let s = label.measure(in: CGSize(width: 120, height: 12))
+                    let tag = CGRect(x: x + 10, y: 1, width: s.width + 6, height: 10)
+                    ctx.fill(Path(roundedRect: tag, cornerRadius: 3), with: .color(Color(hex: m.colorHex).opacity(0.9)))
+                    ctx.draw(label, at: CGPoint(x: tag.minX + 3, y: tag.midY), anchor: .leading) }
             }
             ctx.stroke(Path { $0.move(to: CGPoint(x: 0, y: size.height - 0.5)); $0.addLine(to: CGPoint(x: size.width, y: size.height - 0.5)) }, with: .color(.primary.opacity(0.15)))
         }

@@ -78,3 +78,33 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: io.openhorizon.editmax
         SWIFT_EMIT_LOC_STRINGS: "NO"
         ENABLE_USER_SCRIPT_SANDBOXING: "NO"
+  # Unit + engine tests, hosted in the app (the app skips its launch UI under XCTest; see AppDelegate.isTesting).
+  EditMaxTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: EditMaxTests
+    dependencies:
+      - target: EditMax
+    settings:
+      base:
+        SWIFT_VERSION: "5.0"
+        GENERATE_INFOPLIST_FILE: "YES"
+        PRODUCT_BUNDLE_IDENTIFIER: io.openhorizon.editmax.tests
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/EditMax.app/Contents/MacOS/EditMax"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGNING_REQUIRED: "NO"
+        ENABLE_USER_SCRIPT_SANDBOXING: "NO"
+schemes:
+  EditMax:
+    build:
+      targets:
+        EditMax: all
+        EditMaxTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - EditMaxTests

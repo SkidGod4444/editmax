@@ -169,6 +169,15 @@ keychain item that the rest of the app reads.
 - Agent Runtime: bundled / running / latest, Check Now, automatic checks (`autoUpdateRuntime`; Check Now still works).
 - Advanced: MCP port (`mcpPort`, after a relaunch), token (show / copy), config path, Reveal Logs, Export Diagnostics.
 
+## Timeline rules
+
+- A clip inserted at a time never stacks on another: it is a ripple insert across every track, like ripple delete
+  (a clip under the time is split; every clip, text and marker from there on moves right). Appending (no time) goes
+  after the last clip.
+- New video tracks go in above the first audio track, so video stays above audio; the Text lane keeps its row.
+- Marker names draw as small tags in the marker's colour on the ruler, over the timecode labels.
+- `inspect_timeline` reports `useProxies`.
+
 ## Build
 
 Requires Xcode 27 and `xcodegen` (`brew install xcodegen`). Re-run `xcodegen generate` after adding files.
@@ -179,7 +188,8 @@ used only on the control layer: the window toolbar (Home / Focus / Export, nativ
 preview's overlay buttons, the export HUD and version banner, the transport pills in focus and full-screen mode, the
 inspector tab strip, the chat's input bar and suggestion chips, Home's format chips and New project button, the splash
 card. Panels, inspectors, the timeline strip and lists stay opaque, standard controls; nothing is glass on glass.
-Home is an `NSSplitViewController`: the sidebar is an `NSSplitViewItem(sidebarWithViewController:)`, which is
+Home is the launcher: it steps aside when a project opens (from Home, from the Finder, or at launch with a file) and
+comes back when the last project window closes, with ⇧⌘P or the toolbar's Home button. Home is an `NSSplitViewController`: the sidebar is an `NSSplitViewItem(sidebarWithViewController:)`, which is
 AppKit's official sidebar treatment (Liquid Glass on macOS 26, the translucent sidebar material before), and the
 window is non-opaque with a `.underWindowBackground` behind-window material under the projects pane
 (`BehindWindowMaterial` in Glass.swift), so the desktop shows through the way Finder's does. Only official API:
@@ -201,6 +211,23 @@ xcodebuild -project EditMax.xcodeproj -scheme EditMax -configuration Debug \
   -derivedDataPath build/DerivedData -destination 'platform=macOS' build
 open build/DerivedData/Build/Products/Debug/EditMax.app
 ```
+
+## Tests
+
+Three layers, all run by `.github/workflows/test.yml` on every push to `main` and every pull request:
+
+- `EditMaxTests/` (XCTest, hosted in the app): the timeline model (ripple insert and delete, track order, split, trim, move,
+  file format and old-file decoding), the document's history (versions, undo/redo/restore, coalescing, caps, caches),
+  the shared `ToolExecutor` API (names and short ids, validation, summaries, transitions, keyframes, markers, tracks,
+  templates), and the engine against `EditMaxTests/Fixtures/base.mp4` (import, frame render, frame stats, nest/unnest,
+  export). Run them with `xcodebuild -project EditMax.xcodeproj -scheme EditMax -destination 'platform=macOS' test`
+  or ⌘U in Xcode. Under XCTest the app skips its splash, Home, MCP server and updater (`AppDelegate.isTesting`).
+- `agent/test/` (`bun test`): the API-key chat sidecar's engine loop and error mapping, against a mock model.
+- The UI sweep (see "Driving the real UI"): scripted through the MCP driver by hand before a release. It is not in
+  CI: it needs a display and a running app.
+
+CI has no codemax source, so `scripts/vendor-codemax.sh` writes a stub when `EDITMAX_STUB_VENDOR=1`; the bundle is
+complete and the tests never launch the runtime.
 
 ## Connect an agent
 

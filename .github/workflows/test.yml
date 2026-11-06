@@ -1,0 +1,44 @@
+name: Test
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  swift:
+    name: Swift unit + engine tests
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - name: Use the newest Xcode on the runner
+        run: |
+          XC=$(ls -d /Applications/Xcode*.app | sort -V | tail -1); echo "$XC"
+          sudo xcode-select -s "$XC"; xcodebuild -version
+      - name: Generate the Xcode project
+        run: |
+          brew install xcodegen
+          xcodegen generate -q
+      - name: Build and test
+        # The codemax runtime is built from a sibling repo on developer Macs; CI bundles a stub instead.
+        env:
+          EDITMAX_STUB_VENDOR: "1"
+        run: |
+          set -o pipefail
+          xcodebuild -project EditMax.xcodeproj -scheme EditMax -configuration Debug \
+            -destination 'platform=macOS' -derivedDataPath build/DerivedData \
+            CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO test 2>&1 | tee xcodebuild.log | grep -E "error:|Test Case|Executed|\*\* TEST"
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: xcodebuild-log
+          path: xcodebuild.log
+  agent:
+    name: Agent sidecar tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+        working-directory: agent
+      - run: bun test
+        working-directory: agent

@@ -88,7 +88,7 @@ final class ProjectLibrary: ObservableObject {
         DebugLog.event("library-open", ["name": url.deletingPathExtension().lastPathComponent])
         let dc = NSDocumentController.shared
         dc.openDocument(withContentsOf: url, display: true) { _, _, error in
-            guard let error else { return }
+            guard let error else { HomeWindow.shared.hide(); return }   // also when the project was already open
             // "cannot open files of this type": LaunchServices did not map the extension to our type (a stale
             // registration of an older build). Open it by the type's identifier instead of by the extension.
             do {

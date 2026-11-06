@@ -4,7 +4,7 @@ import SwiftUI
 struct EditMaxApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var mcp = MCPService.shared
-    init() { MCPService.shared.start(); CodemaxInstaller.shared.ensureInstalled(); CodemaxUpdater.shared.start() }
+    init() { if !AppDelegate.isTesting { MCPService.shared.start(); CodemaxInstaller.shared.ensureInstalled(); CodemaxUpdater.shared.start() } }
 
     var body: some Scene {
         DocumentGroup(newDocument: { EditMaxDocument() }) { file in

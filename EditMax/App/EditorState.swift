@@ -29,7 +29,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidBecomeActive(_ notification: Notification) {
         if Date().timeIntervalSince(launchedAt) < 2, AppSettings.bool(AppSettings.Key.showSplash, default: true) { SplashScreen.shared.show(); SplashScreen.shared.dismissWhenReady() }
     }
+    /// True when the app is the host of the unit tests: no splash, no Home, no untitled document handling.
+    static let isTesting = NSClassFromString("XCTestCase") != nil || ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if Self.isTesting { return }
         InteractionLog.install()
         AppSettings.shared.applyAppearance()
         SplashScreen.renderIfRequested()
@@ -57,6 +61,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// up the Open panel instead of an untitled document, which is what happened after every clean quit.
     @objc func applicationShowsOpenPanelInsteadOfUntitledFile(_ sender: NSApplication) -> Bool { false }
     func applicationOpenUntitledFile(_ sender: NSApplication) -> Bool {
+        if Self.isTesting { return true }
         if SplashScreen.shared.isShowing {
             SplashScreen.shared.afterDismiss { if NSDocumentController.shared.documents.isEmpty { HomeWindow.shared.show() } }
         } else if NSDocumentController.shared.documents.isEmpty {
@@ -69,4 +74,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return false
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+    /// Set once the app is quitting, so windows closing on the way out do not bring Home back up.
+    static var quitting = false
+    func applicationWillTerminate(_ notification: Notification) { Self.quitting = true }
 }

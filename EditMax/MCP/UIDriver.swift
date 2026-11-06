@@ -78,13 +78,35 @@ private struct UIFrameModifier: ViewModifier {
     func body(content: Content) -> some View {
         content.background(
             GeometryReader { g in
+                // SwiftUI's `.global` space is the hosting view, not the window: in Home's split view (two hosting
+                // views) or any sheet it is offset from the window. The probe converts through AppKit instead, so
+                // every registered frame is in window points whatever view hierarchy the control sits in.
                 let f = g.frame(in: .global)
-                Color.clear
-                    .onAppear { UIRegistry.shared.set(id, f) }
-                    .onChange(of: f) { _, new in UIRegistry.shared.set(id, new) }
+                FrameProbe(id: id, key: "\(f)")
                     .onDisappear { UIRegistry.shared.remove(id) }
             }
         )
+    }
+}
+
+/// A zero-cost NSView filling the control's GeometryReader: its AppKit frame, converted to the window, is the frame
+/// the driver registers. Re-registers whenever SwiftUI's frame changes (scrolling, resizing) and on AppKit layout.
+private struct FrameProbe: NSViewRepresentable {
+    let id: String
+    let key: String   // changes with the SwiftUI frame, so updateNSView runs on every move
+    func makeNSView(context: Context) -> ProbeView { let v = ProbeView(); v.id = id; return v }
+    func updateNSView(_ v: ProbeView, context: Context) { v.id = id; DispatchQueue.main.async { v.report() } }
+    final class ProbeView: NSView {
+        var id = ""
+        override var isFlipped: Bool { true }
+        override func layout() { super.layout(); report() }
+        override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); report() }
+        func report() {
+            guard let w = window, let content = w.contentView, !id.isEmpty else { return }
+            let r = convert(bounds, to: nil)   // window base coordinates (origin bottom-left)
+            let top = CGRect(x: r.minX, y: content.bounds.height - r.maxY, width: r.width, height: r.height)
+            UIRegistry.shared.set(id, top)
+        }
     }
 }
 

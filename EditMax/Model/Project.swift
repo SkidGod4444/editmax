@@ -657,7 +657,13 @@ extension Project {
     mutating func addTrack(name: String? = nil, kind: TrackKind) -> Track {
         let n = tracks.filter { $0.kind == kind }.count + 1
         let t = Track(name: name ?? "\(kind == .video ? "V" : "A")\(n)", kind: kind)
-        tracks.append(t)
+        // Video stays above audio: a new video track goes in just above the first audio track (audio tracks append).
+        if kind == .video, let firstAudio = tracks.firstIndex(where: { $0.kind == .audio }) {
+            tracks.insert(t, at: firstAudio)
+            if let row = textLaneRow, row >= firstAudio { textLaneRow = row + 1 }
+        } else {
+            tracks.append(t)
+        }
         return t
     }
 
@@ -669,14 +675,33 @@ extension Project {
         let kind: TrackKind = asset.kind == .audio ? .audio : .video
         let tid = trackID ?? firstTrack(of: kind)?.id ?? addTrack(kind: kind).id
         let ti = try trackIndex(tid)
+        if asset.kind == .audio, tracks[ti].kind == .video { throw EditError.invalid("\(asset.name) has no picture; put it on an audio track") }
+        guard sourceIn < asset.duration - 0.001 else { throw EditError.invalid("sourceIn \(sourceIn) is past the end of \(asset.name) (\(asset.duration) s)") }
         let maxDur = max(0.01, asset.duration - sourceIn)
         let dur = min(duration ?? maxDur, maxDur)
         guard dur > 0 else { throw EditError.invalid("duration must be > 0") }
-        let start = at ?? trackEnd(tid)
-        let clip = Clip(assetID: assetID, name: asset.name, start: max(0, start), duration: dur, sourceIn: sourceIn)
+        let start = max(0, at ?? trackEnd(tid))
+        if at != nil { makeRoom(on: ti, at: start, length: dur) }
+        let clip = Clip(assetID: assetID, name: asset.name, start: start, duration: dur, sourceIn: sourceIn)
         tracks[ti].clips.append(clip)
         tracks[ti].clips.sort { $0.start < $1.start }
         return clip
+    }
+
+    /// An insert at a time is a ripple insert, as in every NLE, and like `rippleDelete` it ripples every track so
+    /// nothing drifts out of sync: a clip that straddles `time` is split there, and every clip, text and marker from
+    /// `time` on moves right by `length`. Nothing is ever stacked or hidden.
+    private mutating func makeRoom(on _: Int, at time: Double, length: Double) {
+        for ti in tracks.indices {
+            if let ci = tracks[ti].clips.firstIndex(where: { $0.start < time - 0.01 && $0.end > time + 0.01 }) {
+                let (l, r) = tracks[ti].clips[ci].split(atLocal: time - tracks[ti].clips[ci].start)
+                tracks[ti].clips[ci] = l
+                tracks[ti].clips.insert(r, at: ci + 1)
+            }
+            for ci in tracks[ti].clips.indices where tracks[ti].clips[ci].start >= time - 0.01 { tracks[ti].clips[ci].start += length }
+        }
+        for i in texts.indices where texts[i].start >= time - 0.01 { texts[i].start += length }
+        for i in markers.indices where markers[i].time >= time - 0.01 { markers[i].time += length }
     }
 
     /// Split a clip at an absolute timeline time. Returns (left, right).
@@ -696,10 +721,10 @@ extension Project {
 
     mutating func moveClip(_ id: UUID, to start: Double, trackID: UUID? = nil) throws {
         let (ti, ci) = try clipIndex(id)
+        let target = try trackID.map(trackIndex) ?? ti
+        guard tracks[target].kind == tracks[ti].kind else { throw EditError.invalid("track kind mismatch") }   // checked before the clip leaves its track
         var clip = tracks[ti].clips.remove(at: ci)
         clip.start = max(0, start)
-        let target = try trackID.map(trackIndex) ?? ti
-        guard tracks[target].kind == tracks[ti].kind else { throw EditError.invalid("track kind mismatch") }
         tracks[target].clips.append(clip)
         tracks[target].clips.sort { $0.start < $1.start }
     }

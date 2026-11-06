@@ -29,6 +29,8 @@ jobs:
       - name: Build and test
         env:
           EDITMAX_STUB_VENDOR: "1"
+          # xcodebuild passes TEST_RUNNER_* variables into the test host as the name without the prefix.
+          TEST_RUNNER_CI: "1"
         run: |
           set -o pipefail
           xcodebuild -project EditMax.xcodeproj -scheme EditMax -configuration Debug \

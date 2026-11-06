@@ -121,7 +121,7 @@ enum FollowPlans {
         "export_video", "export_batch", "export_chapters", "export_timeline", "save_template",
         "import_media", "make_proxies", "consolidate_media", "set_playhead",
         "list_library", "add_to_library",   // the Assets library is not in the project window
-        "ui_layout", "ui_drag", "ui_key", "ui_click", "ui_scroll", "ui_screenshot",
+        "ui_layout", "ui_drag", "ui_key", "ui_click", "ui_select", "ui_scroll", "ui_screenshot",
         // Fonts belong to the app, not to a project: nothing in the window to show.
         "list_fonts", "install_font", "add_font_files",
     ]

@@ -89,19 +89,21 @@ enum EditMaxTools {
              inputSchema: schema(["kind": str("video or audio"), "name": str("Optional name (default V2, A2…)"), "project": projectArg], required: ["kind"])),
         Tool(name: "move_track", description: "Move a track to another row (0 = top). The top row covers the rows below it in the picture.",
              inputSchema: schema(["track": str("Track name or id prefix"), "row": int("Target row, 0 = top"), "project": projectArg], required: ["track", "row"])),
-        Tool(name: "ui_layout", description: "Where things are in the EditMax window, in window points (origin top-left): media rows (media.<file>), track headers (header.<name>, header.Text, header.<name>.mute/.hide), lanes (lane.<name>, lane.Text), clip and text bars (clip.<id>, text.<id>, with .left/.right trim handles), toolbar buttons, addtrack.video/audio, ruler, inspector buttons. Use the ids with ui_drag and ui_click to drive the real UI.",
+        Tool(name: "ui_layout", description: "Where things are in the EditMax window, in window points (origin top-left): media rows (media.<file>), track headers (header.<name>, header.Text, header.<name>.mute/.hide), lanes (lane.<name>, lane.Text), clip and text bars (clip.<id>, text.<id>, with .left/.right trim handles), toolbar buttons, addtrack.video/audio, ruler, inspector buttons. Only what a user can see now is listed, with the visible part of each element (clipped by its scroll view and the window); elements in a popover or sheet over the window carry \"window\": \"popover\" or \"sheet\" and are given in the same window points. \"hidden\" lists ids that exist but cannot be seen now (scrolled out of view, outside the window or hidden); ui_scroll {target: id} brings one into view. Use the ids with ui_click, ui_select and ui_drag to drive the real UI.",
              inputSchema: schema(["prefix": str("Only ids starting with this (e.g. 'clip.')")]), annotations: .init(readOnlyHint: true)),
         Tool(name: "ui_drag", description: "Drag with the mouse inside the EditMax window, from one element (or point) to another: move or trim a bar, drop a media row onto a lane, reorder track headers, scrub the ruler. Events are posted to EditMax's own window only. Check the result with inspect_timeline or ui_screenshot.",
              inputSchema: schema(["from": .object(["description": .string("Element id from ui_layout, or {x, y} in window points")]), "to": .object(["description": .string("Element id or {x, y}")]),
                                   "from_dx": num("Offset from the source centre, points (e.g. -40 to grab near a clip's left part)"), "from_dy": num("Offset, points"), "to_dx": num("Offset from the target centre"), "to_dy": num("Offset"),
                                   "steps": int("Intermediate mouse moves (default 12)"), "modifiers": strs("shift, command, option, control (option = no snapping)"), "hold_ms": int("Pause after mouse-down before moving (default 80)")], required: ["from", "to"])),
-        Tool(name: "ui_key", description: "Press a key in the EditMax window, as the user would: space (play/pause), j/k/l (shuttle), left/right (frame step, shift = 10), home/end, i/o/x (in, out, clear), m (marker), s (split), delete, or with modifiers such as [\"command\"] for ⌘T (transition), ⌘= / ⌘- (zoom), ⌘Z.",
+        Tool(name: "ui_key", description: "Press a key in the EditMax window, as the user would: space (play/pause), j/k/l (shuttle), left/right (frame step, shift = 10), home/end, i/o/x (in, out, clear), m (marker), s (split), delete, or with modifiers such as [\"command\"] for ⌘T (transition), ⌘= / ⌘- (zoom), ⌘Z. While a text field has the focus (after a ui_click on a search or name field), keys without ⌘ are typed into the field, one character per call, and never act on the timeline. A key without ⌘, ⌃ or ⌥ never runs a menu command. The answer says where the key went.",
              inputSchema: schema(["key": str("One character, or space, left, right, up, down, home, end, delete, forwarddelete, return, escape, tab"), "modifiers": strs("shift, command, option, control")], required: ["key"])),
-        Tool(name: "ui_click", description: "Click an element (or point) in the EditMax window: buttons, a bar to select it, a header toggle. count 2 = double-click (e.g. a media row appends it). modifiers [\"shift\"] adds a bar to the selection.",
+        Tool(name: "ui_click", description: "Click an element (or point) in the EditMax window or a popover or sheet over it: buttons, a bar to select it, a header toggle, a text field to type into. count 2 = double-click (e.g. a media row appends it). modifiers [\"shift\"] adds a bar to the selection. Fails, saying why, when the click could not land: an element scrolled out of view (ui_scroll it into view first) or a point outside the window. A pop-up menu or menu button is not clicked while EditMax is in the background (an open menu would bring it to the front): use ui_select.",
              inputSchema: schema(["target": .object(["description": .string("Element id from ui_layout, or {x, y}")]), "dx": num("Offset, points"), "dy": num("Offset, points"), "count": int("Clicks (default 1)"), "modifiers": strs("shift, command, option, control")], required: ["target"])),
-        Tool(name: "ui_scroll", description: "Scroll the scrollable area under an element or point (the inspector, the media list, the timeline) by dy points; positive = down. Returns the new offset and how far it can go.",
+        Tool(name: "ui_select", description: "Choose a value in a pop-up menu (a picker such as inspector.template), a menu button or a segmented control, as a user picking it would, without opening the menu or bringing EditMax to the front. option is the item's title as shown (any case; a unique start of it is enough; submenu items as \"Parent › Item\"). Leave option out to get the list of options.",
+             inputSchema: schema(["target": .object(["description": .string("Element id from ui_layout, or {x, y}")]), "option": str("Title of the item to choose; omit to list the options")], required: ["target"])),
+        Tool(name: "ui_scroll", description: "Scroll the scrollable area that holds an element, or the one under a point (the inspector, the media list, the timeline), by dy points; positive = down. Returns the new offset and how far it can go. With an element id and no dx/dy, scrolls that element into view (works for ids ui_layout lists as hidden).",
              inputSchema: schema(["target": .object(["description": .string("Element id from ui_layout, or {x, y}")]), "dy": num("Points to scroll (positive = down)"), "dx": num("Points to scroll right")], required: ["target"])),
-        Tool(name: "ui_screenshot", description: "The EditMax window as it looks now (this window's pixels only), as a PNG image.",
+        Tool(name: "ui_screenshot", description: "The EditMax window as it looks now, with a popover or sheet that is open over it, as a PNG image. Only EditMax's own windows are ever in the picture. An open menu is not shown; on another Space a popover is left out. The answer says how the picture was made and, if it is not true pixels, why.",
              inputSchema: schema(["max_width": int("Image width in pixels (default 1400)")]), annotations: .init(readOnlyHint: true)),
         Tool(name: "set_clip_transform", description: "Position a clip's picture in the frame: scale (1 = fit), x/y offset as a fraction of the frame (0.5 = half a frame right/down), rotation in clockwise degrees, crops as fractions of the picture cut from each edge. reset=true clears everything first.",
              inputSchema: schema(["clip": str("Clip id prefix"), "scale": num("0.05 to 10"), "x": num("-2 to 2"), "y": num("-2 to 2"), "rotation": num("Degrees"),
@@ -477,29 +479,30 @@ enum EditMaxTools {
         case "ui_layout":
             return try payload(try UIDriver.layout(prefix: s("prefix")))
         case "ui_drag":
-            let from = try UIDriver.resolve(a["from"], dx: d("from_dx") ?? 0, dy: d("from_dy") ?? 0)
-            let to = try UIDriver.resolve(a["to"], dx: d("to_dx") ?? 0, dy: d("to_dy") ?? 0)
+            let from = try UIDriver.target(a["from"], dx: d("from_dx") ?? 0, dy: d("from_dy") ?? 0)
+            let to = try UIDriver.target(a["to"], dx: d("to_dx") ?? 0, dy: d("to_dy") ?? 0)
             UIDriver.modifiers = UIDriver.flags(list("modifiers")); defer { UIDriver.modifiers = [] }
-            let how = try await UIDriver.drag(from: from, fromID: s("from"), to: to, steps: i("steps") ?? 12, holdMs: i("hold_ms") ?? 80)
-            let path = "from (\(Int(from.x)), \(Int(from.y))) to (\(Int(to.x)), \(Int(to.y)))"
+            let how = try await UIDriver.drag(from: from, to: to, steps: i("steps") ?? 12, holdMs: i("hold_ms") ?? 80)
+            let path = "from \(from.place) to (\(Int(to.point.x)), \(Int(to.point.y)))"
             switch how {
             case .events(let n): return message("Dragged \(path) with \(n) mouse events")
-            case .handler(let id): return message("Dragged \(path) by calling \(id)'s own move/trim code: macOS would not make EditMax the active app, which SwiftUI gestures need. Media drops, header reorders and clicks always use real events.")
+            case .handler(let id): return message("Dragged \(path) by calling \(id)'s own move/trim code: EditMax is not the active app, which SwiftUI gestures need. Media drops, header reorders and clicks always use real events.")
             }
         case "ui_click":
-            let p = try UIDriver.resolve(a["target"], dx: d("dx") ?? 0, dy: d("dy") ?? 0)
+            let t = try UIDriver.target(a["target"], dx: d("dx") ?? 0, dy: d("dy") ?? 0)
             UIDriver.modifiers = UIDriver.flags(list("modifiers")); defer { UIDriver.modifiers = [] }
-            switch try await UIDriver.click(at: p, id: s("target"), count: i("count") ?? 1) {
-            case .events: return message("Clicked (\(Int(p.x)), \(Int(p.y)))")
-            case .handler(let id): return message("Clicked \(id) by calling its own tap code: macOS would not make EditMax the active app, which SwiftUI gestures need.")
+            switch try await UIDriver.click(t, count: i("count") ?? 1) {
+            case .events: return message("Clicked " + (t.id.map { "\($0) at " } ?? "") + t.place)
+            case .handler(let id): return message("Clicked \(id) by calling its own tap code: EditMax is not the active app, which SwiftUI gestures need.")
             }
+        case "ui_select":
+            return message(try await UIDriver.select(try UIDriver.target(a["target"], dx: 0, dy: 0), option: s("option")))
         case "ui_key":
-            let how = try await UIDriver.key(try req("key"), modifiers: list("modifiers"))
-            return message("Pressed \(try req("key"))" + (how == "events" ? "" : " (through the editor's key \(how): EditMax is not the active app)"))
+            let key = try req("key")
+            let how = try await UIDriver.key(key, modifiers: list("modifiers"))
+            return message((how == .unused ? "Pressed \(key), but " : "Pressed \(key) (") + how.rawValue + (how == .unused ? "" : ")"))
         case "ui_scroll":
-            let p = try UIDriver.resolve(a["target"], dx: 0, dy: 0)
-            let r = try await UIDriver.scroll(at: p, dx: d("dx") ?? 0, dy: d("dy") ?? 0)
-            return message("Scrolled to (\(Int(r.x)), \(Int(r.y))) of (\(Int(r.maxX)), \(Int(r.maxY)))")
+            return message(try await UIDriver.scroll(a["target"], dx: d("dx"), dy: d("dy")))
         case "ui_screenshot":
             let shot = try await UIDriver.screenshot(maxWidth: i("max_width") ?? 1400)
             return Payload(text: "Window (\(shot.png.count) bytes PNG, \(shot.method))", value: nil, image: shot.png)

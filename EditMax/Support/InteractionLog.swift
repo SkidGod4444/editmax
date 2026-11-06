@@ -40,17 +40,19 @@ enum InteractionLog {
 
     private static func log(_ e: NSEvent) {
         guard let w = e.window, let content = w.contentView else { return }
-        // Registry frames have a top-left origin; NSEvent locations have the window's bottom-left origin.
-        let p = CGPoint(x: e.locationInWindow.x, y: content.bounds.height - e.locationInWindow.y)
+        // Registry frames have a top-left origin in the content view; NSEvent locations are in the window's base
+        // coordinates (bottom-left origin, which in a popover's window is not the content view's).
+        let p = UIDriver.fromBase(CGRect(origin: e.locationInWindow, size: .zero), w).origin
         switch e.type {
         case .leftMouseDown, .rightMouseDown:
-            let id = UIRegistry.shared.element(at: p)
+            // Elements of the window clicked in (a popover's own, say), in its points, and only ones a user can see.
+            let id = UIRegistry.shared.element(at: p, in: w)
             downAt = (p, id, DragTiming(start: e.timestamp))
             var f: [String: Any] = ["x": r(p.x), "y": r(p.y), "clicks": e.clickCount, "synthetic": synthetic]
             if e.type == .rightMouseDown { f["button"] = "right" }
             if let id { f["id"] = id } else {
                 if let v = content.hitTest(e.locationInWindow) { f["view"] = NSStringFromClass(type(of: v)) }
-                if let n = UIRegistry.shared.nearest(to: p, within: 24) { f["near"] = n.id; f["distance"] = r(n.distance) }
+                if let n = UIRegistry.shared.nearest(to: p, within: 24, in: w) { f["near"] = n.id; f["distance"] = r(n.distance) }
             }
             if let m = mods(e.modifierFlags) { f["mods"] = m }
             if w.title.isEmpty == false { f["window"] = w.title }

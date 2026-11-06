@@ -148,17 +148,58 @@ token is generated once and written with the port to `~/Library/Application Supp
 the MCP Swift SDK's stateless HTTP transport, so any number of clients can share it. A call with an argument name the
 tool does not declare is rejected with the list of names it takes; nothing is silently ignored.
 
-The `ui_*` tools work the window itself. Views register with `.uiFrame("area.name")` (`UIDriver.swift`); frames are
-converted through AppKit into window points, so controls inside split views and sheets are addressable. `ui_click` and
-`ui_drag` post events through the app's own event queue (`NSApp.postEvent`), so nothing reaches another app and the
-real cursor stays put. SwiftUI gestures need the active app: when EditMax is behind another app it is activated for
-that one gesture and the previous app gets focus straight back; when macOS refuses, the tools fall back to the
-control's own tap, drag or key handler and say so. `ui_screenshot` uses ScreenCaptureKit filtered to the one window
-(it asks for Screen Recording once; without it, the layer tree is rendered instead).
+The `ui_*` tools work the window itself (`UIDriver.swift`). Views mark themselves with `.uiFrame("area.name")`,
+`.uiTap(id)` and `.uiDrag(id)`; each puts a zero-size AppKit probe (`UIProbeView`) behind the view. The registry keeps
+weak references to the live probes and asks them at the moment of a call, so nothing it answers can be stale: a view
+that is gone has no probe, a moved view is where its probe is now, and a tap or drag closure is the one from the view's
+latest update (SwiftUI calls `updateNSView` on every redraw because a closure never compares equal). Call sites need no
+`key:` to re-register; the argument is still accepted and ignored. Before this, a reordered grade-layer list ran the old
+row's closure and deleted the wrong layer, removed track headers stayed registered, and frames lagged a move behind.
+
+Frames are window points with the origin at the top-left of the editor window's content. Only what a user can see is
+an element: the probe's rect clipped by every scroll view and clipping ancestor and by the window. A control scrolled
+out of view is listed under `hidden` in `ui_layout` (and `ui_scroll {target: id}` with no dx/dy scrolls it into view);
+a probe SwiftUI keeps hidden for reuse is not listed at all. Popovers and sheets are windows attached to the editor:
+their elements are reported in the editor's points with `"window": "popover"`/`"sheet"`, and a click is posted to the
+window that draws the element, at that window's own coordinates. `ui_click` and `ui_drag` fail, saying why, rather
+than post a click that cannot land (an element scrolled away, a point outside the window). Not detected: a control
+covered by another SwiftUI view in the same hosting view (the history banner under the preview buttons).
+
+Events go through the app's own event queue (`NSApp.postEvent`) to EditMax's own windows, so nothing reaches another
+app and the real cursor stays put. The driver never activates EditMax. SwiftUI gestures need the active app, so in the
+background a click or drag calls the control's own `.uiTap`/`.uiDrag` handler when it has one and says so; plain
+controls take posted events (`acceptsFirstMouse` is taught to the hosting view, the popover's included).
+
+Menus: an open menu runs its own event loop and brings EditMax to the front. On macOS 26 a SwiftUI `Picker` (menu
+style) or `Menu` has no `NSPopUpButton` behind it; on mouse-down it builds an NSMenu and pops it up through
+`-[NSMenu _popUpMenuRelativeToRect:inView:width:flags:selectedItemIndexProvider:]`. `MenuCapture` replaces NSMenu's
+pop-up methods for the length of one driver gesture with one that records the menu and shows nothing, then puts them
+back (a menu that still starts tracking is closed at once). `ui_select {target, option}` presses the control that way
+and runs the chosen item (`performActionForItem`), sets an AppKit `NSPopUpButton` or `NSSegmentedControl` directly,
+and with no option lists the choices. In the background `ui_click` on a picker turns the caught menu into an error that
+points at `ui_select` and lists the options. (A SwiftUI segmented picker bound to an `@Published` value logs SwiftUI's
+"Publishing changes from within view updates" for a real click too; it is not the driver's.)
+
+Keys: while a text field (an `NSTextView`, field editors included) is first responder, keys without ⌘ go to it with
+`keyDown`, as for a user, and never to the editor's key handler (typing `r` in the media search once switched the tool
+to Roll). Otherwise a key goes to the editor's handler (`UIRegistry.keyHandler`, set by `KeyMonitorView`), then the
+window's own key equivalents (a default button, a SwiftUI `.keyboardShortcut`), then the focused control. A key without
+⌘, ⌃ or ⌥ never reaches the menu bar (a plain `e` once ran Edit ▸ Emoji & Symbols, whose shortcut is fn-E); a ⌘ chord
+does (posted when EditMax is active, `performKeyEquivalent` on the main menu when not).
+
+`ui_screenshot` never asks for Screen Recording (a debug build is re-signed on every build, so macOS would forget the
+grant). With it, and the window on screen, the display is captured through a filter that includes only the editor
+window and the windows attached to it, and ScreenCaptureKit draws child windows (popovers, sheets) in place
+(`includeChildWindows`; the single-window filter `desktopIndependentWindow` leaves them out). On another Space only the
+window itself can be captured and the answer says its popover is missing. Menus and other EditMax windows over it are
+left out: captured one by one, a menu came back as a shrunken copy of the whole window. Without the permission, or when
+capture fails, the layer tree is rendered and the answer carries the real reason (only a missing permission is called
+one).
 
 Things learned driving it: a single click on a Home card selects it, a double click opens; SwiftUI sliders ignore
-posted events (use the `set_clip_*` tools); Form toggles take the click at their right edge. A new SwiftUI drag
-gesture needs a `.uiDrag(id, key:)` handler (and a tap a `.uiTap`), or `ui_drag` can only report the fallback.
+posted events (use the `set_clip_*` tools); Form toggles take the click at their right edge; a window that was never
+ordered in gets no posted events (tests order theirs in far off every display). A new SwiftUI drag gesture needs a
+`.uiDrag(id)` handler (and a tap a `.uiTap`), or `ui_drag` can only report the fallback.
 
 ### Follow the agent
 

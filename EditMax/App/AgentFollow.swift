@@ -78,6 +78,15 @@ enum FollowUI {
     static func apply(_ t: FollowTarget, document: EditMaxDocument, state: EditorState, player: PlayerController) -> Bool {
         let p = document.project
         var changed = false
+        // The playhead goes onto the change, unless it already shows it or the user is playing.
+        if let time = t.time, !player.isRunning {
+            let now = player.currentTime
+            let inside = t.range.map { now >= $0.lowerBound && now < $0.upperBound } ?? (abs(now - time) < 1e-3)
+            if !inside { document.seekRequest = (max(0, time), false); changed = true }
+        }
+        // The focus layout is the user's choice to see only the player and the chat: the edit shows in the player and
+        // nothing else changes, not the selection, the inspector or the mixer (they would be waiting after focus ends).
+        if state.focusMode { return changed }
         if t.project, !state.selectedClipIDs.isEmpty || state.selectedTextID != nil {
             state.selectedClipIDs = []; state.selectedTextID = nil; changed = true
         }
@@ -87,15 +96,9 @@ enum FollowUI {
         if let id = t.text, p.texts.contains(where: { $0.id == id }), state.selectedTextID != id || !state.selectedClipIDs.isEmpty {
             state.selectedTextID = id; state.selectedClipIDs = []; changed = true
         }
-        // The playhead goes onto the change, unless it already shows it or the user is playing.
-        if let time = t.time, !player.isRunning {
-            let now = player.currentTime
-            let inside = t.range.map { now >= $0.lowerBound && now < $0.upperBound } ?? (abs(now - time) < 1e-3)
-            if !inside { document.seekRequest = (max(0, time), false); changed = true }
-        }
-        // History and Agents hide the inspector; the Chat tab and the focus layout are the user's view of the
-        // conversation and stay put (the selection, playhead and mixer still follow).
-        if t.anchor != nil || t.clip != nil || t.text != nil || t.project, !state.focusMode,
+        // History and Agents hide the inspector and give way to it; the Chat tab is the user's choice to watch the
+        // conversation and is never switched away from (the selection, playhead and mixer still follow).
+        if t.anchor != nil || t.clip != nil || t.text != nil || t.project,
            state.inspectorTab == .history || state.inspectorTab == .agents {
             state.inspectorTab = .inspector; changed = true
         }

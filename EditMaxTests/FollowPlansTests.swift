@@ -22,3 +22,35 @@ final class FollowPlansTests: XCTestCase {
         }
     }
 }
+
+/// The user's chosen view is never switched: in the focus layout (player and chat only) only the playhead follows, and
+/// the Chat tab stays the Chat tab.
+@MainActor
+final class FollowViewChoiceTests: XCTestCase {
+    private func setup() -> (EditMaxDocument, EditorState, PlayerController, UUID) {
+        let doc = EditMaxDocument()
+        let clip = Clip(assetID: UUID(), name: "c", start: 2, duration: 3)
+        doc.project.tracks[0].clips = [clip]
+        return (doc, EditorState(), PlayerController(), clip.id)
+    }
+
+    func testFocusLayoutOnlyMovesThePlayhead() {
+        let (doc, state, player, clip) = setup()
+        state.focusMode = true
+        let mixerWas = UserDefaults.standard.object(forKey: "mixerOpen")
+        _ = FollowUI.apply(FollowTarget(clip: clip, anchor: .wheels, time: 2.5, range: 2...5, mixer: true), document: doc, state: state, player: player)
+        XCTAssertEqual(doc.seekRequest?.time, 2.5, "the edit shows in the player")
+        XCTAssertTrue(state.selectedClipIDs.isEmpty, "selection unchanged")
+        XCTAssertNil(state.reveal.anchor, "inspector unchanged")
+        XCTAssertEqual(state.inspectorTab, .inspector)
+        XCTAssertEqual(UserDefaults.standard.object(forKey: "mixerOpen") as? Bool, mixerWas as? Bool, "mixer unchanged")
+    }
+
+    func testChatTabIsNotSwitchedAway() {
+        let (doc, state, player, clip) = setup()
+        state.inspectorTab = .chat
+        _ = FollowUI.apply(FollowTarget(clip: clip, anchor: .wheels, time: 2.5, range: 2...5), document: doc, state: state, player: player)
+        XCTAssertEqual(state.inspectorTab, .chat)
+        XCTAssertEqual(state.selectedClipIDs, [clip], "the clip is still selected on the timeline")
+    }
+}

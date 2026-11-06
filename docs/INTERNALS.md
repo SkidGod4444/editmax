@@ -174,7 +174,9 @@ tests do) needs nothing.
 
 It stands aside while the user works: real mouse, key and scroll events (not the driver's own) set
 `AgentFollow.lastUserInput`, and for 2.5 s after one, or while a button is held, edits apply without moving the window.
-It never switches away from the Chat tab or the focus layout, never moves a playing playhead, and is off in tests.
+It never switches away from the Chat tab (the user chose to watch the conversation). In the focus layout (only the
+player and the chat) only the playhead follows: no selection, inspector or mixer change waits for the user when focus
+ends. It never moves a playing playhead, and is off in tests.
 `ui_screenshot` waits for an edit's animation to finish. Settings > Advanced has the switch (`followAgent`).
 
 ## UI conventions

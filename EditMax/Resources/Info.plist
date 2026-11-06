@@ -47,6 +47,14 @@
 	<string>© 2026 Saidev Dhal</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>EditMax turns the speech in your footage into captions, on this Mac.</string>
+	<key>SUAutomaticallyUpdate</key>
+	<true/>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUFeedURL</key>
+	<string>https://github.com/SkidGod4444/editmax/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>ngzQ+Q2XfZRlpCVj1AzTZ5LtO8eX2bHC4BQTF/Aj7ZQ=</string>
 	<key>UTExportedTypeDeclarations</key>
 	<array>
 		<dict>

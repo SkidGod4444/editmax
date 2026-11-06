@@ -4,7 +4,9 @@ import SwiftUI
 struct EditMaxApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var mcp = MCPService.shared
-    init() { if !AppDelegate.isTesting { MCPService.shared.start(); CodemaxInstaller.shared.ensureInstalled(); CodemaxUpdater.shared.start() } }
+    /// The EditMax icon in the menu bar (Settings ▸ General can hide it).
+    @AppStorage("showMenuBarIcon") private var showMenuBarIcon = true
+    init() { if !AppDelegate.isTesting { MCPService.shared.start(); CodemaxInstaller.shared.ensureInstalled(); CodemaxUpdater.shared.start(); AppUpdater.shared.start() } }
 
     var body: some Scene {
         DocumentGroup(newDocument: { EditMaxDocument() }) { file in
@@ -28,8 +30,15 @@ struct EditMaxApp: App {
             }
             ViewCommands()
             EditCommands()
+            UpdateCommands()
         }
         Settings { SettingsView() }
+        MenuBarExtra(isInserted: $showMenuBarIcon) {
+            MenuBarMenu()
+        } label: {
+            Image(nsImage: MenuBarIcon.image).renderingMode(.template).accessibilityLabel("EditMax")
+        }
+        .menuBarExtraStyle(.menu)
     }
 }
 
@@ -295,6 +304,16 @@ struct ViewCommands: Commands {
             Button("Full Screen Preview") { NotificationCenter.default.post(name: .editmaxFullScreenPreview, object: nil) }.keyboardShortcut("f", modifiers: [.command, .shift])
             Button("Focus on Player and Chat") { NotificationCenter.default.post(name: .editmaxFocusMode, object: nil) }.keyboardShortcut("f", modifiers: [.command, .option])
             Button("Before / After") { NotificationCenter.default.post(name: .editmaxCompare, object: nil) }.keyboardShortcut("b", modifiers: [.command, .option])
+        }
+    }
+}
+
+/// EditMax ▸ Check for Updates…, under About.
+struct UpdateCommands: Commands {
+    @ObservedObject private var updates = AppUpdater.shared
+    var body: some Commands {
+        CommandGroup(after: .appInfo) {
+            Button("Check for Updates…") { updates.checkForUpdates() }.disabled(!updates.canCheck)
         }
     }
 }

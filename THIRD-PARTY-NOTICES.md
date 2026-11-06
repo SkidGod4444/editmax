@@ -12,4 +12,5 @@ EditMax.app or are compiled into it, and each stays under its own license. Their
 | [MCP Swift SDK](https://github.com/modelcontextprotocol/swift-sdk) | the EditMax executable | MIT, moving to Apache-2.0 |
 | [SwiftNIO](https://github.com/apple/swift-nio), [swift-log](https://github.com/apple/swift-log), [swift-system](https://github.com/apple/swift-system), [swift-atomics](https://github.com/apple/swift-atomics), [swift-collections](https://github.com/apple/swift-collections) | the EditMax executable | Apache-2.0 |
 | [EventSource](https://github.com/mattt/EventSource) | the EditMax executable | MIT |
+| [Sparkle](https://github.com/sparkle-project/Sparkle) 2.10.1 (app updates) | `Frameworks/Sparkle.framework` | MIT, with the external licenses its `LICENSE` lists. The text ships as `Sparkle-LICENSE`. |
 | [Bun](https://bun.sh) runtime | `Resources/bin/codemax`, `Resources/bin/editmax-agent` | MIT, with bundled components under their own licenses |

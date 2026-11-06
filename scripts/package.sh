@@ -1,6 +1,6 @@
 #!/bin/bash
 # Builds a Release EditMax.app and packages it for a GitHub release into build/release/:
-#   EditMax-<version>.dmg, EditMax-<version>.zip and SHA256SUMS.
+#   EditMax-<version>.dmg, EditMax-<version>.zip (also the app update Sparkle installs) and SHA256SUMS.
 #
 # VERSION (default: the one in project.yml) and BUILD (default: 1) stamp the bundle for this build only.
 # Signing always uses the hardened runtime, so an ad-hoc local run exercises the same entitlements a release does.
@@ -49,6 +49,9 @@ cp LICENSE COMMERCIAL.md THIRD-PARTY-NOTICES.md "$LIC/"
 CODEMAX_LICENSE="${CODEMAX_SRC:-$ROOT/../codemax-cli}/LICENSE"
 if [ -f "$CODEMAX_LICENSE" ]; then cp "$CODEMAX_LICENSE" "$LIC/codemax-LICENSE"
 else echo "package: no codemax LICENSE at $CODEMAX_LICENSE; its AGPL text must ship with the binary" >&2; exit 1; fi
+SPARKLE_LICENSE="$DD/SourcePackages/checkouts/Sparkle/LICENSE"
+if [ -f "$SPARKLE_LICENSE" ]; then cp "$SPARKLE_LICENSE" "$LIC/Sparkle-LICENSE"
+else echo "package: no Sparkle LICENSE at $SPARKLE_LICENSE; its MIT notice must ship with the framework" >&2; exit 1; fi
 
 sign() {   # sign <path> [entitlements]
   local args=(--force --options runtime --sign "$IDENTITY")
@@ -57,6 +60,15 @@ sign() {   # sign <path> [entitlements]
   codesign "${args[@]}" "$1"
 }
 for b in "$APP"/Contents/Resources/bin/*; do sign "$b" "$BUN_ENT"; done
+# Sparkle (app updates) carries its own helpers. Each one is signed with our identity first, inside out; the framework loop
+# below signs the framework as one bundle and would leave them with Sparkle's signature, which notarization rejects.
+# The Downloader service keeps its own (network client) entitlements.
+SPARKLE="$APP/Contents/Frameworks/Sparkle.framework/Versions/B"
+[ -d "$SPARKLE" ] || { echo "package: Sparkle.framework is missing from the app" >&2; exit 1; }
+sign "$SPARKLE/XPCServices/Installer.xpc"
+codesign --force --options runtime --sign "$IDENTITY" $([ "$IDENTITY" != "-" ] && echo --timestamp) --preserve-metadata=entitlements "$SPARKLE/XPCServices/Downloader.xpc"
+sign "$SPARKLE/Autoupdate"
+sign "$SPARKLE/Updater.app"
 find "$APP/Contents" \( -name "*.dylib" -o -name "*.framework" \) -prune -print 2>/dev/null | while read -r f; do sign "$f"; done
 sign "$APP"
 codesign --verify --deep --strict "$APP"

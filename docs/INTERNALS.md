@@ -12,7 +12,7 @@ file covers how it is built, the engine's rules, and the gotchas that cost time 
 | `EditMax/MCP` | `MCPService` (MCP Swift SDK, stateless HTTP transport, bearer auth), `HTTPListener` (NWListener HTTP/1.1), `EditMaxTools` (catalog and dispatch), `UIDriver` (the `ui_*` tools) |
 | `EditMax/Chat` | `CodemaxRunner` (NDJSON over `codemax serve`), `CodemaxInstaller`, `CodemaxUpdater`, `ChatSession`, `KeychainStore` |
 | `EditMax/UI` | SwiftUI views; `Glass.swift` is the only place Liquid Glass APIs are called |
-| `EditMax/App` | `EditMaxApp`, `AppDelegate` (`EditorState.swift`), `HomeWindow`, `ProjectLibrary`, `SplashScreen`, `AppSettings` |
+| `EditMax/App` | `EditMaxApp`, `AppDelegate` (`EditorState.swift`), `HomeWindow`, `ProjectLibrary`, `SplashScreen`, `AppSettings`, `AppUpdater` (Sparkle), `MenuBarIcon` + `MenuBarMenu` (the menu bar extra) |
 | `agent/` | The API-key chat sidecar (Bun + TypeScript): Claude Agent SDK and Vercel AI SDK providers; compiled to `Vendor/editmax-agent` |
 | `EditMaxTests/` | XCTest target hosted in the app, with a 2 s H.264 fixture |
 | `scripts/` | `vendor-codemax.sh`, `vendor-agent.sh`, `make-icon.sh`, `icon/` |
@@ -206,12 +206,28 @@ failed agent start, protocol error), is rolled back to the previous or the bundl
 `NOTARY_PROFILE` from the environment or a git-ignored `.release.env`, requires a clean `main` in sync with
 `origin/main`, runs `scripts/package.sh` with the version and a build number (the commit count), and stops unless
 `build/release/notarized` exists. Then it stamps the version into `project.yml`, commits, tags `v0.2.0`, pushes, and
-publishes a GitHub release with `EditMax-<version>.dmg`, `EditMax-<version>.zip` and `SHA256SUMS`, with notes
-generated from the commits. The website's Download button hands out the latest release, which is why an unnotarized
-build is never published.
+publishes a GitHub release with `EditMax-<version>.dmg`, `EditMax-<version>.zip`, `SHA256SUMS` and `appcast.xml`,
+with notes generated from the commits. The website's Download button hands out the latest release, which is why an
+unnotarized build is never published.
 
-`package.sh` builds the Release configuration unsigned, copies `LICENSE`, `COMMERCIAL.md`, `THIRD-PARTY-NOTICES.md`
-and codemax's AGPL text into `Contents/Resources/Licenses`, then signs inside out with the hardened runtime: the two
+App updates (`AppUpdater`, Sparkle 2.10.1). `SUFeedURL` is `releases/latest/download/appcast.xml`, which GitHub
+redirects to the newest release's asset, so a release without `appcast.xml` would break updates for everyone:
+`release.sh` writes it (one item: the zip, `sparkle:version` = the build number, which Sparkle compares, signed with
+`sign_update --account editmax`) and fails rather than publish without it. `SUPublicEDKey` in `project.yml` is the
+public half of the key in the login keychain (backed up outside the repo, in `~/.editmax-sparkle`); a lost key means a
+key rotation before any installed copy can update again. Defaults: daily checks (`SUEnableAutomaticChecks`) and
+background download with install on quit (`SUAutomaticallyUpdate`); Settings ▸ General binds to the updater's own
+`automaticallyChecksForUpdates` / `automaticallyDownloadsUpdates`. The updater does not start in Debug builds (they
+would "update" to the release) or under XCTest; `EDITMAX_UPDATES=1` starts it in a Debug build. `package.sh` signs
+Sparkle's `Installer.xpc`, `Downloader.xpc` (keeping its entitlements), `Autoupdate` and `Updater.app` before the
+framework and the app, and ships Sparkle's MIT text as `Licenses/Sparkle-LICENSE`.
+
+The menu bar extra is a SwiftUI `MenuBarExtra` (`.menu` style) bound to `@AppStorage("showMenuBarIcon")`. Its icon is
+drawn in code (`MenuBarIcon`, a template image of the app icon's striped triangle with wider gaps) so it follows the
+menu bar's light, dark and highlighted states.
+
+`package.sh` builds the Release configuration unsigned, copies `LICENSE`, `COMMERCIAL.md`, `THIRD-PARTY-NOTICES.md`,
+codemax's AGPL text and Sparkle's MIT text into `Contents/Resources/Licenses`, then signs inside out with the hardened runtime: the two
 Bun executables in `Resources/bin` with `scripts/signing/bun-runtime.entitlements` (JavaScriptCore's JIT needs them;
 without them codemax dies with "Ran out of executable memory"), then the app. It checks that the bundled codemax still
 starts. With a Developer ID identity (`SIGN_IDENTITY`) and notary credentials (`APPLE_ID`, `APPLE_TEAM_ID`,

@@ -32,6 +32,8 @@ struct SettingsView: View {
 
 private struct GeneralSettings: View {
     @ObservedObject private var s = AppSettings.shared
+    @ObservedObject private var updates = AppUpdater.shared
+    @AppStorage("showMenuBarIcon") private var showMenuBarIcon = true
 
     var body: some View {
         Form {
@@ -65,10 +67,40 @@ private struct GeneralSettings: View {
                 Text(glassNote)
             }
             Section {
+                Toggle("Show EditMax in the menu bar", isOn: $showMenuBarIcon).pointer().uiFrame("settings.general.menuBarIcon")
+            } footer: {
+                Text("The icon at the top right of the screen: a new project, Home, recent projects, the MCP server and updates.")
+            }
+            Section {
+                Toggle("Check for updates automatically", isOn: $updates.checksAutomatically)
+                    .disabled(!AppUpdater.isEnabled).pointer().uiFrame("settings.general.updates.check")
+                Toggle("Download and install updates in the background", isOn: $updates.installsAutomatically)
+                    .disabled(!AppUpdater.isEnabled || !updates.checksAutomatically).pointer().uiFrame("settings.general.updates.install")
+                LabeledContent("Last checked") {
+                    HStack(spacing: 8) {
+                        Text(updates.lastCheck.map { $0.formatted(date: .abbreviated, time: .shortened) } ?? "Never").foregroundStyle(.secondary)
+                        Button("Check Now") { updates.checkForUpdates() }.controlSize(.small).disabled(!updates.canCheck)
+                            .pointer().uiFrame("settings.general.updates.checkNow")
+                    }
+                }
+            } header: {
+                Text("Updates")
+            } footer: {
+                Text(updateNote)
+            }
+            Section {
                 LabeledContent("EditMax \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")", value: "by Saidev Dhal")
             }
         }
         .formStyle(.grouped)
+    }
+
+    private var updateNote: String {
+        guard AppUpdater.isEnabled else { return "Updates are off in development builds." }
+        if !updates.checksAutomatically { return "EditMax checks only when you ask (Check Now, or EditMax ▸ Check for Updates…)." }
+        return updates.installsAutomatically
+            ? "EditMax checks once a day, downloads a new version in the background and installs it the next time you quit."
+            : "EditMax checks once a day and asks before downloading a new version."
     }
 
     private var glassNote: String {

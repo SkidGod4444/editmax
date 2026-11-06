@@ -78,6 +78,11 @@ or run `xattr -dr com.apple.quarantine /Applications/EditMax.app`.
 Every release also ships a zip and a `SHA256SUMS` file (`shasum -a 256 -c SHA256SUMS` checks the download). Prefer
 building it yourself? See [Build](#build).
 
+**Updates.** Every release after 0.1.1 updates itself: once a day it checks for a new release, downloads it in the
+background and installs it the next time you quit. Settings ▸ General can make it ask first or check only when you
+choose EditMax ▸ Check for Updates…. Updates are signed: EditMax installs only a release signed with the project's
+update key and Developer ID. 0.1.1 and older have no updater; download the next version once by hand.
+
 ## First edit
 
 1. Launch EditMax. **Home** lists your library (`~/Movies/EditMax Projects`); pick a format chip and press **New
@@ -213,8 +218,11 @@ Neither carries EditMax's processing: color grades, looks and LUTs, title and ca
 isolation, ducking, stabilization, crops and other keyframes stay behind. After each export EditMax lists, for that
 project, what went over and what did not. To keep the grade, send a ProRes master along with the timeline.
 
-**Settings** (⌘,): library folder, splash, appearance, Liquid Glass, chat defaults, API keys, the agent runtime's
-automatic updates, MCP port and token, logs and diagnostics.
+**Menu bar.** The EditMax icon at the top right of the screen opens a new project, Home or one of your five most
+recent projects, shows whether agents can reach the MCP server, and checks for updates. Settings ▸ General hides it.
+
+**Settings** (⌘,): library folder, splash, appearance, Liquid Glass, the menu bar icon, EditMax's updates, chat
+defaults, API keys, the agent runtime's automatic updates, MCP port and token, logs and diagnostics.
 
 ## Build
 
@@ -273,10 +281,13 @@ scripts/release.sh 0.2.0
 ```
 
 runs `scripts/package.sh` (a Release build with the hardened runtime, signed with your Developer ID, notarized and
-stapled by Apple, packaged as a DMG and a zip with `SHA256SUMS`), then stamps the version into `project.yml`, commits,
-tags `v0.2.0`, pushes and publishes the GitHub release. It refuses to publish a build that is not notarized, because
-the website's Download button hands out the latest release. It reads two settings from the environment or from a
-git-ignored `.release.env` in the repo root:
+stapled by Apple, packaged as a DMG and a zip with `SHA256SUMS`), signs the zip for updates and writes `appcast.xml`,
+then stamps the version into `project.yml`, commits, tags `v0.2.0`, pushes and publishes the GitHub release. It
+refuses to publish a build that is not notarized, because the website's Download button hands out the latest release.
+Installed copies read `releases/latest/download/appcast.xml`, so every release carries one. The update key
+([Sparkle](https://sparkle-project.org)'s EdDSA key) lives in the login keychain under the account `editmax`; macOS
+may ask once to let `sign_update` use it. Keep a backup: without that key, installed copies can't take updates.
+It reads two settings from the environment or from a git-ignored `.release.env` in the repo root:
 
 ```sh
 SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"

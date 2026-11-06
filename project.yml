@@ -8,6 +8,10 @@ packages:
   MCP:
     url: https://github.com/modelcontextprotocol/swift-sdk.git
     exactVersion: 0.12.1
+  # App updates: checks the appcast every release carries (scripts/release.sh writes it), EdDSA-signed.
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    exactVersion: 2.10.1
 targets:
   EditMax:
     type: application
@@ -38,6 +42,8 @@ targets:
     dependencies:
       - package: MCP
         product: MCP
+      - package: Sparkle
+        product: Sparkle
     info:
       path: EditMax/Resources/Info.plist
       properties:
@@ -50,6 +56,12 @@ targets:
         CFBundleVersion: "50"
         LSMinimumSystemVersion: "15.0"
         NSHighResolutionCapable: true
+        # Updates (AppUpdater): the appcast every release carries, its EdDSA key, daily background checks that download
+        # and install on quit. The private key is in the login keychain (account "editmax"), backed up outside the repo.
+        SUFeedURL: https://github.com/SkidGod4444/editmax/releases/latest/download/appcast.xml
+        SUPublicEDKey: ngzQ+Q2XfZRlpCVj1AzTZ5LtO8eX2bHC4BQTF/Aj7ZQ=
+        SUEnableAutomaticChecks: true
+        SUAutomaticallyUpdate: true
         CFBundleDocumentTypes:
           - CFBundleTypeName: EditMax Project
             CFBundleTypeRole: Editor

@@ -92,11 +92,11 @@ describe("api engine (Vercel AI SDK path)", () => {
 });
 
 describe("api providers", () => {
-  test("keys: the host's slot wins over the environment; claude-agent needs claude on PATH", () => {
+  test("keys: the host's slot wins over the environment; claude-agent needs claude on PATH and a key", () => {
     const env = { ANTHROPIC_API_KEY: "env-key" } as NodeJS.ProcessEnv;
     const p = apiProviderStatus({ anthropic: "host-key" }, env, () => null);
-    expect(p.find((x) => x.id === "claude-agent")).toMatchObject({ hasKey: true, hasClaude: false, available: false, keyOptional: true });
-    expect(apiProviderStatus({}, {} as any, () => "/usr/bin/claude").find((x) => x.id === "claude-agent")).toMatchObject({ hasKey: false, available: true });
+    expect(p.find((x) => x.id === "claude-agent")).toMatchObject({ hasKey: true, hasClaude: false, available: false, keyOptional: false });
+    expect(apiProviderStatus({}, {} as any, () => "/usr/bin/claude").find((x) => x.id === "claude-agent")).toMatchObject({ hasKey: false, available: false });
     expect(p.find((x) => x.id === "anthropic")).toMatchObject({ hasKey: true, available: true });
     expect(p.find((x) => x.id === "openai")).toMatchObject({ hasKey: false, available: false });
     expect(apiKeyFor(API_PROVIDERS[1]!, { anthropic: "host-key" }, env)).toBe("host-key");

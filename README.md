@@ -10,7 +10,10 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/SkidGod4444/editmax/releases/latest"><img src="https://img.shields.io/github/v/release/SkidGod4444/editmax?label=release&color=0A84FF" alt="Latest release"></a>
+  <a href="https://github.com/SkidGod4444/editmax/releases"><img src="https://img.shields.io/github/downloads/SkidGod4444/editmax/total?color=30D158" alt="Downloads"></a>
   <a href="https://github.com/SkidGod4444/editmax/actions/workflows/test.yml"><img src="https://github.com/SkidGod4444/editmax/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-PolyForm%20Noncommercial-orange" alt="License: PolyForm Noncommercial 1.0.0"></a>
   <img src="https://img.shields.io/badge/macOS-15%2B-black" alt="macOS 15+">
   <img src="https://img.shields.io/badge/Swift-5-F05138" alt="Swift 5">
   <img src="https://img.shields.io/badge/MCP-62%20tools-blue" alt="62 MCP tools">
@@ -63,8 +66,16 @@ no backend, nothing leaves your Mac unless you ask a cloud model.
 EditMax runs on macOS 15 or later on Apple silicon (Intel Macs are untested). Liquid Glass and on-device SpeechAnalyzer captions need
 macOS 26; everything else works on 15.
 
-There is no packaged download yet: build it from source (two commands, see [Build](#build)) and move
-`EditMax.app` to Applications.
+1. Download `EditMax-<version>.dmg` from the [latest release](https://github.com/SkidGod4444/editmax/releases/latest)
+   and drag EditMax to Applications.
+2. The app is not notarized yet, so macOS refuses to open it the first time. Open **System Settings > Privacy &
+   Security**, scroll down and click **Open Anyway** next to EditMax, or run once:
+
+   ```sh
+   xattr -dr com.apple.quarantine /Applications/EditMax.app
+   ```
+
+Every release also ships a zip and a `SHA256SUMS` file. Prefer building it yourself? Two commands, see [Build](#build).
 
 ## First edit
 
@@ -248,4 +259,11 @@ EditMax is made by **Saidev Dhal**. The agent runtime is [codemax](https://githu
 MCP server uses the [MCP Swift SDK](https://github.com/modelcontextprotocol/swift-sdk), and the API-key chat uses the
 [Claude Agent SDK](https://docs.claude.com/en/api/agent-sdk) and the [Vercel AI SDK](https://sdk.vercel.ai).
 
-© 2026 Saidev Dhal. A license will be added before the first public release.
+## License
+
+EditMax is source-available under the [PolyForm Noncommercial License 1.0.0](LICENSE): free for personal use,
+noncommercial organizations and noncommercial open-source work. Using it at a company, for client work or for
+monetized videos needs a commercial license; [COMMERCIAL.md](COMMERCIAL.md) explains what counts and how to get one.
+Bundled components keep their own licenses, listed in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+
+© 2026 Saidev Dhal.

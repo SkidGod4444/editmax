@@ -164,3 +164,21 @@ final class ToolCatalogTests: XCTestCase {
         XCTAssertEqual(EditMaxTools.argumentNames(of: "remove_texts"), ["ids", "project"])
     }
 }
+
+/// The Claude Agent SDK never runs without an API key: no fallback to a Claude subscription login, even if an older
+/// sidecar still reports the key as optional.
+final class ProviderKeyTests: XCTestCase {
+    private func provider(_ id: String, keyOptional: Bool, needsClaude: Bool) -> CodemaxRunner.ProviderInfo {
+        .init(id: id, name: id, keySlot: "anthropic", keyEnv: "ANTHROPIC_API_KEY", keyOptional: keyOptional, defaultModel: nil, models: [], needsClaude: needsClaude, hasClaude: true)
+    }
+
+    func testTheAgentSDKAlwaysNeedsAKey() {
+        XCTAssertTrue(ChatSession.keyRequired(provider("claude-agent", keyOptional: false, needsClaude: true)))
+        XCTAssertTrue(ChatSession.keyRequired(provider("claude-agent", keyOptional: true, needsClaude: true)), "an older sidecar's 'optional' is overruled")
+    }
+
+    func testOtherProvidersFollowTheSidecar() {
+        XCTAssertTrue(ChatSession.keyRequired(provider("anthropic", keyOptional: false, needsClaude: false)))
+        XCTAssertFalse(ChatSession.keyRequired(provider("local", keyOptional: true, needsClaude: false)))
+    }
+}

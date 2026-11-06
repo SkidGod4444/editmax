@@ -45,6 +45,8 @@
 	<true/>
 	<key>NSHumanReadableCopyright</key>
 	<string>© 2026 Saidev Dhal</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>EditMax turns the speech in your footage into captions, on this Mac.</string>
 	<key>UTExportedTypeDeclarations</key>
 	<array>
 		<dict>

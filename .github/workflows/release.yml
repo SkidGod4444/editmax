@@ -1,0 +1,88 @@
+name: Release
+# A tag such as v0.2.0 (scripts/release.sh makes one) builds EditMax.app, packages a DMG and a zip, and publishes
+# them as a GitHub release. GitHub counts every download of those assets; the README's badge shows the total.
+#
+# Signing and notarization switch on by themselves once these repository secrets exist:
+#   MACOS_CERT_P12        the "Developer ID Application" certificate and its private key, exported as .p12, base64
+#   MACOS_CERT_PASSWORD   the password chosen when exporting the .p12
+#   APPLE_ID              the Apple Account email of the developer team
+#   APPLE_TEAM_ID         the 10-character team ID
+#   APPLE_APP_PASSWORD    an app-specific password for that account (account.apple.com > Sign-In and Security)
+# Without them the app is signed ad hoc and the release notes tell users how to open it.
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to stamp, e.g. 0.2.0 (the release is a draft when started by hand)"
+        required: true
+permissions:
+  contents: write
+jobs:
+  build:
+    name: Build, sign, notarize and publish
+    runs-on: macos-26
+    env:
+      # A step's `if` cannot read secrets directly; this flag can.
+      HAS_CERT: ${{ secrets.MACOS_CERT_P12 != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      # The agent runtime lives in its own public repo and is built from source, as on a developer Mac.
+      # actions/checkout only writes inside the workspace, so it goes in a subfolder that CODEMAX_SRC points at.
+      - uses: actions/checkout@v4
+        with:
+          repository: SkidGod4444/codemax-cli
+          path: codemax-cli
+      - uses: oven-sh/setup-bun@v2
+      - name: Use the newest Xcode on the runner
+        run: |
+          XC=$(ls -d /Applications/Xcode*.app | sort -V | tail -1); echo "$XC"
+          sudo xcode-select -s "$XC"; xcodebuild -version
+      - name: Version from the tag
+        id: v
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then V="${{ github.event.inputs.version }}"; else V="${GITHUB_REF_NAME#v}"; fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"; echo "EditMax $V build ${{ github.run_number }}"
+      - name: Import the signing certificate
+        if: env.HAS_CERT == 'true'
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          KC="$RUNNER_TEMP/build.keychain-db"; KP="$(uuidgen)"
+          echo "$MACOS_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KP" "$KC"
+          security set-keychain-settings -lut 21600 "$KC"
+          security unlock-keychain -p "$KP" "$KC"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KC" -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KP" "$KC" >/dev/null
+          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
+          rm "$RUNNER_TEMP/cert.p12"
+          ID=$(security find-identity -v -p codesigning "$KC" | grep "Developer ID Application" | head -1 | sed -E 's/.*"(.*)"/\1/')
+          [ -n "$ID" ] || { echo "No Developer ID Application identity in MACOS_CERT_P12" >&2; exit 1; }
+          echo "Signing as: $ID"; echo "SIGN_IDENTITY=$ID" >> "$GITHUB_ENV"
+      - name: Build, sign, notarize and package
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+          BUILD: ${{ github.run_number }}
+          CODEMAX_SRC: ${{ github.workspace }}/codemax-cli
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: scripts/package.sh
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          NOTE="Requires macOS 15 or later on Apple silicon."
+          if [ ! -f build/release/notarized ]; then
+            NOTE="$NOTE"$'\n\nThis build is not notarized: after copying EditMax to Applications and trying to open it once, click Open Anyway in System Settings > Privacy & Security, or run `xattr -dr com.apple.quarantine /Applications/EditMax.app` once.'
+          fi
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then DRAFT=--draft; else DRAFT=; fi
+          gh release create "v$VERSION" "build/release/EditMax-$VERSION.dmg" "build/release/EditMax-$VERSION.zip" build/release/SHA256SUMS \
+            --title "EditMax $VERSION" --notes "$NOTE" --generate-notes $DRAFT
+      - name: Remove the signing keychain
+        if: always() && env.HAS_CERT == 'true'
+        run: security delete-keychain "$RUNNER_TEMP/build.keychain-db" || true

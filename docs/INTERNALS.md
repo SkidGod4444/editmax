@@ -162,8 +162,10 @@ Support/EditMax/bin/codemax`, linked from `~/.local/bin`) only when none is on t
 fetched by `bunx` on first use, so that agent needs `bun` and internet the first time.
 
 **API key.** The sidecar in `agent/` speaks the same NDJSON lines, so one Swift runner drives both. Providers: the
-Claude Agent SDK (the installed Claude Code harness with only the `editmax` MCP server; a key bills the API, no key
-uses Claude Code's login) and Claude / OpenAI / Google / xAI through the Vercel AI SDK with the MCP tools pulled through
+Claude Agent SDK (the installed Claude Code harness with only the `editmax` MCP server; it always runs on an
+Anthropic API key, never on a Claude subscription login, which Anthropic's terms do not allow for apps built on the SDK:
+the sidecar refuses to start it without a key, drops `CLAUDE_CODE_OAUTH_TOKEN` from its environment, and the app
+treats its key as required whatever the sidecar reports; the Agent backend is the way to use a subscription) and Claude / OpenAI / Google / xAI through the Vercel AI SDK with the MCP tools pulled through
 `@ai-sdk/mcp`, a 40-step tool loop. Keys live in the login keychain, reach the sidecar once per session over stdin
 and are redacted from every log. Switching backends keeps the transcript; the first message after a switch carries a
 digest of the earlier turns.
@@ -173,6 +175,33 @@ download `codemax-darwin-<arch>`, verify `.sha256`, health-check (`--version` an
 swap it in and keep the previous copy. A copy that never says ready, or earns two strikes within ten minutes (crash,
 failed agent start, protocol error), is rolled back to the previous or the bundled one and the chat retries. State in
 `bin/update-state.json`. `EDITMAX_UPDATE_URL=<json> EDITMAX_UPDATE_NOW=1` point it at a local fake release.
+
+## Releases
+
+`scripts/release.sh 0.2.0` stamps the version into `project.yml`, commits, tags `v0.2.0` and pushes. The tag starts
+`.github/workflows/release.yml`, which checks out the public codemax-cli repo into the workspace (so the bundled
+runtime is the real one, not the test stub), runs `scripts/package.sh` and publishes a GitHub release with
+`EditMax-<version>.dmg`, `EditMax-<version>.zip` and `SHA256SUMS`, with notes generated from the commits. Started by
+hand from the Actions tab, the workflow makes a draft release.
+
+`package.sh` builds the Release configuration unsigned, copies `LICENSE`, `COMMERCIAL.md`, `THIRD-PARTY-NOTICES.md`
+and codemax's AGPL text into `Contents/Resources/Licenses`, then signs inside out with the hardened runtime: the two
+Bun executables in `Resources/bin` with `scripts/signing/bun-runtime.entitlements` (JavaScriptCore's JIT needs them;
+without them codemax dies with "Ran out of executable memory"), then the app. It checks that the bundled codemax still
+starts. With a Developer ID identity (`SIGN_IDENTITY`) and notary credentials (`APPLE_ID`, `APPLE_TEAM_ID`,
+`APPLE_APP_PASSWORD` in CI, or `NOTARY_PROFILE` naming a profile saved once with `xcrun notarytool store-credentials`
+on a Mac) it notarizes the app and staples it, builds and signs the DMG, notarizes and staples that too,
+and runs `spctl` on both; a rejection prints Apple's log and fails the job. Without them everything is signed ad hoc
+with the same runtime flags, so a local run (`scripts/package.sh`, output in `build/release/`) exercises the same
+entitlements. The version stamp is undone when the script ends. `CFBundleVersion` is the workflow's run number.
+
+In CI the identity comes from five repository secrets, named at the top of the workflow; the certificate is imported
+into a throwaway keychain that is deleted after the job. The release notes carry the quarantine workaround only for a
+build that was not notarized.
+
+GitHub counts every download of a release asset; the README badge shows the total, and
+`gh api repos/SkidGod4444/editmax/releases --jq '.[] | "\(.tag_name): \([.assets[].download_count] | add)"'` breaks it
+down per release.
 
 ## Logs and diagnostics
 

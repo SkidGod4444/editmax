@@ -34,7 +34,8 @@ export interface ApiProvider {
   models?: { id: string; name: string }[];
   /** Also needs Claude Code installed. */
   needsClaude?: boolean;
-  /** Runs without a key too (Claude Code's own login). */
+  /** Runs without a key. No provider does: the Claude Agent SDK must not fall back to a Claude subscription login,
+   *  which Anthropic's terms do not allow for apps built on it (the Agent backend runs the user's own Claude Code for that). */
   keyOptional?: boolean;
 }
 
@@ -46,8 +47,8 @@ const CLAUDE_MODELS = [
 ];
 
 export const API_PROVIDERS: readonly ApiProvider[] = [
-  // A key is optional here: without one the installed Claude Code signs in with its own login.
-  { id: "claude-agent", name: "Claude Agent SDK", keyEnv: "ANTHROPIC_API_KEY", keyFor: "anthropic", defaultModel: "claude-opus-5-5", models: CLAUDE_MODELS, needsClaude: true, keyOptional: true },
+  // Every provider needs a key, the Claude Agent SDK included (see keyOptional above).
+  { id: "claude-agent", name: "Claude Agent SDK", keyEnv: "ANTHROPIC_API_KEY", keyFor: "anthropic", defaultModel: "claude-opus-5-5", models: CLAUDE_MODELS, needsClaude: true },
   { id: "anthropic", name: "Claude API", keyEnv: "ANTHROPIC_API_KEY", keyFor: "anthropic", defaultModel: "claude-opus-5-5", models: CLAUDE_MODELS },
   { id: "openai", name: "OpenAI", keyEnv: "OPENAI_API_KEY", keyFor: "openai" },
   { id: "google", name: "Google Gemini", keyEnv: "GOOGLE_GENERATIVE_AI_API_KEY", keyFor: "google" },
@@ -69,6 +70,12 @@ export interface ApiSettings {
   maxSteps?: number;
   /** Tests: a model (and tools) in place of the real provider and MCP servers. */
   testing?: { model: LanguageModel; tools?: ToolSet };
+}
+
+/** The environment minus Claude subscription credentials, so the Agent SDK can only authenticate with the API key. */
+export function withoutLoginTokens(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const { CLAUDE_CODE_OAUTH_TOKEN: _token, ...rest } = env;
+  return rest;
 }
 
 /** The key for a provider: the host's, else the environment's. */
@@ -131,8 +138,8 @@ export class ApiEngine {
     this.instructions = opts.instructions;
     const p = this.provider;
     const key = this.settings.testing ? "test" : apiKeyFor(p, this.settings.keys);
-    // The Agent SDK runs the user's Claude Code, which can also use its own login: a key there is optional.
-    if (!key && p.id !== "claude-agent") throw new Error(`no API key for ${p.name}: set ${p.keyEnv} or pass one`);
+    // Every provider runs on a key, the Claude Agent SDK included (never on the user's Claude subscription login).
+    if (!key) throw new Error(`no API key for ${p.name}: set ${p.keyEnv} or pass one`);
     if (!this.model) throw new Error(`${p.name} needs a model id (none is chosen by default)`);
     const servers = opts.mcpServers ?? [];
     const info = p.id === "claude-agent" ? await this.startClaudeAgent(key, servers, opts) : await this.startAiSdk(key!, servers);
@@ -142,7 +149,7 @@ export class ApiEngine {
 
   // ---------- Claude Agent SDK ----------
 
-  private async startClaudeAgent(key: string | undefined, servers: McpServer[], opts: EngineStartOptions): Promise<EngineInfo> {
+  private async startClaudeAgent(key: string, servers: McpServer[], opts: EngineStartOptions): Promise<EngineInfo> {
     const claude = Bun.which("claude");
     if (!claude) throw new Error("Claude Code is not installed; the Claude Agent SDK runs through it (curl -fsSL https://claude.ai/install.sh | bash)");
     const mcpServers: NonNullable<AgentOptions["mcpServers"]> = {};
@@ -166,8 +173,8 @@ export class ApiEngine {
       includePartialMessages: true,
       systemPrompt: this.instructions,
       resume: opts.resume,
-      // The key when the host gave one; otherwise Claude Code's own login (subscription) is used.
-      env: { ...process.env, ...(key ? { ANTHROPIC_API_KEY: key } : {}), CLAUDE_AGENT_SDK_CLIENT_APP: "editmax" },
+      // Always the key, and never a subscription token that happens to be in the environment.
+      env: { ...withoutLoginTokens(process.env), ANTHROPIC_API_KEY: key, CLAUDE_AGENT_SDK_CLIENT_APP: "editmax" },
       canUseTool: (name, input, o) => this.askPermission(name, input, o.toolUseID),
     };
     this.open = true;

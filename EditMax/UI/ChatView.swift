@@ -115,7 +115,7 @@ struct ChatView: View {
     /// A provider can run: Claude Code present when it needs it, and a key (or none needed).
     private func providerReady(_ p: CodemaxRunner.ProviderInfo) -> Bool {
         _ = chat.keysVersion
-        return (!p.needsClaude || p.hasClaude) && (p.keyOptional || KeychainStore.key(p.keySlot) != nil)
+        return (!p.needsClaude || p.hasClaude) && (!ChatSession.keyRequired(p) || KeychainStore.key(p.keySlot) != nil)
     }
 
     /// The sidecar's status without its prefix, like `agentDetail`.
@@ -175,7 +175,7 @@ struct ChatView: View {
     /// The key box for the chosen provider's slot: what it needs, where the key is now (keychain or environment), save and remove.
     @ViewBuilder private var keyEntry: some View {
         let _ = chat.keysVersion
-        if let problem = chat.apiProblem, chat.selectedProvider.map({ $0.keyOptional || KeychainStore.key($0.keySlot) != nil }) ?? true {
+        if let problem = chat.apiProblem, chat.selectedProvider.map({ !ChatSession.keyRequired($0) || KeychainStore.key($0.keySlot) != nil }) ?? true {
             // Not a missing key: the sidecar or Claude Code is missing, or nothing is loaded yet.
             Label(problem, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
         } else if let p = chat.selectedProvider {
@@ -183,7 +183,7 @@ struct ChatView: View {
                 let source = KeychainStore.source(p.keySlot)
                 Text(source == "environment" ? "\(p.keyEnv) is set in EditMax's environment; it is used as is."
                      : source == "keychain" ? "\(p.name) key (\(p.keyEnv)) is saved in your login keychain."
-                     : p.keyOptional ? "Optional: a key bills the API instead of your Claude Code login. Stored in your login keychain, sent only to the provider."
+                     : p.needsClaude ? "The Claude Agent SDK runs on an Anthropic API key (\(p.keyEnv)), billed per token. Anthropic's terms do not allow apps built on it to use a Claude Pro or Max login; to use yours, switch to the Agent backend, which runs your own Claude Code. The key is stored in your login keychain and sent only to Anthropic."
                      : "Paste your \(p.name) key (\(p.keyEnv)). It is stored in your login keychain and sent only to the provider.")
                     .font(.caption).foregroundStyle(.secondary)
                 if source != "environment" {
@@ -194,6 +194,11 @@ struct ChatView: View {
                             .controlSize(.small).pointer().disabled(keyDraft.trimmingCharacters(in: .whitespaces).isEmpty).uiFrame("chat.saveKey")
                         if source == "keychain" { Button("Remove") { chat.saveKey("", slot: p.keySlot) }.controlSize(.small).pointer().uiFrame("chat.removeKey") }
                     }
+                }
+                if p.needsClaude, source.isEmpty {
+                    Button("Use the Agent backend") { chat.backend = .agent }
+                        .controlSize(.small).pointer().uiFrame("chat.useAgentBackend")
+                        .help("Runs your own Claude Code with its own login, through EditMax's agent runtime")
                 }
                 if let url = ChatSession.keyConsoles[p.keySlot].flatMap(URL.init(string:)) {
                     Link("Get a key: \(url.host ?? url.absoluteString)", destination: url).font(.caption2).pointer().uiFrame("chat.keyConsole")

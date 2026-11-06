@@ -20,6 +20,6 @@ BUN="$(command -v bun || true)"
 if [ -x "$OUT" ] && [ -z "$(find "$SRC/src" "$SRC/package.json" -newer "$OUT" -print -quit)" ]; then
   echo "vendor-codemax: Vendor/codemax is current ($("$OUT" --version))"; exit 0
 fi
-( cd "$SRC" && "$BUN" run build )
+( cd "$SRC" && { [ -d node_modules ] || "$BUN" install --frozen-lockfile; } && "$BUN" run build )
 cp "$SRC/dist/codemax" "$OUT"; chmod 755 "$OUT"
 echo "vendor-codemax: codemax $("$OUT" --version) -> $OUT"

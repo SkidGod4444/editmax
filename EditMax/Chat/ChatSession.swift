@@ -128,10 +128,18 @@ final class ChatSession: ObservableObject {
         guard CodemaxRunner.bundledBinary(.agent) != nil else { return "The API sidecar is missing from this build of EditMax." }
         guard let p = selectedProvider else { return providers.isEmpty ? nil : "Pick a provider." }
         if p.needsClaude, !p.hasClaude { return "\(p.name) runs through Claude Code, which was not found on this Mac. Install it: curl -fsSL https://claude.ai/install.sh | bash" }
-        if !p.keyOptional, KeychainStore.key(p.keySlot) == nil { return "Add your \(p.name) key (\(p.keyEnv)) above." }
+        if Self.keyRequired(p), KeychainStore.key(p.keySlot) == nil {
+            return p.needsClaude ? "The Claude Agent SDK needs an Anthropic API key (\(p.keyEnv)). To use your Claude subscription instead, switch to the Agent backend."
+                                 : "Add your \(p.name) key (\(p.keyEnv)) above."
+        }
         return nil
     }
     var apiReady: Bool { apiProblem == nil && selectedProvider != nil }
+
+    /// Whether a provider needs a key before it can send. The Claude Agent SDK always does, whatever the sidecar
+    /// reports: Anthropic's terms do not allow apps built on it to run on a Claude subscription login. (The Agent
+    /// backend runs the person's own Claude Code with its own login, which is allowed.)
+    nonisolated static func keyRequired(_ p: CodemaxRunner.ProviderInfo) -> Bool { !p.keyOptional || p.needsClaude }
 
     private var agentsTask: Task<Void, Never>?
 

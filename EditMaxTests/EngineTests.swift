@@ -14,17 +14,13 @@ final class EngineTests: XCTestCase {
         _ = try await x.importMedia(paths: [fixture.path])
     }
 
-    /// GitHub's macOS runners are VMs where AVFoundation decodes a plain file but cannot render a composition
-    /// (error -12780, no GPU path). On CI, a one-frame render through the engine decides; on a developer Mac the tests
-    /// always run, so a broken renderer there fails loudly.
-    private func requireRendering() async throws {
-        guard ProcessInfo.processInfo.environment["CI"] != nil else { return }
-        let probe = EditMaxDocument()
-        let px = ToolExecutor(document: probe, origin: .agent)
-        _ = try await px.importMedia(paths: [fixture.path])
-        _ = try px.insertClip(asset: "base.mp4")
-        do { _ = try await px.renderFrame(at: 0.5) }
-        catch { throw XCTSkip("this CI runner cannot render video: \(error)") }
+    /// GitHub's macOS VMs render video intermittently (AVFoundation -12780 inside a composition, while a probe of the
+    /// same render a moment earlier succeeds), so the tests that render skip there outright and run on every
+    /// developer Mac, where a broken renderer fails loudly. Import, validation and the model still run on CI.
+    private func requireRendering() throws {
+        if ProcessInfo.processInfo.environment["CI"] != nil {
+            throw XCTSkip("video rendering is not reliable on GitHub's macOS runners; this test runs on developer Macs")
+        }
     }
 
     func testImportProbesTheFile() throws {
@@ -39,7 +35,7 @@ final class EngineTests: XCTestCase {
     }
 
     func testRenderFrameHasTheProjectSize() async throws {
-        try await requireRendering()
+        try requireRendering()
         _ = try x.insertClip(asset: "base.mp4")
         let (img, size) = try await x.renderFrame(at: 1)
         XCTAssertEqual(Int(size.width), 1920)
@@ -54,7 +50,7 @@ final class EngineTests: XCTestCase {
     }
 
     func testExportWritesAPlayableMovieOfTheTimelineLength() async throws {
-        try await requireRendering()
+        try requireRendering()
         _ = try x.insertClip(asset: "base.mp4")
         _ = try x.insertClip(asset: "base.mp4", duration: 1)   // 3 s total
         let out = FileManager.default.temporaryDirectory.appendingPathComponent("editmax-test-\(UUID().uuidString).mp4")
@@ -77,7 +73,7 @@ final class EngineTests: XCTestCase {
     }
 
     func testNestAndUnnestKeepTheClipCount() async throws {
-        try await requireRendering()
+        try requireRendering()
         let a = try x.insertClip(asset: "base.mp4", duration: 1)
         let b = try x.insertClip(asset: "base.mp4", duration: 1)
         let seq = try await x.nestClips([a.id.short, b.id.short], name: "Intro")
@@ -92,7 +88,7 @@ final class EngineTests: XCTestCase {
     }
 
     func testFrameStatsSeesThePicture() async throws {
-        try await requireRendering()
+        try requireRendering()
         _ = try x.insertClip(asset: "base.mp4")
         let s = try await x.frameStats(at: 1)
         XCTAssertGreaterThan(s.lumaMean, 0); XCTAssertEqual(s.lumaHistogram.count, 16)

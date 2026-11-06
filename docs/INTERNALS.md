@@ -195,9 +195,9 @@ replace the hash with one from `security find-identity -v -p codesigning`, or wi
 ## Tests and CI
 
 `EditMaxTests/` runs inside the app (`TEST_HOST`), so it sees the real model, engine and executor; the app skips its
-splash, Home, MCP server and updater under XCTest. Four engine tests decode the fixture; on CI they first decode one
-frame and skip when the runner cannot (GitHub's macOS VMs fail H.264 decoding with -12780 even though they report a
-hardware decoder). `.github/workflows/test.yml` runs the Swift suite on `macos-26` with the newest Xcode on the runner
+splash, Home, MCP server and updater under XCTest. Four engine tests render the fixture; they skip on CI (`CI` in the
+environment) because GitHub's macOS VMs render intermittently (-12780 inside a composition while a probe of the same
+render succeeds), and run on every developer Mac. `.github/workflows/test.yml` runs the Swift suite on `macos-26` with the newest Xcode on the runner
 and the Bun suite on Ubuntu. CI has no runtime source, so `scripts/vendor-codemax.sh` writes a stub when
 `EDITMAX_STUB_VENDOR=1`.
 

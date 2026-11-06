@@ -205,7 +205,7 @@ cd agent && bun test                                                            
 
 The Swift suite covers the timeline model, the document's history, the shared tool API and the engine on a bundled
 clip (import, frame render, nest, export). Both suites run on every push and pull request through GitHub Actions.
-The tests that decode video skip on GitHub's runners, which have no working H.264 decoder, and run on every Mac.
+The four tests that render video skip on GitHub's runners, whose video path is unreliable, and run on every Mac.
 
 ### Going deeper
 

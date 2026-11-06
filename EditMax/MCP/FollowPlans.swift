@@ -37,7 +37,7 @@ enum FollowPlans {
             a["speed"] != nil ? .speed : a["volume"] != nil ? .audio : a["opacity"] != nil ? .transform : .header }),
         "close_gaps": P(),
         "ripple_delete": P(time: "start"),
-        "add_track": P(), "move_track": P(),
+        "add_track": P(), "move_track": P(), "rename_track": P(),
         "restore_snapshot": P(),
         "roll_edit": P(clip: "clip", anchor: .timing),
         "slip_clip": P(clip: "clip", anchor: .timing),

@@ -87,6 +87,8 @@ enum EditMaxTools {
              inputSchema: schema(["path": str("Absolute output path (.mp4, or .mov for ProRes; the extension is set to match the preset)"), "preset": str("high (default, H.264), medium (720p), low (480p), hevc10 (10-bit HEVC), prores422hq, prores422 or prores4444 (ProRes .mov); all masters at the project resolution"), "chapters": .object(["type": "boolean", "description": "Also write the markers as a YouTube chapter list to <basename>.chapters.txt beside the file (default false)"]), "project": projectArg], required: ["path"])),
         Tool(name: "add_track", description: "Add a video or audio track. A new video track goes on top of the video tracks (V2 above V1), so its picture covers theirs, as in other editors; a new audio track goes below the audio tracks. The top row covers the rows below it in the picture; move_track changes the order.",
              inputSchema: schema(["kind": str("video or audio"), "name": str("Optional name (default V2, A2…)"), "project": projectArg], required: ["kind"])),
+        Tool(name: "rename_track", description: "Rename a track (the name shown in its timeline header and the mixer). Names are unique, at most 32 characters, and \"Text\" is reserved for the titles row.",
+             inputSchema: schema(["track": str("Track name or id prefix"), "name": str("The new name"), "project": projectArg], required: ["track", "name"])),
         Tool(name: "move_track", description: "Move a track to another row (0 = top). The top row covers the rows below it in the picture.",
              inputSchema: schema(["track": str("Track name or id prefix"), "row": int("Target row, 0 = top"), "project": projectArg], required: ["track", "row"])),
         Tool(name: "ui_layout", description: "Where things are in the EditMax window, in window points (origin top-left): media rows (media.<file>), track headers (header.<name>, header.Text, header.<name>.mute/.hide), lanes (lane.<name>, lane.Text), clip and text bars (clip.<id>, text.<id>, with .left/.right trim handles), toolbar buttons, addtrack.video/audio, ruler, inspector buttons. Only what a user can see now is listed, with the visible part of each element (clipped by its scroll view and the window); elements in a popover or sheet over the window carry \"window\": \"popover\" or \"sheet\" and are given in the same window points. \"hidden\" lists ids that exist but cannot be seen now (scrolled out of view, outside the window or hidden); ui_scroll {target: id} brings one into view. Use the ids with ui_click, ui_select and ui_drag to drive the real UI.",
@@ -154,7 +156,7 @@ enum EditMaxTools {
              inputSchema: schema(["name": str("Template name from list_templates"), "project": projectArg], required: ["name"])),
         Tool(name: "save_template", description: "Save the current project (without history) as a named template for later apply_template calls.",
              inputSchema: schema(["name": str("Template name"), "project": projectArg], required: ["name"])),
-        Tool(name: "set_project_settings", description: "Change output resolution, frame rate or project name.",
+        Tool(name: "set_project_settings", description: "Change output resolution, frame rate or project name. Clips keep their times in seconds when the frame rate changes; frame steps and timecodes follow the new rate.",
              inputSchema: schema(["width": int("Pixels"), "height": int("Pixels"), "fps": num("Frames per second"), "name": str("Project name"), "project": projectArg, "use_proxies": .object(["type": "boolean", "description": "Preview from proxy files when they exist (see make_proxies)"])])),
         Tool(name: "search_transcript", description: "Find a phrase in the spoken words of a clip, an asset's clips, or every clip with audio (case and punctuation ignored). Each match gives its occurrence number, clip, timeline start/end, 0-based word indices (as in get_transcript for that clip) and a few words of context. Transcribes on first use.",
              inputSchema: schema(["query": str("Words to find, e.g. \"let me start again\""), "clip": str("Clip id prefix (default: all clips with audio)"), "asset": str("Asset id prefix or file name: only that asset's clips"),
@@ -584,6 +586,8 @@ enum EditMaxTools {
             return try payload(try await x.exportVideo(to: try req("path"), preset: ExportService.Preset.parse(s("preset")), chapters: b("chapters")))
         case "add_track":
             return try payload(try x.addTrack(kind: try req("kind"), name: s("name")))
+        case "rename_track":
+            return try payload(try x.renameTrack(try req("track"), to: try req("name")))
         case "move_track":
             return try payload(try x.moveTrack(try req("track"), toRow: Int(try reqNum("row"))))
         case "set_project_settings":

@@ -1168,8 +1168,7 @@ struct ProjectInspector: View {
 
     private var projectCard: some View {
         InspectorCard("Project") {
-            InspectorValueRow("Resolution", "\(p.settings.width)×\(p.settings.height)")
-            InspectorValueRow("Frame rate", "\(Int(p.settings.fps)) fps")
+            ProjectFormatRows(document: document)
             InspectorValueRow("Duration", Timecode.string(p.duration))
             ProjectColorRow(document: document)   // SDR / HDR (EffectsInspector.swift)
             InspectorValueRow("Clips", "\(p.allClips.count)")
@@ -1388,5 +1387,46 @@ private struct MarkerNameField: View {
         let id = marker.id, name = draft
         guard name != marker.name else { return }
         document.apply("Rename marker", origin: .user) { p in if let i = p.markers.firstIndex(where: { $0.id == id }) { p.markers[i].name = name } }
+    }
+}
+
+/// Resolution and frame rate as pop-up menus of the usual delivery formats. A value outside the lists (set by an agent
+/// or an imported project) is shown as its own item, so the menu never claims a size the project does not have.
+private struct ProjectFormatRows: View {
+    @ObservedObject var document: EditMaxDocument
+    @State private var error: String?
+    private var settings: ProjectSettings { document.project.settings }
+    private var x: ToolExecutor { ToolExecutor(document: document, origin: .user) }
+
+    var body: some View {
+        let current = ProjectFormat.Size(width: settings.width, height: settings.height, label: "")
+        let known = ProjectFormat.sizes.joined().contains { $0.width == current.width && $0.height == current.height }
+        InspectorRow("Resolution") {
+            Picker("Resolution", selection: Binding(get: { "\(settings.width)x\(settings.height)" }, set: { v in
+                let wh = v.split(separator: "x").compactMap { Int($0) }
+                guard wh.count == 2 else { return }
+                do { try x.setProjectSettings(width: wh[0], height: wh[1], fps: nil, name: nil) } catch { self.error = InspectorMessage.text(error) }
+            })) {
+                if !known { Text(verbatim: ProjectFormat.sizeText(width: current.width, height: current.height)).tag("\(current.width)x\(current.height)"); Divider() }
+                ForEach(Array(ProjectFormat.sizes.enumerated()), id: \.offset) { i, group in
+                    if i > 0 { Divider() }
+                    ForEach(group, id: \.self) { s in Text(verbatim: "\(s.width)×\(s.height)  \(s.label)").tag("\(s.width)x\(s.height)") }   // verbatim: no "1,920"
+                }
+            }
+            .labelsHidden().fixedSize().pointer().uiFrame("inspector.project.resolution")
+            .help("The size of the exported video. Clips keep their framing relative to the picture.")
+        }
+        InspectorRow("Frame rate") {
+            Picker("Frame rate", selection: Binding(get: { (settings.fps * 1000).rounded() / 1000 }, set: { v in
+                do { try x.setProjectSettings(width: nil, height: nil, fps: v, name: nil) } catch { self.error = InspectorMessage.text(error) }
+            })) {
+                let now = (settings.fps * 1000).rounded() / 1000
+                if !ProjectFormat.rates.contains(now) { Text(ProjectFormat.fpsText(now)).tag(now); Divider() }
+                ForEach(ProjectFormat.rates, id: \.self) { r in Text(ProjectFormat.fpsText(r)).tag(r) }
+            }
+            .labelsHidden().fixedSize().pointer().uiFrame("inspector.project.fps")
+            .help("Frames per second of the export. Clips keep their times in seconds; frame steps and timecodes follow the new rate.")
+        }
+        if let error { Text(error).font(.system(size: 11)).foregroundStyle(.red) }
     }
 }

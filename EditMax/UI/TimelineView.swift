@@ -13,6 +13,11 @@ struct TimelineView: View {
     @State private var dropError: String?
     @State private var trackDropTarget: UUID?   // header row a dragged track hovers over
     @State private var hoveredHeader: UUID?
+    // Renaming a track in its header: which one, the text being typed, and why the last try was refused.
+    @State private var renaming: UUID?
+    @State private var renameText = ""
+    @State private var renameError: String?
+    @FocusState private var renameFocused: Bool
     /// How far the lanes are scrolled down: the ruler and the corner above the headers are held at the top by it.
     @State private var vertical = PinnedOffset()
     private var actions: EditorActions { EditorActions(document: document, state: state, player: player) }
@@ -198,7 +203,19 @@ struct TimelineView: View {
                 let silencedBySolo = !track.isMuted && Mixer.isSilencedBySolo(track, in: document.project)
                 return HStack(spacing: 6) {
                     Image(systemName: "line.3.horizontal").font(.system(size: 9)).foregroundStyle(hoveredHeader == track.id ? .secondary : .quaternary)
-                    headerTitle(track.name, kind: track.kind == .video ? "Video" : "Audio")
+                    if renaming == track.id {
+                        TextField("Name", text: $renameText)
+                            .textFieldStyle(.roundedBorder).controlSize(.small).font(.system(size: 12, weight: .semibold))
+                            .focused($renameFocused)
+                            .onSubmit { commitRename(track) }
+                            .onExitCommand { renaming = nil }
+                            .onChange(of: renameFocused) { _, now in if !now, renaming == track.id { commitRename(track) } }
+                            .uiFrame("header.\(track.name).name")
+                    } else {
+                        headerTitle(track.name, kind: track.kind == .video ? "Video" : "Audio")
+                            .onTapGesture(count: 2) { startRename(track) }
+                            .uiTap("header.\(track.name).title", count: 2) { startRename(track) }
+                    }
                     Spacer(minLength: 2)
                     // Hide | mute | solo in fixed slots, so the icons line up across rows.
                     HStack(spacing: 0) {
@@ -230,6 +247,8 @@ struct TimelineView: View {
                 .help("Drag to reorder tracks. The top row covers the rows below it.")
                 .uiFrame("header.\(track.name)")
                 .contextMenu {
+                    Button("Rename Track…", systemImage: "pencil") { startRename(track) }
+                    Divider()
                     Button(track.isMuted ? "Unmute" : "Mute", systemImage: track.isMuted ? "speaker.wave.2" : "speaker.slash") { toggleMute(track) }
                     Button(track.mix.solo ? "Unsolo" : "Solo", systemImage: "headphones") { toggleSolo(track) }
                     if track.kind == .video { Button(track.isHidden ? "Show" : "Hide", systemImage: track.isHidden ? "eye" : "eye.slash") { toggleHidden(track) } }
@@ -240,6 +259,22 @@ struct TimelineView: View {
                     }
                     .disabled(document.project.tracks.filter { $0.kind == track.kind }.count == 1)
                 }
+    }
+
+    private func startRename(_ track: Track) {
+        renameText = track.name
+        renaming = track.id
+        DispatchQueue.main.async { renameFocused = true }   // once the field exists
+    }
+
+    /// Return or leaving the field renames; Escape cancels. A refused name (taken, empty, "Text") says why and keeps the old one.
+    private func commitRename(_ track: Track) {
+        guard renaming == track.id else { return }
+        renaming = nil
+        let name = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard name != track.name else { return }
+        do { _ = try ToolExecutor(document: document, origin: .user).renameTrack(track.id.uuidString, to: name) }
+        catch { renameError = InspectorMessage.text(error) }
     }
 
     private var textHeader: some View {
@@ -347,6 +382,7 @@ struct TimelineView: View {
                 .onTapGesture { location in seek(x: location.x); state.selectedClipIDs = []; state.selectedTextID = nil }
                 .onDrop(of: [.utf8PlainText, .fileURL], delegate: LaneDrop(lane: nil, onHover: { _ in }, onDrop: { providers, x in drop(providers, track: nil, x: x) }))
         }
+        .alert("Could not rename the track", isPresented: .init(get: { renameError != nil }, set: { if !$0 { renameError = nil } })) { Button("OK") {} } message: { Text(renameError ?? "") }
         .alert("Could not add to timeline", isPresented: .init(get: { dropError != nil }, set: { if !$0 { dropError = nil } })) { Button("OK") {} } message: { Text(dropError ?? "") }
     }
 

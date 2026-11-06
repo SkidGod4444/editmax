@@ -931,3 +931,26 @@ extension Project {
         formatVersion = Project.currentFormat
     }
 }
+
+/// The output sizes and frame rates the Project card offers: the ones people deliver in (YouTube, Shorts, Reels, feeds).
+/// Any other value (set by an agent or an imported project) still shows, as its own item.
+enum ProjectFormat {
+    struct Size: Hashable { var width: Int, height: Int; var label: String }
+    static let sizes: [[Size]] = [
+        [Size(width: 3840, height: 2160, label: "4K UHD"), Size(width: 2560, height: 1440, label: "1440p"),
+         Size(width: 1920, height: 1080, label: "1080p HD"), Size(width: 1280, height: 720, label: "720p")],
+        [Size(width: 1080, height: 1920, label: "Vertical 9:16"), Size(width: 1080, height: 1350, label: "Portrait 4:5"),
+         Size(width: 1080, height: 1080, label: "Square 1:1")],
+    ]
+    static let rates: [Double] = [23.976, 24, 25, 29.97, 30, 50, 59.94, 60]
+
+    /// "29.97 fps", "30 fps": whole rates without decimals, the NTSC ones with theirs.
+    static func fpsText(_ fps: Double) -> String {
+        let whole = (fps * 1000).rounded() / 1000
+        return (whole == whole.rounded() ? String(Int(whole)) : String(format: "%g", whole)) + " fps"
+    }
+    static func sizeText(width: Int, height: Int) -> String {
+        let named = sizes.joined().first { $0.width == width && $0.height == height }
+        return "\(width)×\(height)" + (named.map { " (\($0.label))" } ?? "")
+    }
+}

@@ -763,8 +763,31 @@ struct ToolExecutor {
         return TrackResult(id: id.short, name: t.name, kind: t.kind.rawValue, row: project.tracks.firstIndex(where: { $0.id == id }) ?? 0)
     }
 
+    /// Renames a track. Names are how people and agents point at tracks ("put it on Dialogue"), so they must be unique,
+    /// not empty, and not "Text" (the titles row).
+    func renameTrack(_ track: String, to newName: String) throws -> TrackResult {
+        guard let id = try resolveTrack(track), let t = project.track(id) else { throw EditError.notFound("track '\(track)'") }
+        let name = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { throw EditError.invalid("a track needs a name") }
+        guard name.count <= 32 else { throw EditError.invalid("a track name can be at most 32 characters") }
+        guard name.lowercased() != "text" else { throw EditError.invalid("\"Text\" is the titles row's name; pick another") }
+        if project.tracks.contains(where: { $0.id != id && $0.name.lowercased() == name.lowercased() }) {
+            throw EditError.invalid("there is already a track called \(name)")
+        }
+        document.apply("Rename track \(t.name) to \(name)", origin: origin) { p in
+            if let i = p.tracks.firstIndex(where: { $0.id == id }) { p.tracks[i].name = name }
+        }
+        return TrackResult(id: id.short, name: name, kind: t.kind.rawValue, row: project.tracks.firstIndex(where: { $0.id == id }) ?? 0)
+    }
+
     func setProjectSettings(width: Int?, height: Int?, fps: Double?, name: String?, useProxies: Bool? = nil) throws {
-        document.apply("Project settings", origin: origin) { p in
+        // Say what changed in History ("Resolution 1080×1920"), not just "Project settings".
+        var parts: [String] = []
+        if width != nil || height != nil { parts.append("Resolution \(width ?? project.settings.width)×\(height ?? project.settings.height)") }
+        if let fps { parts.append("Frame rate \(ProjectFormat.fpsText(fps))") }
+        if name != nil { parts.append("Rename project") }
+        if useProxies != nil { parts.append(useProxies == true ? "Preview from proxies" : "Preview from originals") }
+        document.apply(parts.isEmpty ? "Project settings" : parts.joined(separator: ", "), origin: origin) { p in
             if let width { p.settings.width = max(16, width) }
             if let height { p.settings.height = max(16, height) }
             if let fps { p.settings.fps = max(1, fps) }

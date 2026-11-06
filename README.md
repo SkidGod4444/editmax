@@ -16,7 +16,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-PolyForm%20Noncommercial-orange" alt="License: PolyForm Noncommercial 1.0.0"></a>
   <img src="https://img.shields.io/badge/macOS-15%2B-black" alt="macOS 15+">
   <img src="https://img.shields.io/badge/Swift-5-F05138" alt="Swift 5">
-  <img src="https://img.shields.io/badge/MCP-105%20tools-blue" alt="105 MCP tools">
+  <img src="https://img.shields.io/badge/MCP-113%20tools-blue" alt="113 MCP tools">
 </p>
 
 <p align="center">
@@ -72,7 +72,7 @@ The current download (0.1.1) does not have these yet. They are on `main` and shi
   show up there too, ready to add. [docs/assets.md](docs/assets.md)
 - **Fonts:** all of Google Fonts, sorted by trending or popular, plus your own .ttf and .otf files. Pick a font and
   weight for any title; a project that uses a Google font fetches it on another Mac. [docs/fonts.md](docs/fonts.md)
-- 111 MCP tools (63 in 0.1.1).
+- 113 MCP tools (63 in 0.1.1).
 
 ## Highlights
 
@@ -86,7 +86,7 @@ The current download (0.1.1) does not have these yet. They are on `main` and shi
 | **Speech** | On-device transcription, captions in six styles, remove silence and filler words, search and cut by the words that were spoken |
 | **Structure** | Multicam clips synced by audio, nested sequences, templates for every social format, batch export to several formats at once |
 | **Delivery** | H.264 MP4, 10-bit HEVC and ProRes masters in SDR or HDR (HLG, PQ), FCPXML and EDL to hand the cut to DaVinci Resolve or Final Cut Pro, YouTube chapters from markers |
-| **Agents** | 105 MCP tools covering all of the above plus the window itself; an in-app chat with a policy that allows only editor tools |
+| **Agents** | 113 MCP tools covering all of the above plus the window itself; an in-app chat with a policy that allows only editor tools |
 
 ## Install
 

@@ -107,7 +107,7 @@ final class PreviewMonitorTests: XCTestCase {
 
     /// Renders the monitor at `size` in an offscreen window (AppKit buttons and menus draw too) as <name>-light/-dark.png.
     /// Glass is drawn with its material fallback: real glass is composited by the window server and comes out blank.
-    private func save(_ name: String, size: CGSize, _ make: () -> ProgramMonitor) throws {
+    private func save<V: View>(_ name: String, size: CGSize, _ make: () -> V) throws {
         guard let dir = ColorFixtures.previewDir else { throw XCTSkip("set TEST_RUNNER_EDITMAX_PREVIEW_DIR to write previews") }
         let glass = GlassCompat.forceFallback
         GlassCompat.forceFallback = true
@@ -150,5 +150,19 @@ final class PreviewMonitorTests: XCTestCase {
         try save("monitor-version-narrow", size: CGSize(width: 480, height: 470)) { ProgramMonitor(document: doc, player: player, state: state, toggleFullScreen: {}, still: still) }
         player.scopesEnabled = false
         try save("monitor-version", size: CGSize(width: 760, height: 520)) { ProgramMonitor(document: doc, player: player, state: state, toggleFullScreen: {}, still: still) }
+    }
+
+    /// M8: the focus layout's transport and the full-screen controls read the editor's frame timecode (minutes:seconds.
+    /// frames, as under the timeline), not decimal seconds.
+    func testPreviewTransportTimecode() async throws {
+        guard ColorFixtures.previewDir != nil else { throw XCTSkip("set TEST_RUNNER_EDITMAX_PREVIEW_DIR to write previews") }
+        let (doc, player) = try await pausedPlayer()
+        let fps = doc.project.settings.fps
+        try save("transport-focus", size: CGSize(width: 560, height: 64)) {
+            TransportBar(player: player, fps: fps).padding(.horizontal, 12).frame(maxHeight: .infinity).background(Color.black.opacity(0.85))
+        }
+        try save("transport-fullscreen", size: CGSize(width: 760, height: 160)) {
+            FullScreenControls(controller: player, state: FullScreenControlsState(), fps: fps, leave: {}).background(Color.black)
+        }
     }
 }

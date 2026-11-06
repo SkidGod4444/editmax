@@ -177,11 +177,11 @@ struct FullScreenControls: View {
                     Button { controller.togglePlay() } label: { Image(systemName: controller.isPlaying ? "pause.fill" : "play.fill").font(.system(size: 16, weight: .semibold)).frame(width: 16, height: 16) }
                         .glassButtonStyle().buttonBorderShape(.circle).focusable(false).keyboardShortcut(.space, modifiers: []).pointer().uiFrame("fullscreen.play").help(controller.isPlaying ? "Pause (space)" : "Play (space)")
                     HStack(spacing: 10) {
-                        Text(tc(scrubbing ?? controller.currentTime)).font(.system(size: 13, weight: .semibold, design: .monospaced)).monospacedDigit().frame(width: 64, alignment: .trailing)
+                        Text(tc(scrubbing ?? controller.currentTime)).font(.system(size: 13, weight: .semibold, design: .monospaced)).monospacedDigit().lineLimit(1).fixedSize().frame(minWidth: 76, alignment: .trailing)
                         Slider(value: Binding(get: { scrubbing ?? min(controller.currentTime, duration) }, set: { scrubbing = $0; controller.seek(to: $0) }), in: 0...duration, onEditingChanged: { editing in if !editing { scrubbing = nil } })
                             .frame(width: 480)
                             .pointer().uiFrame("fullscreen.scrubber")
-                        Text(tc(duration)).font(.system(size: 13, design: .monospaced)).monospacedDigit().foregroundStyle(.secondary).frame(width: 64, alignment: .leading)
+                        Text(tc(duration)).font(.system(size: 13, design: .monospaced)).monospacedDigit().foregroundStyle(.secondary).lineLimit(1).fixedSize().frame(minWidth: 76, alignment: .leading)
                     }
                     .padding(.horizontal, 16).frame(height: 36)
                     .liquidGlass()
@@ -224,11 +224,11 @@ struct TransportBar: View {
                 }
                 .glassButtonStyle().buttonBorderShape(.circle)
                 HStack(spacing: 10) {
-                    Text(tc(scrubbing ?? player.currentTime)).font(.system(size: 13, weight: .semibold, design: .monospaced)).monospacedDigit().frame(width: 70, alignment: .trailing)
+                    Text(tc(scrubbing ?? player.currentTime)).font(.system(size: 13, weight: .semibold, design: .monospaced)).monospacedDigit().lineLimit(1).fixedSize().frame(minWidth: 70, alignment: .trailing)
                     Slider(value: Binding(get: { scrubbing ?? min(player.currentTime, duration) }, set: { scrubbing = $0; player.seek(to: $0) }), in: 0...duration, onEditingChanged: { if !$0 { scrubbing = nil } })
                         .frame(minWidth: 160, maxWidth: 520)
                         .pointer().uiFrame("focus.scrubber")
-                    Text(tc(duration)).font(.system(size: 13, design: .monospaced)).monospacedDigit().foregroundStyle(.secondary).frame(width: 70, alignment: .leading)
+                    Text(tc(duration)).font(.system(size: 13, design: .monospaced)).monospacedDigit().foregroundStyle(.secondary).lineLimit(1).fixedSize().frame(minWidth: 70, alignment: .leading)
                 }
                 .padding(.horizontal, 14).frame(height: 32)
                 .liquidGlass()

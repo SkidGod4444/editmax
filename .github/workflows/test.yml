@@ -14,12 +14,19 @@ jobs:
         run: |
           XC=$(ls -d /Applications/Xcode*.app | sort -V | tail -1); echo "$XC"
           sudo xcode-select -s "$XC"; xcodebuild -version
+      - name: Vendor the bundled binaries
+        # xcodegen checks that both Vendor/ directories exist before the build's own vendor steps would run.
+        # The codemax runtime is built from a sibling repo on developer Macs; CI bundles a stub instead.
+        env:
+          EDITMAX_STUB_VENDOR: "1"
+        run: |
+          scripts/vendor-codemax.sh
+          scripts/vendor-agent.sh
       - name: Generate the Xcode project
         run: |
           brew install xcodegen
           xcodegen generate -q
       - name: Build and test
-        # The codemax runtime is built from a sibling repo on developer Macs; CI bundles a stub instead.
         env:
           EDITMAX_STUB_VENDOR: "1"
         run: |

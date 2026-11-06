@@ -16,7 +16,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-PolyForm%20Noncommercial-orange" alt="License: PolyForm Noncommercial 1.0.0"></a>
   <img src="https://img.shields.io/badge/macOS-15%2B-black" alt="macOS 15+">
   <img src="https://img.shields.io/badge/Swift-5-F05138" alt="Swift 5">
-  <img src="https://img.shields.io/badge/MCP-63%20tools-blue" alt="63 MCP tools">
+  <img src="https://img.shields.io/badge/MCP-105%20tools-blue" alt="105 MCP tools">
 </p>
 
 <p align="center">
@@ -50,6 +50,21 @@ no backend, nothing leaves your Mac unless you ask a cloud model.
 - **Private by default.** The MCP server listens on loopback only and requires a bearer token. Transcription runs
   on-device. Prompts and keys never reach the logs.
 
+## New on main, in the next release
+
+The current download (0.1.1) does not have these yet. They are on `main` and ship with the next release:
+
+- **Color:** lift/gamma/gain/offset wheels, RGB and hue-vs-saturation curves, grade layers with shape, color and AI
+  subject masks, shot match, RGB parade and vectorscope, grain, glow, vignette, sharpen and noise reduction.
+  [docs/color.md](docs/color.md)
+- **Effects:** green-screen key, 19 blend modes, face blur that follows faces, animated titles and lower thirds, 14 new
+  transitions, HDR output (HLG, PQ). [docs/effects.md](docs/effects.md)
+- **Sound:** compressor, true-peak limiter, de-esser, hum removal, loudness normalization, audio crossfades, a mixer
+  with pan, solo, buses and a master limiter. [docs/audio.md](docs/audio.md)
+- **Editing:** roll, slip and slide trims, J and L cuts, a source viewer with insert, overwrite and fit to fill, match
+  frame, scene cut detection, relink and consolidate media, smooth slow motion. [docs/editing.md](docs/editing.md)
+- 105 MCP tools (63 in 0.1.1).
+
 ## Highlights
 
 | | |
@@ -58,7 +73,7 @@ no backend, nothing leaves your Mac unless you ask a cloud model.
 | **Color** | Exposure, temperature and tint, tone curve, lift/gamma/gain/offset wheels, custom RGB and hue-vs-saturation curves, grade layers with shape, color and AI subject masks, shot match, six built-in looks or any `.cube` LUT, input LUTs for log footage, waveform, RGB parade, vectorscope and histogram, before/after |
 | **Effects** | Green-screen key, 19 blend modes, face blur that follows faces, film grain, glow, vignette, sharpen and noise reduction, animated titles and lower thirds, dissolves, dips, wipes, push, slide, zoom, iris and blur transitions |
 | **Motion** | Keyframes on every transform, color, opacity, volume and speed value with linear, smooth and hold easing; speed ramps with freeze frames; smooth slow motion (frame blending or optical flow); auto-reframe for vertical cuts; stabilization |
-| **Sound** | Three-band EQ, high-pass, noise gate, compressor, true-peak limiter, de-esser, hum removal, voice isolation, loudness measurement and normalization (−14 LUFS for YouTube in one step), audio crossfades, a mixer with pan, solo, buses and a master limiter, auto-ducking of music under speech |
+| **Sound** | Three-band EQ, high-pass, noise gate, compressor, true-peak limiter, de-esser, hum removal, voice isolation, loudness measurement and normalization to a target (−14 LUFS for YouTube, −16 for podcasts, −23 for broadcast), audio crossfades, a mixer with pan, solo, buses and a master limiter, auto-ducking of music under speech |
 | **Speech** | On-device transcription, captions in six styles, remove silence and filler words, search and cut by the words that were spoken |
 | **Structure** | Multicam clips synced by audio, nested sequences, templates for every social format, batch export to several formats at once |
 | **Delivery** | H.264 MP4, 10-bit HEVC and ProRes masters in SDR or HDR (HLG, PQ), FCPXML and EDL to hand the cut to DaVinci Resolve or Final Cut Pro, YouTube chapters from markers |
@@ -208,8 +223,10 @@ slider writes a keyframe. Speed keyframes make a speed ramp; 0× is a freeze fra
 **Sound.** The EQ, high-pass and gate shape a clip; voice isolation renders Apple's on-device model over it once.
 The compressor, de-esser, hum removal and a true-peak limiter follow. Ducking (Project inspector) drops a music track
 under another track's clips with attack and release. The mixer (toolbar) has each track's fader, pan, mute and solo,
-buses, and the master with its limiter; Normalize measures the mix (ITU-R BS.1770) and sets it to −14 LUFS for YouTube,
-−16 for Apple and podcasts or −23 for broadcast. Details: [docs/audio.md](docs/audio.md).
+buses, and the master with its limiter; Normalize measures the mix (ITU-R BS.1770) and raises or lowers it toward −14
+LUFS for YouTube, −16 for Apple and podcasts or −23 for broadcast. With several tracks it can stop short of the target,
+because the limiter guards each track rather than their sum; it says where it stopped and why. Details:
+[docs/audio.md](docs/audio.md).
 
 **Cleanup, then captions.** Remove silence listens to every audible clip, so a pause in the speech survives where
 music runs underneath; mute a track deliberately if you want it ignored. Remove filler words uses the transcript's
@@ -340,7 +357,8 @@ a page on how their tools work and where their limits are.
 - HDR projects preview tone-mapped to SDR (no EDR preview yet), and grades and keys clip HDR highlights above SDR white.
   ProRes HDR masters carry the HLG/PQ tags but no mastering-display metadata.
 - Bus compressors and the master limiter run on each track before AVFoundation sums them, not on the true sum; gains
-  are exact.
+  are exact. So Normalize can land short of its target on a mix of several tracks (a two-track test mix reached −16
+  LUFS for a −14 target); it reports the level it reached.
 - The in-app agent chat needs an agent installed on the Mac (Claude Code, Codex, OpenCode, Cursor, Grok or
   Antigravity) or an API key.
 

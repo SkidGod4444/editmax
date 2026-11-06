@@ -90,6 +90,10 @@ call. For the mix it sets the master gain and the master limiter. For a clip it 
 "Make it −14 LUFS for YouTube" is the single call `normalize_loudness {}`. It is one undo step. It refuses while a track
 is soloed, because it would measure the wrong mix.
 
+On a mix of several tracks it can stop short of the target. The master limiter runs on each track, not on their sum, so
+past some gain the summed peaks would cross the ceiling; normalize stops there and says so in its `note` (a voice and
+music test mix reached −16 LUFS for −14). A limiter on the summed mix, in the export path, would remove this limit.
+
 In the UI: Measure and Normalize sit in the mixer's Master section and in the clip's Gain & Pan card.
 
 **Internals.** `LoudnessMeter` is ITU-R BS.1770-4 / EBU R128:

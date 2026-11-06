@@ -30,7 +30,7 @@ struct TimelineView: View {
                 // Track headers stay put while the lanes scroll sideways; both scroll together vertically.
                 ScrollView(.vertical) {
                     HStack(alignment: .top, spacing: 0) {
-                        headers.frame(width: headerWidth).frame(minHeight: geo.size.height, alignment: .top)
+                        headers.frame(width: headerWidth, alignment: .leading).clipped().frame(minHeight: geo.size.height, alignment: .top)
                         ScrollView(.horizontal) {
                             // The lanes, grid and playhead fill the whole pane, so an empty project still reads as a timeline.
                             ZStack(alignment: .topLeading) {
@@ -151,7 +151,7 @@ struct TimelineView: View {
     /// Name 12 pt semibold over the kind 10 pt secondary; mute/hide in a fixed trailing column so the icons line up across rows.
     private func headerTitle(_ name: String, kind: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(name).font(.system(size: 12, weight: .semibold)).lineLimit(1).fixedSize()
+            Text(name).font(.system(size: 12, weight: .semibold)).lineLimit(1).truncationMode(.tail)
             Text(kind).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
         }
     }
@@ -212,7 +212,6 @@ struct TimelineView: View {
             Image(systemName: "line.3.horizontal").font(.system(size: 9)).foregroundStyle(hoveredHeader == id ? .secondary : .quaternary)
             headerTitle("Text", kind: "Titles & captions")
             Spacer(minLength: 2)
-            Color.clear.frame(width: 40, height: 20)   // keeps the title column aligned with the track rows
         }
         .padding(.leading, 8).padding(.trailing, 4).frame(height: rowHeight)
         .contentShape(Rectangle())
@@ -229,12 +228,12 @@ struct TimelineView: View {
     }
 
     private var addTrackRow: some View {
-            HStack(spacing: 8) {
-                Button { addTrack(.video) } label: { Label("Video", systemImage: "plus").font(.system(size: 11, weight: .medium)).fixedSize().padding(.horizontal, 6).frame(height: 20).contentShape(Rectangle()) }.focusable(false).help("Add a video track").pointer().uiFrame("addtrack.video")
-                Button { addTrack(.audio) } label: { Label("Audio", systemImage: "plus").font(.system(size: 11, weight: .medium)).fixedSize().padding(.horizontal, 6).frame(height: 20).contentShape(Rectangle()) }.focusable(false).help("Add an audio track").pointer().uiFrame("addtrack.audio")
+            HStack(spacing: 2) {
+                Button { addTrack(.video) } label: { Label("Video", systemImage: "plus").font(.system(size: 11, weight: .medium)).lineLimit(1).padding(.horizontal, 4).frame(height: 20).contentShape(Rectangle()) }.focusable(false).help("Add a video track").pointer().uiFrame("addtrack.video")
+                Button { addTrack(.audio) } label: { Label("Audio", systemImage: "plus").font(.system(size: 11, weight: .medium)).lineLimit(1).padding(.horizontal, 4).frame(height: 20).contentShape(Rectangle()) }.focusable(false).help("Add an audio track").pointer().uiFrame("addtrack.audio")
             }
             .buttonStyle(.plain).labelStyle(.titleAndIcon).foregroundStyle(.secondary)
-            .padding(.horizontal, 8).frame(height: 32)
+            .padding(.horizontal, 4).frame(maxWidth: .infinity, alignment: .leading).frame(height: 32)
     }
 
     /// Time ticks and lane stripes behind the clips, covering the full pane height.

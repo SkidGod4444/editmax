@@ -1,397 +1,235 @@
-# EditMax
+<p align="center">
+  <img src="docs/icon-256.png" width="128" alt="EditMax icon">
+</p>
 
-<img src="docs/icon-256.png" width="128" align="right" alt="EditMax icon">
+<h1 align="center">EditMax</h1>
 
-Native macOS agentic video editor (Swift / SwiftUI / AVFoundation) by Saidev Dhal. Working name chosen 2026-11-05.
+<p align="center">
+  A native macOS video editor that your coding agent can drive.<br>
+  Cut, grade, caption and deliver by hand, by chat, or from Claude Code, Codex and Cursor over MCP.
+</p>
 
-EditMax exposes itself to coding agents over a local MCP server, by design:
+<p align="center">
+  <a href="https://github.com/SkidGod4444/editmax/actions/workflows/test.yml"><img src="https://github.com/SkidGod4444/editmax/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
+  <img src="https://img.shields.io/badge/macOS-15%2B-black" alt="macOS 15+">
+  <img src="https://img.shields.io/badge/Swift-5-F05138" alt="Swift 5">
+  <img src="https://img.shields.io/badge/MCP-62%20tools-blue" alt="62 MCP tools">
+</p>
 
-- **Agent-agnostic.** EditMax exposes its tools over MCP to any client (Claude Code, Codex, Cursor, Claude Desktop)
-  and has an in-app chat that drives the coding agents you already use (Claude Code, Codex, OpenCode, Cursor, Grok,
-  Antigravity) through the bundled `codemax` runtime, with their own logins. An Anthropic API key is optional.
-  No account, no backend.
-- **Labeled snapshot before every edit**, by user or agent, with one-click restore (History tab and
-  `restore_snapshot` tool). Restoring is itself an edit, so nothing is ever lost.
-- **Loopback-only MCP server with a bearer token.** Any process on the Mac cannot drive the editor without the token.
-- **Agents can see the picture.** `capture_frame` returns a PNG of any timeline moment; `set_playhead` shows the user.
+<p align="center">
+  <img src="docs/screenshot-editor.png" width="900" alt="The EditMax editor: media list, preview, inspector and timeline">
+</p>
 
-## Status (2026-11-05)
+EditMax is a real editor first: tracks, trims, keyframes, color, audio, captions, multicam, 10-bit delivery, built on
+AVFoundation and Core Image with its own compositor, so what you see in the preview is what exports. Then it opens
+every one of those operations to agents through a local [Model Context Protocol](https://modelcontextprotocol.io)
+server, and ships a chat panel that drives the coding agents you already have, with their own logins. No account,
+no backend, nothing leaves your Mac unless you ask a cloud model.
 
-Working:
-- Document model (`.emx` JSON; older `.editmax` files still open), multi-window, media panel with import; drag media (or Finder files) onto a timeline lane to place a clip at that time, double-click to append
-- Timeline: video/audio tracks, clip move/split/trim/delete, speed, volume, opacity, close gaps, text overlays
-- Undo/redo (⌘Z, ⇧⌘Z, toolbar arrows) over every edit, the agent's included; the History tab stays the full log with restore points
-- Picture: EditMax's own compositor (`EditMax/Engine/Compositor.swift`, Core Image on the GPU) draws every frame of the preview, the export
-  and `capture_frame`, so what plays is what exports. Per clip: transform (scale, position, rotation, crop), color (exposure, contrast,
-  saturation, temperature, tint), fades in/out (picture and sound), transitions into a clip (cross dissolve, dip to black, wipes; the
-  outgoing clip plays on underneath, so it needs media past its out point), stills on video tracks, titles. Each project track has A/B
-  composition tracks so transitions can overlap. No color management: an ungraded frame exports with the source's pixel values.
-- Timeline: snapping to clip and text edges, markers, in/out points and the playhead (⌥ drags free); ⇧/⌘-click multi-select with group
-  move; markers (M) on the ruler; in/out points (I, O, X) with "Delete range" (ripples every track); transition and fade marks on clips
-- Keyframes: every transform, color, opacity, volume and speed value can be animated. The diamond next to a slider adds a keyframe
-  at the playhead (the first one starts the animation from the plain value); once animated, dragging the slider writes a keyframe.
-  Linear, smooth (ease in/out) and hold easing; `[` and `]` jump between keyframes; yellow diamonds on the clip bar. Speed keyframes
-  are a speed ramp (0× = freeze frame); the clip's media use is the exact integral of the ramp, played as short constant-rate pieces.
-  Tools: `set_keyframe`, `remove_keyframe`; `inspect_timeline` lists keyframes per clip on timeline times.
-- Color: besides exposure/contrast/saturation/temperature/tint, a five-point tone curve (shadows, midtones, highlights), vibrance,
-  and looks: six built-in LUTs generated in code (Teal & Orange, Black & White, Film Fade, Cool Blue, Warm Vintage, High Contrast)
-  or any `.cube` 3D LUT (bigger than Core Image's limit = resampled), blended by a mix amount; all keyframeable. Scopes (luma
-  waveform + RGB histogram of the frame on screen) toggle from the preview's corner button; `frame_stats` gives the agent the same
-  numbers (mean RGB, luma mean/median, crushed-black and clipped-white fractions, histogram).
-- Audio: per-clip three-band EQ (200 Hz / 1 kHz / 6 kHz), high-pass and noise gate through an `MTAudioProcessingTap`
-  (`EditMax/Engine/AudioTap.swift`, only attached when a clip asks for it); automatic ducking of one track under another's
-  clips with attack/release (Project inspector → Ducking, `set_ducking`); clip volume is one envelope per clip (keyframes ×
-  fades × transition crossfade × ducking) emitted as back-to-back ramps. Audio-only timelines export.
-- Log footage (DJI D-Log, S-Log, V-Log…): `set_clip_color input_lut` (inspector: Look → Input LUT) takes the camera's
-  conversion `.cube` and applies it before every other control at full strength, so exposure and the tone curve work on
-  a Rec.709 image; the creative look still runs last. Sources are decoded to 16-bit half floats
-  (`kCVPixelFormatType_64RGBAHalf`), so 10-bit footage keeps its precision through the LUT: on a 10-bit ramp stretched
-  ×6 the exported staircase matches the ideal (RMS 0.95 vs 0.93, max step 2) where the 8-bit decode had steps of 9.
-  Versions: the History tab lists every edit as a version (newest first, the project as it was *after* that edit, with a
-  line saying what changed: "red.mp4: color: exposure 0 → 2"). Click a row to see that version in the preview (an orange
-  banner marks it; any edit returns to the live project), Restore to make it current again (itself an edit, so nothing is
-  lost); the bottom row is the original. The MCP `list_history` entries carry the same `changes` line; they are the
-  "before" snapshots, so to return to the state after an edit, restore the entry just above it.
-  Chat replies render Markdown (headings, lists, tables, code). Agent-harness errors are reworded for the person editing
-  ("The agent stopped before finishing its last step…"); the raw text stays in the debug log.
-  The agent's system prompt (`ChatSession.agentInstructions`) makes it an expert editor: method, cutting, color order
-  (conversion LUT first, creative look last), sound, captions, delivery, and the honest list of what EditMax cannot do.
-  Project files carry `formatVersion` (2). Files without it are format 1, whose renderer drew tint the wrong way
-  round (+ was green); on open every tint value, tint keyframe and history snapshot is negated so the picture is unchanged.
-  Before/after: the ◧ button on the preview or ⌥⌘B cycles off → split (before on the left of a divider you drag, after on
-  the right) → whole picture before → off. "Before" bypasses the corrections and look but keeps the input (conversion)
-  LUT, so log footage compares against its converted baseline; cuts, transforms, transitions and titles stay. It is a color tool only: the button is disabled until some clip
-  carries a grade, and the view switches off when the last grade is removed. Preview and full screen only: exports and
-  the agent's frame tools see the grade.
-  Focus layout: the ▯▯ button on the preview or ⌥⌘F hides the media list, inspector and timeline and shows just the player
-  (with a transport bar: play/pause, frame steps, scrubber) beside the chat, for directing the agent while watching. Same
-  button, "Back to editor" or ⌥⌘F returns.
-  Full-screen preview: the ⤢ button on the preview, ⇧⌘F, or double-click the picture; Esc, double-click or ⇧⌘F leaves.
-  All three entry points do nothing while the project has no clips (the button is disabled with a not-allowed cursor).
-  It is a borderless window on the editor's screen showing the same player, so play/scrub/edits stay live. A transport
-  bar (play/pause, scrubber, time, leave) sits at the bottom and hides 2.5 s after the mouse rests; the editor's keys
-  (space, J/K/L, arrows, I/O) work there too.
-  Switching the chat between Agent and API key keeps the transcript on screen; the first message after the switch carries
-  a digest of the earlier user/assistant turns (not tool output) so the new session can carry on.
-  Tested with DJI's official D-Log to Rec.709 cube on DJI's Inspire 3 D-Log sample (ProRes HQ and a 10-bit HEVC
-  Main 10 transcode of it): EditMax's export matches ffmpeg's `lut3d` within 5 levels. DJI's cubes use tabs after
-  `LUT_3D_SIZE` and CR line ends; the parser accepts any whitespace and Latin-1 text.
-  10-bit delivery: `export_video preset: hevc10` (export panel: Format → HEVC 10-bit) writes HEVC Main 10, 4:2:0,
-  `hvc1`, Rec.709 tags, at about 0.25 bits per pixel per frame (1080p30 ≈ 15 Mb/s ceiling; simple content comes out
-  far smaller), through `AVAssetReader` + `AVAssetWriter` with `EditMaxCompositor10` (16-bit half-float frames). The
-  audio mix (volume keyframes, ducking, EQ/gate taps) is rendered by `AVAssetReaderAudioMixOutput` to AAC 192 kb/s.
-  Limits: SDR only (no HLG/PQ transfer tags, no D-Gamut), MP4 container only, proxies are 8-bit so the preview with
-  proxies on can band where the export does not, and untagged 8-bit sources shift by up to 2 levels on saturated colors
-  versus the old BGRA decode (VideoToolbox rounds the two conversions differently).
-- App icon: `EditMax/Resources/AppIcon.svg` is the source (a play triangle cut into three beveled metal strips on a
-  dark plate whose shape, corner curve and shadow come from a real macOS app icon's alpha mask, `scripts/icon/plate_mask.raw`,
-  so it sits level with Apple's icons; `scripts/icon/build_svg.py` rebuilds the SVG). `scripts/make-icon.sh`
-  renders it with headless Chrome and rebuilds `EditMax/Resources/AppIcon.icns` (`CFBundleIconFile` in `project.yml`),
-  `EditMax/Resources/ProjectDoc.icns` (the `.emx` document icon from `scripts/icon/doc.html`, `CFBundleTypeIconFile` /
-  `UTTypeIconFile`) and the README copies in `docs/`. The preview's empty state and the About panel use the same icon.
-  Finder caches document icons per bundle version: after changing `ProjectDoc.icns`, bump `CFBundleVersion`, run
-  `lsregister -f` on the built app, delete `$(getconf DARWIN_USER_CACHE_DIR)com.apple.iconservices` and
-  `killall iconservicesagent`, or `.emx` files keep the generic page icon.
-- Signing: debug builds are signed with the Apple Development certificate pinned by hash in `project.yml`, so macOS keeps
-  the Screen Recording and keychain grants across rebuilds (ad-hoc signing made every build a new app). On another Mac,
-  replace the hash with one from `security find-identity -v -p codesigning` or with `"-"` for ad-hoc.
-- Proxies: 960×540 copies of video files for smooth preview (`make_proxies`, Project inspector → Proxies); the export and
-  `capture_frame` always use the originals. Templates: built-in formats (YouTube 16:9, Shorts 9:16, Square, 4K, Cinema, 4:5)
-  and projects saved as templates in Application Support (`list_templates`, `apply_template`, `save_template`).
-- Multicam: `make_multicam` folds clips of the same moment into one clip whose angles are lined up by audio
-  (`AngleSync`, cross-correlation of the loudness envelopes; falls back to the timeline placement when the match is
-  weak), `cut_angle` switches the picture at a time, the sound always comes from one angle (`set_multicam`), `flatten`
-  turns it back into clips. The builder expands a multicam clip into one piece per cut (`Clip.multicamPieces`), so
-  speed ramps, keyframes, transitions and fades on the clip keep working. Inspector: angle buttons cut at the playhead;
-  timeline: numbered cut lines.
-- Nested sequences: `nest_clips` folds clips into a sub-project (`Project.sequences`) rendered once per content hash
-  into Application Support/EditMax/nested (`SequenceRenderer`); the clip plays that file, so grading, speed, fades,
-  transitions and keyframes apply to the group; `unnest_clip` expands it back; `inspect_sequence` lists its contents.
-  Sequence assets have kind `sequence` and get thumbnails and waveforms like video.
-- Keys: Space, J/K/L shuttle (repeat to double, up to 8×), ←/→ frame (⇧ = 10), Home/End, S split, ⌫ delete, M, I/O/X, ⌘T transition,
-  ⌘= / ⌘- zoom, ⌘Z / ⇧⌘Z. Letter keys never fire while a text field has the focus.
-- Grouped inspectors: a clip shows its thumbnail, name, split/delete, timing and reset-able sliders; a text shows text, style, size, a color picker and position; the project inspector adds titles at the playhead. Right-click menus on media rows (add, reveal, remove), track headers (mute, hide, delete) and bars (split, show, style, delete); empty-state hints in the preview and timeline
-- Live preview with AVPlayer + Core Animation overlays; frame stepping
-- Export to H.264/AAC MP4 (`File > Export Video…`, ⌘E, or the `export_video` tool), verified with ffprobe
-- MCP server on `http://127.0.0.1:19790/mcp` (port and token in `~/Library/Application Support/EditMax/mcp.json`), 62 tools
-- Cleanup: remove silence (from the waveform) and filler words (from the transcript) with ripple deletes across every track
-- Captions: on-device transcription with word timings (Apple SpeechAnalyzer on macOS 26+; SFSpeechRecognizer on macOS 15–25, on-device
-  where the Mac has the model, else Apple's servers), six text presets, one click or one tool call
-- Timeline: frame thumbnails and a waveform band in video clips, full waveforms in audio clips (peaks cached per file in
-  `~/Library/Application Support/EditMax/waveforms/`), pinned track headers (drag one onto another to reorder, the Text lane too; the top video row covers the rows below it in the picture, as in other editors, and text always draws over the picture), lane grid, follows the playhead, add-track buttons, hide/mute per track
-- Agents tab with copy-ready commands for Claude Code, Codex and generic JSON config
-- Chat tab, two backends:
-  - **Agent (default).** The bundled `codemax serve` runs the agent you pick (Claude Code, Codex, OpenCode, Cursor,
-    Grok, Antigravity) over its interactive protocol with EditMax's MCP server as its only allowed tool source. No API
-    key. Verified end to end with Claude Code and Codex (import, insert, title, playhead; shell and file writes refused).
-  - **API key (optional).** EditMax's own sidecar (`agent/`, bundled as `editmax-agent`): the Claude Agent SDK driving
-    the installed Claude Code (a key is optional there), or Claude / OpenAI / Google / xAI through the Vercel AI SDK.
-    Keys per provider in the login keychain. Verified end to end with the Claude Agent SDK; the Vercel providers are
-    verified with a mock model and up to the provider's 401 (no real key was available).
-- codemax auto-update: the latest GitHub release is installed on its own after a health check, rolled back when it breaks
-- Debug logs (`~/Library/Application Support/EditMax/logs/`) and “Export diagnostics…” in the Agents tab
+## Why EditMax
 
-- Transcript editing: `search_transcript` finds a phrase in the speech with its times, `cut_transcript`
-  removes a phrase (by occurrence), a word range or a time span and ripples every track; the clip inspector's Transcript
-  section shows the clip's words (click a word, then another, to select a span; Cut selection). Transcripts stay valid after
-  a ripple because they are stored per asset and mapped through the clip's source offset.
-- Voice isolation: `set_clip_audio voice_isolation` (inspector: EQ & cleanup → Voice isolation) runs Apple's on-device
-  AUSoundIsolation unit over the clip's asset once (offline, cached in `~/Library/Application Support/EditMax/isolated/`,
-  keyed by file and strength) and plays/exports the isolated file; the original plays until the render is done.
-- Auto-reframe: `auto_reframe` (inspector: Transform → Auto-reframe) finds the subject with Vision (largest person, else the
-  salient object) every 0.33 s, scales the picture to cover a frame of another aspect and keyframes its position (smooth,
-  dead-banded, speed-limited) so the subject stays in view: the one-call vertical version of a landscape clip.
-- Stabilization: `stabilize_clip` (inspector: Transform → Stabilize) registers consecutive frames with Vision, smooths the
-  camera path over `strength` seconds and counter-shifts the picture in the compositor with a small zoom (≤ 1.25×) to hide
-  the borders. The clip keeps strength, zoom and a key (`Clip.stabilization`); the per-frame samples live in
-  `Project.motionPaths`, a cache like the transcripts that history snapshots skip, so a long clip is stored once, not
-  once per later edit. Samples are keyed by source time, so trims and speed ramps keep working.
-- Delivery: `export_chapters` turns the markers into a YouTube chapter list (`00:00 Intro` added when needed; File →
-  Export Chapters…, or Copy YouTube chapters in the project inspector); `export_video chapters: true` writes it beside the
-  MP4; `export_batch` (File → Batch Export…) renders one MP4 per template into a directory, auto-reframing every video
-  clip for templates of another aspect. Built-in templates applied to a timeline with clips now only change the frame.
+- **Agents work the same timeline you do.** Every edit, yours or the agent's, goes through one implementation with
+  the same validation, so an agent cannot do anything the UI could not.
+- **Nothing is ever lost.** A labeled version is recorded before every edit. ⌘Z undoes the agent's work like your
+  own; the History tab shows every version with a line saying what changed, and restoring one is itself an edit.
+- **Agents can see.** `capture_frame` returns the composed frame at any moment, `frame_stats` measures it,
+  `ui_screenshot` shows the window, and `set_playhead` points you at the moment the agent is talking about.
+- **Bring your own agent.** Claude Code, Codex, OpenCode, Cursor, Grok and Antigravity through the bundled agent
+  runtime, or an API key for Claude, OpenAI, Gemini or xAI. Any MCP client can connect from outside the app too.
+- **Private by default.** The MCP server listens on loopback only and requires a bearer token. Transcription runs
+  on-device. Prompts and keys never reach the logs.
 
-Not yet built: asset copying into a project bundle (assets are referenced by path + security bookmark), an embedded MP4
-chapter track (chapters are a sidecar text file).
+## Highlights
 
-## Settings
+| | |
+|---|---|
+| **Timeline** | Video and audio tracks, ripple insert and delete across every track, snapping, markers, in/out points, multi-select, frame thumbnails and waveforms, proxies for smooth playback |
+| **Picture** | Transform, crop, five-point tone curve, vibrance, exposure, temperature and tint, six built-in looks or any `.cube` LUT, input LUTs for log footage, fades, cross dissolves, dips and wipes, scopes and before/after |
+| **Motion** | Keyframes on every transform, color, opacity, volume and speed value with linear, smooth and hold easing; speed ramps with freeze frames; auto-reframe for vertical cuts; stabilization |
+| **Sound** | Three-band EQ, high-pass, noise gate, voice isolation, auto-ducking of music under speech, volume envelopes |
+| **Speech** | On-device transcription, captions in six styles, remove silence and filler words, search and cut by the words that were spoken |
+| **Structure** | Multicam clips synced by audio, nested sequences, templates for every social format, batch export to several formats at once |
+| **Delivery** | H.264 MP4, 10-bit HEVC masters, YouTube chapters from markers |
+| **Agents** | 62 MCP tools covering all of the above plus the window itself; an in-app chat with a policy that allows only editor tools |
 
-⌘, (or Settings… at the bottom of Home's sidebar) opens a standard preferences window; `EditMax/UI/SettingsView.swift`,
-values in `EditMax/App/AppSettings.swift`. Nothing lives only there: every control writes a UserDefaults key or a
-keychain item that the rest of the app reads.
+## Install
 
-- General: library folder (`libraryDirectory`, default Movies ▸ EditMax Projects), splash at launch (`showSplash`),
-  appearance (`appearance`: System / Light / Dark), Liquid Glass on or off (`useLiquidGlass`, after a relaunch).
-- Assistant: the chat defaults the chat header also edits (`chatBackend`, `chatAgent`, `chatProvider`, `chatModel`).
-  Settings posts `editmaxChatDefaultsChanged`; open chats re-read them unless a turn is running.
-- API Keys: one keychain item per provider slot; saving posts `editmaxKeysChanged` so open chats hand the sidecar the
-  new keys. The log records the slot only.
-- Agent Runtime: bundled / running / latest, Check Now, automatic checks (`autoUpdateRuntime`; Check Now still works).
-- Advanced: MCP port (`mcpPort`, after a relaunch), token (show / copy), config path, Reveal Logs, Export Diagnostics.
+EditMax runs on macOS 15 or later on Apple silicon (Intel Macs are untested). Liquid Glass and on-device SpeechAnalyzer captions need
+macOS 26; everything else works on 15.
 
-## Timeline rules
+There is no packaged download yet: build it from source (two commands, see [Build](#build)) and move
+`EditMax.app` to Applications.
 
-- A clip inserted at a time never stacks on another: it is a ripple insert across every track, like ripple delete
-  (a clip under the time is split; every clip, text and marker from there on moves right). Appending (no time) goes
-  after the last clip.
-- New video tracks go in above the first audio track, so video stays above audio; the Text lane keeps its row.
-- Marker names draw as small tags in the marker's colour on the ruler, over the timecode labels.
-- `inspect_timeline` reports `useProxies`.
+## First edit
+
+1. Launch EditMax. **Home** lists your library (`~/Movies/EditMax Projects`); pick a format chip and press **New
+   project**, or double-click a project card.
+2. Drag video, audio or images from the Finder into the **Media** list, or press **+**. Double-click a file to append
+   it to the timeline, or drag it onto a lane to place it at that time.
+3. Edit on the timeline: drag bars to move them, drag their edges to trim, press **S** to split at the playhead,
+   **M** for a marker, **I** and **O** for a range and **X** to clear it.
+4. Select a clip and use the **Inspector**: timing, transform, color, look, audio, transitions, keyframes, cleanup,
+   captions and transcript. Sliders are undoable as one step per drag.
+5. **File → Export Video…** (⌘E) renders the timeline; **Batch Export…** renders every format you choose.
+
+Projects are single `.emx` files that autosave. Media is referenced, not copied.
+
+### Keyboard
+
+| Keys | Action |
+|---|---|
+| Space, J / K / L | Play and pause, shuttle (repeat J or L to double, up to 8×) |
+| ← / → (⇧ for 10), Home / End | Step frames, go to start or end |
+| S, ⌫ | Split at the playhead, delete the selection |
+| M, I / O / X | Marker, in and out points, clear the range |
+| ⌘T, `[` / `]` | Transition on the selected clip, previous and next keyframe |
+| ⌘Z / ⇧⌘Z | Undo and redo, the agent's edits included |
+| ⌘= / ⌘- | Zoom the timeline |
+| ⌘E, ⇧⌘E | Export video, batch export |
+| ⇧⌘F, ⌥⌘F, ⌥⌘B | Full-screen preview, focus layout (player beside the chat), before/after |
+| ⌘N, ⇧⌘N, ⇧⌘P, ⌘, | New project, new project on Home, Home, Settings |
+
+Letter keys never fire while a text field has the focus.
+
+## Work with an agent
+
+### In the app
+
+Open the **Chat** tab in the inspector and type what you want: "cut the pauses, add bold captions, and give me a
+9:16 version". The chat runs one of the coding agents installed on your Mac through the bundled agent runtime, using
+that agent's own login, so there is nothing to sign up for. The agent sees only EditMax's tools: file edits, shell
+commands and questions back to you are refused by policy, and every change it makes is a version you can restore.
+
+Prefer an API key? Switch the chat header to **API key**, pick a provider (Claude, OpenAI, Google Gemini, xAI Grok,
+or the Claude Agent SDK) and paste a key. Keys live in your login keychain.
+
+The **Focus** layout (⌥⌘F) hides everything but the player and the chat, for directing while you watch.
+
+### From your own tools
+
+Any MCP client can drive EditMax. The **Agents** tab shows copy-ready commands for Claude Code, Codex and a generic
+JSON config, with your token filled in:
+
+```sh
+claude mcp add --transport http editmax http://127.0.0.1:19790/mcp \
+  --header "Authorization: Bearer <token>"
+```
+
+The port and token are in `~/Library/Application Support/EditMax/mcp.json`. The server listens on `127.0.0.1` only.
+
+An agent typically starts with `inspect_timeline` and `list_assets`, edits with the tools below, checks its work with
+`capture_frame`, and points you at the result with `set_playhead`. Clips, assets and tracks are addressed by name,
+full id or the first eight characters of an id.
+
+### The tools
+
+| Area | Tools |
+|---|---|
+| Inspect | `list_projects`, `inspect_timeline`, `list_assets`, `list_history`, `capture_frame`, `frame_stats`, `inspect_sequence` |
+| Cut | `import_media`, `insert_clip`, `split_clip`, `move_clip`, `trim_clip`, `remove_clips`, `close_gaps`, `ripple_delete`, `add_track`, `move_track`, `set_playhead` |
+| Picture | `set_clip_transform`, `set_clip_color`, `set_clip_fades`, `set_transition`, `set_keyframe`, `remove_keyframe`, `auto_reframe`, `stabilize_clip` |
+| Sound | `set_clip_properties`, `set_clip_audio`, `set_ducking` |
+| Speech | `get_transcript`, `search_transcript`, `cut_transcript`, `add_captions`, `remove_captions`, `detect_silence`, `remove_silence`, `remove_words` |
+| Text and markers | `add_text`, `remove_texts`, `add_marker`, `remove_marker` |
+| Structure | `nest_clips`, `unnest_clip`, `make_multicam`, `cut_angle`, `set_multicam`, `sync_angles`, `make_proxies`, `list_templates`, `apply_template`, `save_template`, `set_project_settings` |
+| Deliver | `export_video`, `export_chapters`, `export_batch` |
+| Safety | `restore_snapshot` |
+| The window | `ui_layout`, `ui_click`, `ui_drag`, `ui_key`, `ui_scroll`, `ui_screenshot` |
+
+Every tool returns a description of what it did; edits that would hide or lose something (stacking clips, trimming
+to nothing, audio on a video track) are refused with a reason instead of being clamped.
+
+## Editing guide
+
+**Timeline.** A clip inserted at a time is a ripple insert, as in any NLE: the clip underneath is split and
+everything after it on every track moves right, so nothing is ever stacked or hidden. Deleting a range (X then
+"Delete range", or `ripple_delete`) closes the gap on every track and moves captions with the content. Video tracks
+stay above audio tracks; the top video row covers the ones below it, and text always draws over the picture. Drag a
+track header onto another to reorder.
+
+**Color.** Work in this order: an input LUT first for log footage (DJI D-Log, S-Log, V-Log…), then exposure, contrast,
+saturation, temperature, tint and the tone curve, then a creative look last, blended by its mix slider. Scopes (the
+waveform and histogram button on the preview) and before/after (⌥⌘B: split with a draggable divider, whole picture,
+off) help you judge. Sources are decoded in 16-bit, so 10-bit footage keeps its precision through a LUT.
+
+**Keyframes.** The diamond next to a slider adds a keyframe at the playhead; once a value is animated, dragging the
+slider writes a keyframe. Speed keyframes make a speed ramp; 0× is a freeze frame.
+
+**Sound.** The EQ, high-pass and gate shape a clip; voice isolation renders Apple's on-device model over it once.
+Ducking (Project inspector) drops a music track under another track's clips with attack and release.
+
+**Cleanup, then captions.** Remove silence listens to every audible clip, so a pause in the speech survives where
+music runs underneath; mute a track deliberately if you want it ignored. Remove filler words uses the transcript's
+word timings. Both ripple every track. Do cleanup before captions so the captions land on the final cut.
+
+**Transcript editing.** The clip inspector lists the clip's words: click a word, then another, to select a span and
+cut it. `search_transcript` and `cut_transcript` do the same for an agent.
+
+**Multicam.** Select clips of the same moment from different cameras and make a multicam clip: the angles are lined
+up by their audio, the inspector's angle buttons cut at the playhead, and one angle carries the sound.
+
+**Nested sequences.** Fold clips into one compound clip so grading, speed, fades and keyframes apply to the group;
+unnest to expand it back.
+
+**Delivery.** Export writes H.264/AAC MP4 at the project size, or a 10-bit HEVC Main 10 master. Markers become a
+YouTube chapter list (File → Export Chapters…, or beside the MP4). Batch Export renders one file per template and
+auto-reframes landscape clips for vertical and square formats.
+
+**Settings** (⌘,): library folder, splash, appearance, Liquid Glass, chat defaults, API keys, the agent runtime's
+automatic updates, MCP port and token, logs and diagnostics.
 
 ## Build
 
-Requires Xcode 27 and `xcodegen` (`brew install xcodegen`). Re-run `xcodegen generate` after adding files.
-The deployment target is macOS 15. Liquid Glass goes through `EditMax/UI/Glass.swift` (`liquidGlass(in:tint:interactive:)`,
-`GlassGroup`, `glassButtonStyle(prominent:)`): real `glassEffect` / `GlassEffectContainer` / glass button styles on
-macOS 26, a material with a hairline before it, same layout either way. Never call the 26-only APIs directly. Glass is
-used only on the control layer: the window toolbar (Home / Focus / Export, native so it is glass on 26 by itself), the
-preview's overlay buttons, the export HUD and version banner, the transport pills in focus and full-screen mode, the
-inspector tab strip, the chat's input bar and suggestion chips, Home's format chips and New project button, the splash
-card. Panels, inspectors, the timeline strip and lists stay opaque, standard controls; nothing is glass on glass.
-Home is the launcher: it steps aside when a project opens (from Home, from the Finder, or at launch with a file) and
-comes back when the last project window closes, with ⇧⌘P or the toolbar's Home button. Home is an `NSSplitViewController`: the sidebar is an `NSSplitViewItem(sidebarWithViewController:)`, which is
-AppKit's official sidebar treatment (Liquid Glass on macOS 26, the translucent sidebar material before), and the
-window is non-opaque with a `.underWindowBackground` behind-window material under the projects pane
-(`BehindWindowMaterial` in Glass.swift), so the desktop shows through the way Finder's does. Only official API:
-`glassEffect` / `GlassEffectContainer` / `.glass` button styles through Glass.swift, `NSVisualEffectView` for the
-window-level materials, the native toolbar for the editor.
-Selected glass controls (inspector tab, Home chip, active preview-overlay button) share one tint,
-`Color.glassSelection`, so the accent reads as the same blue everywhere. `-noglass` on the command line forces the pre-26 material path on any Mac, so the fallback can be checked here; a real
-macOS 15 run is still needed before shipping (this Mac runs 27).
-
-Naming: "codemax" is the internal name of the bundled agent CLI (repo SkidGod4444/codemax-cli). User-facing text says
-"agent runtime" (the Agents tab, chat empty state, installer and updater messages); file paths, logs, README and code
-keep the real name.
+Requires Xcode 27, [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`) and
+[Bun](https://bun.sh) (for the chat sidecar). The agent runtime is built from a sibling checkout of
+[codemax-cli](https://github.com/SkidGod4444/codemax-cli); without one, `EDITMAX_STUB_VENDOR=1` bundles a stub and
+everything except the in-app agent chat works.
 
 ```sh
-scripts/vendor-codemax.sh   # builds ../codemax-cli with bun into Vendor/codemax (bundled by Xcode)
-scripts/vendor-agent.sh     # builds agent/ (the API-key sidecar) with bun into Vendor/editmax-agent
+scripts/vendor-codemax.sh && scripts/vendor-agent.sh   # bundle the agent runtime and the API-key sidecar
 xcodegen generate
 xcodebuild -project EditMax.xcodeproj -scheme EditMax -configuration Debug \
   -derivedDataPath build/DerivedData -destination 'platform=macOS' build
 open build/DerivedData/Build/Products/Debug/EditMax.app
 ```
 
-## Tests
+Re-run `xcodegen generate` after adding files. The deployment target is macOS 15; Liquid Glass is used on 26 and a
+material before it, through one compatibility layer.
 
-Three layers, all run by `.github/workflows/test.yml` on every push to `main` and every pull request:
-
-- `EditMaxTests/` (XCTest, hosted in the app): the timeline model (ripple insert and delete, track order, split, trim, move,
-  file format and old-file decoding), the document's history (versions, undo/redo/restore, coalescing, caps, caches),
-  the shared `ToolExecutor` API (names and short ids, validation, summaries, transitions, keyframes, markers, tracks,
-  templates), and the engine against `EditMaxTests/Fixtures/base.mp4` (import, frame render, frame stats, nest/unnest,
-  export). Run them with `xcodebuild -project EditMax.xcodeproj -scheme EditMax -destination 'platform=macOS' test`
-  or ⌘U in Xcode. Under XCTest the app skips its splash, Home, MCP server and updater (`AppDelegate.isTesting`).
-  The four tests that decode video skip on GitHub's runners (VMs without a hardware H.264 decoder); they run on
-  every developer Mac.
-- `agent/test/` (`bun test`): the API-key chat sidecar's engine loop and error mapping, against a mock model.
-- The UI sweep (see "Driving the real UI"): scripted through the MCP driver by hand before a release. It is not in
-  CI: it needs a display and a running app.
-
-CI has no codemax source, so `scripts/vendor-codemax.sh` writes a stub when `EDITMAX_STUB_VENDOR=1`; the bundle is
-complete and the tests never launch the runtime.
-
-## Connect an agent
-
-Open the Agents tab in the inspector and copy the command for your client, for example:
+### Tests
 
 ```sh
-claude mcp add --transport http editmax http://127.0.0.1:19790/mcp --header "Authorization: Bearer <token>"
+xcodebuild -project EditMax.xcodeproj -scheme EditMax -destination 'platform=macOS' test   # or ⌘U in Xcode
+cd agent && bun test                                                                      # the chat sidecar
 ```
 
-Tools: `list_projects`, `inspect_timeline`, `list_assets`, `import_media`, `insert_clip`, `split_clip`, `move_clip`,
-`trim_clip`, `remove_clips`, `set_clip_properties`, `close_gaps`, `add_text`, `remove_texts`, `list_history`,
-`restore_snapshot`, `set_playhead`, `capture_frame`, `export_video`, `set_project_settings`, `get_transcript`, `add_captions`,
-`remove_captions`, `detect_silence`, `remove_silence`, `remove_words`, `ripple_delete`, `add_track`, `move_track`, `ui_layout`,
-`ui_drag`, `ui_click`, `ui_screenshot`.
+The Swift suite covers the timeline model, the document's history, the shared tool API and the engine on a bundled
+clip (import, frame render, nest, export). Both suites run on every push and pull request through GitHub Actions.
+The tests that decode video skip on GitHub's runners, which have no working H.264 decoder, and run on every Mac.
 
-## Driving the real UI
+### Going deeper
 
-An agent can work the window itself, not only the model: `ui_layout` lists what is on screen with ids and window
-coordinates (media rows, track headers and their mute/hide toggles, lanes, clip and text bars with their trim handles,
-toolbar and inspector buttons, the ruler); `ui_drag` and `ui_click` post mouse events to EditMax's own window through the
-app's event queue (`NSApp.postEvent`, so nothing can reach another app and the real cursor stays put; SwiftUI gestures need the active app, so when
-EditMax is behind another app it is activated for that one gesture, keystrokes arriving meanwhile are dropped rather than
-applied, and the previous app gets the focus straight back; macOS refuses that activation while another app is being used, and then
-`ui_drag` applies the move or trim through the bar's own code, `ui_click` calls the bar's or media row's own tap code, and
-`ui_key` hands the key to the editor's key handler, each saying so in its result; the driver never activates the app, so the user's focus is never taken; ⇧/⌘/⌥ go in `modifiers`); `ui_key` presses
-Space, J/K/L, arrows, I/O/M/S/X, ⌫ and ⌘ chords; `ui_scroll` scrolls the inspector or a list; `ui_screenshot`
-returns the window's own pixels as a PNG through ScreenCaptureKit, filtered to that one window (never the screen around
-it; macOS asks for the Screen Recording permission once; without it the tool falls back to rendering the window's layer
-tree, which misses some inspector controls, and says so). Verified: moving and trimming bars, dropping a media row on a lane, reordering
-headers, clicking toolbar buttons. Views register themselves with `.uiFrame("id")` (`EditMax/MCP/UIDriver.swift`).
+[docs/INTERNALS.md](docs/INTERNALS.md) covers the architecture, the engine's rules, the file format, the UI driver,
+the chat backends, the session log, the UI conventions and the gotchas: read it before changing the code.
 
-UI conventions (every control): `.pointer()` for the hand cursor, written inside `.disabled(...)` as
-`.pointer().disabled(x)` so a disabled control shows the not-allowed cursor; a `.uiFrame("area.name")` id; plain-style
-and icon buttons in bars and overlays get `.focusable(false)` so none of them takes the keyboard focus ring; sliders
-and continuous edits coalesce into one undo step. Menu items must not gate on `@FocusedObject` state: the focused
-document goes nil whenever the editor window is not key, so gate in the notification receiver instead.
+## Limits
 
-## Home
+- Media is referenced by path, not copied into the project; a file you move or rename has to be imported again.
+- Export is MP4 only; chapters are a sidecar text file, not an embedded track.
+- SDR only: no HDR transfer tags, no color management.
+- The in-app agent chat needs an agent installed on the Mac (Claude Code, Codex, OpenCode, Cursor, Grok or
+  Antigravity) or an API key.
 
-Launching without a file opens Home (also Window → Home, ⇧⌘P, and whenever the last editor window closes): the
-project library as a grid of cards with a poster frame, name, last-edited time, frame size and duration, a Draft
-badge on projects not yet named, search, Open… and Show in Finder. Projects live in `~/Movies/EditMax Projects`;
-New project (⇧⌘N on Home) writes `Untitled N.emx` there with the chosen format chip (16:9, 9:16, 1:1, 4K,
-2.39:1, 4:5) and opens it, so every project is a file that autosaves. Double-click a card (or Open in its context
-menu) to open it; Move to Trash asks first. Driver ids: `home.new`, `home.open`, `home.template.<slug>`,
-`home.project.<stem>`. ⌘N anywhere (File → New Project, and New Project in Format…) creates a library project
-too, so no project is ever an unsaved in-memory document.
+## Contributing
 
-Project files are `.emx` (JSON; the older `.editmax` extension still opens and still lists on Home). The type is
-declared in `project.yml` (`io.openhorizon.editmax.project`, tags `emx` + `editmax`). Opening goes through
-NSDocumentController, which resolves the file's type from LaunchServices, so a Mac whose database still holds an
-older EditMax build (one that did not declare `emx`) says "EditMax cannot open files of this type" until that
-build is unregistered: `lsregister -u <old app>` then `lsregister -f <this app>` (the tool lives in
-`/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/`). Every
-worktree build registers itself, so clean those out. A released build on a clean Mac has no such conflict.
+Issues and pull requests are welcome. Keep the conventions in [docs/INTERNALS.md](docs/INTERNALS.md#ui-conventions),
+add a test for behaviour you change (the model and tool tests run in a second), and never call the macOS 26-only
+glass APIs directly.
 
-## Launch
+## Credits
 
-The splash is the app icon alone, centred on a Liquid Glass card (dark-tinted; a material before macOS 26): it lands with a spring (from 88 %, a soft
-overshoot, its shadow deepening) and one pass of light crosses its metal; the name and a one-line description sit under it (plain fades, nothing moves), and a thin loading bar below climbs while the app starts and completes when
-the agent server is up; the version sits small at the bottom; nothing else is on the card. With Reduce Motion on, everything simply fades. 2.2 s of motion,
-pure SwiftUI. The splash stays at least 2.2 s (longer on a slow Mac, 5 s at most) and fades once the MCP server is
-listening; nothing of the app is visible while it is up (restored document windows are kept out of sight and put
-back as it fades), and Home opens as it fades when no project is open.
+EditMax is made by **Saidev Dhal**. The agent runtime is [codemax](https://github.com/SkidGod4444/codemax-cli), the
+MCP server uses the [MCP Swift SDK](https://github.com/modelcontextprotocol/swift-sdk), and the API-key chat uses the
+[Claude Agent SDK](https://docs.claude.com/en/api/agent-sdk) and the [Vercel AI SDK](https://sdk.vercel.ai).
 
-Launch with nothing to restore (every launch after a clean quit; macOS closes windows on quit by default) goes to
-Home. AppKit first asks the delegate `applicationShowsOpenPanelInsteadOfUntitledFile:`; left unanswered, a
-document-based app can get an Open panel at launch instead of an untitled document, so `AppDelegate` answers no and
-handles `applicationOpenUntitledFile` by showing Home. The empty untitled document `DocumentGroup` still makes at
-launch is closed 0.3 s in (`launch-docs` in the log). It shows only for a launch that activated the app (Dock, Finder, `open`); a
-background launch (`open -g`, as the agent's test relaunches use) gets none, so it never pops over other apps' windows.
-`-nosplash` on the command line skips it; `-splash-preview` shows it even on a background launch, `-splash-loop` replays it every 2.8 s for watching, `-splash-t <seconds>` freezes it at that moment of the choreography and keeps it up (capture the window with `screencapture -l <windowNumber>`, the number is in the `splash-show` log line), and `-splash-render <png>` writes a static still of the end state.
-
-## Session log
-
-`~/Library/Application Support/EditMax/logs/editmax.log` records the whole session as JSON lines, in order: every
-user interaction (`ui-click` with the element id under the pointer or the view class, `ui-drag`, `ui-key`, `ui-menu`,
-`ui-typing` as a burst marker that never contains the characters), every recorded edit (`edit`: label, origin
-user/agent/system, project), every MCP tool call (`mcp-call`: tool, arguments capped at 500 characters with free-text ones such as a title,
-a searched phrase or words to remove replaced by their length, duration, the first 200 characters of the result
-or the error; transcript and caption tools log only the result's length, so the footage's dialogue stays out), `chat-send`/`chat-stop` (backend and length only, never the
-prompt), and the engine events (renders, exports, player rebuilds). Events the MCP driver posted carry
-`synthetic: true`. Secrets are redacted at write time; prompts and keys are never written.
-
-## Cleanup
-
-Inspector → Cleanup, or the tools. `SilenceDetector` walks the cached waveform peaks (100/s) for runs under a threshold
-(default −38 dB below the loudest peak), keeps 0.15 s of air on each side. A moment counts as silent only when every
-audible clip playing there is quiet (at least 0.6 s of it), so a pause in the speech stays where music or a second voice
-runs underneath; pass `clip` to cut one clip's own pauses instead. Hidden and muted tracks are not listened to (the inspector and the
-tool result name them) but the ripple still cuts them, so mute deliberately before cleanup. `remove_words` takes the
-transcript's word timings for fillers (um, uh, hmm, er…; pass your own list). Both end in `Project.rippleDelete`, which
-removes the range from every track (splitting or trimming clips), drops text inside it and shifts later text, so a video
-with a separate voice track stays in sync. `ripple_delete` exposes the same cut for any range. Do cleanup before captions.
-
-## Captions
-
-Inspector → Captions → pick a style → “Add captions”, or ask the agent. `Transcriber` runs Apple's on-device SpeechAnalyzer on macOS 26+
-(the first run per language downloads its model, nothing is uploaded); on macOS 15–25 it falls back to SFSpeechRecognizer,
-on-device when the Mac has that language's model and otherwise through Apple's speech servers one minute at a time (the
-inspector says which; the system asks for the speech-recognition permission once). Either way it caches the words with timings on the
-project per asset (`Project.transcripts`, saved with the file, left out of history snapshots). `Captioner` groups the words
-into lines (per-preset word and character limits, pauses, sentence ends), maps them through each clip's trim and speed to
-timeline seconds, and adds them as text overlays with a shared group id. Presets (`CaptionPresets`): title, subtitle
-(translucent band), boxed, bold (uppercase, yellow, stroked), outline, minimal; one renderer draws preview, export and
-`capture_frame`. Tools: `get_transcript`, `add_captions`, `remove_captions`; `add_text` takes a `preset` too.
-
-## In-app chat
-
-**Agent backend (default, no key).** EditMax ships `codemax` inside the app (`Contents/Resources/bin/codemax`) and runs
-it as `codemax serve`, a terminal-free mode that speaks NDJSON over stdin/stdout. codemax drives the chosen agent over
-the same interactive protocol it uses in a terminal (ACP for Claude Code, OpenCode, Cursor, Grok; the Codex app-server
-for Codex), so every permission request still exists; EditMax's policy answers them: calls on the `editmax` MCP server
-are allowed, file edits, shell commands and questions are refused. When an agent runs out of quota, codemax hands the
-task to the next installed agent with a brief. The agent picker lists what is installed; the Agents tab shows the same.
-
-First launch installs codemax for the terminal too: a copy at `~/Library/Application Support/EditMax/bin/codemax` and a
-link at `~/.local/bin/codemax`, only when no `codemax` is already on your PATH (an existing one is never touched).
-Claude Code's ACP adapter is fetched by `bunx` on first use, so the Claude agent needs `bun` on the Mac and internet the
-first time. Debug: `EDITMAX_CODEMAX_LOG=/path/file` logs every line exchanged with codemax.
-
-**API key backend (optional).** Chat tab → “API key”. Pick a provider, type a model id (empty = the provider's default)
-and paste the key for that provider (key icon; stored in the login keychain; `ANTHROPIC_API_KEY` and friends in the
-environment win). Providers, all through EditMax's bundled sidecar `editmax-agent` (source in `agent/`, a bun project
-compiled with `bun build --compile`; it speaks the same NDJSON lines as `codemax serve`, so one Swift runner drives both):
-
-- **Claude Agent SDK**: the installed Claude Code's own harness (`claude` on PATH), started with no built-in tools and
-  only the `editmax` MCP server; a key bills the API, no key uses Claude Code's login.
-- **Claude API, OpenAI, Google Gemini, xAI Grok**: the Vercel AI SDK with that provider's model, the `editmax` MCP tools
-  pulled through `@ai-sdk/mcp`, a 40-step tool loop. Any model id the provider knows.
-
-The policy is the same as for agents: only `editmax` tools, everything else refused. Keys reach the sidecar once per
-session over stdin and are redacted from every log. `cd agent && bun test` runs the sidecar's tests (mock model).
-
-**codemax updates.** `CodemaxUpdater` checks the latest codemax GitHub release at launch and every 12 hours and installs
-it without asking: download `codemax-darwin-<arch>` into `~/Library/Application Support/EditMax/bin/`, verify the
-`.sha256`, health-check it (`--version` must print the release's version, `serve` must answer `agents` within 20 s),
-then swap it in, keeping the previous copy as `codemax.prev`. A release that fails the check is deleted and never
-retried. After the swap, an updated copy earns strikes for a crash, for failing to start an installed agent (the
-`configure` request), and for a turn that ends in a protocol error; a copy that never says ready, or two strikes within
-ten minutes, is rolled back to the previous copy or the bundled one (every build ships its own codemax as the floor), and
-the chat retries the agent with the restored copy, so one message recovers. Quota, login and "not installed" errors are
-the user's, not codemax's, and never count. State in `bin/update-state.json`; “Check now” and the
-status are in the Agents tab. Releases come from codemax's `release.yml` workflow (tag `vX.Y.Z` → binaries attached;
-v0.1.21 was the first). Verified against the real releases: an app bundling 0.1.21 installed 0.1.22 from GitHub on
-its own and chatted through it; a build that bundles 0.1.22 then took over and dropped the updated copy. Tests: `EDITMAX_UPDATE_URL=<json>
-EDITMAX_UPDATE_NOW=1` point the updater at a local fake release.
-
-**Debug logs.** `~/Library/Application Support/EditMax/logs/editmax.log` (NDJSON events: codemax and sidecar launches,
-exits and crashes, installs, updates, MCP start) and `codemax-protocol.log` (every line exchanged with codemax and the
-sidecar, prefixed `api` for the sidecar; tokens and keys redacted), 5 MB each with one rotation. The Agents tab's
-“Export diagnostics…” zips both with codemax's own `~/.codemax/debug.log` and the versions to the Desktop for a bug
-report; “Reveal logs” opens the folder. `EDITMAX_CODEMAX_LOG=/path/file` moves the protocol log.
-
-## Layout
-
-- `EditMax/Model` — `Project` (Codable timeline + history), `EditMaxDocument` (ReferenceFileDocument, `apply(label:origin:)` snapshots), `DocumentRegistry`
-- `EditMax/Engine` — `ToolExecutor` (every edit, shared by UI, MCP and chat), `CompositionBuilder` (AVComposition + overlays), `PlayerController`, `ExportService`, `MediaImporter`
-- `EditMax/MCP` — `MCPService` (MCP Swift SDK stateless HTTP transport + bearer auth), `HTTPListener` (NWListener HTTP/1.1), `EditMaxTools` (catalog + dispatch)
-- `EditMax/Chat` — `CodemaxRunner` (NDJSON over `codemax serve`), `CodemaxInstaller` (first-launch install), `ClaudeAPI` (SSE client), `ChatSession`, `KeychainStore`
-- `scripts/vendor-codemax.sh` — builds `../codemax-cli` with bun and places the binary in `Vendor/` (gitignored); the Xcode copy phase bundles it
-- `EditMax/UI` — SwiftUI views
-
-Naming note: editmax.app is an existing AI video tool and editmax.com is a resale domain.
-Free at time of check: editmax.io, editmax.ai, editmax.dev, editmax.video, npm `editmax`.
+© 2026 Saidev Dhal. A license will be added before the first public release.

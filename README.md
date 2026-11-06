@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshot-editor.png" width="900" alt="The EditMax editor: media list, preview, inspector and timeline">
+  <img src="docs/screenshot-editor.png" width="920" alt="The EditMax editor: media list, preview with a title, the clip inspector on the Look section, and a timeline with markers and dissolves">
 </p>
 
 EditMax is a real editor first: tracks, trims, keyframes, color, audio, captions, multicam, 10-bit delivery, built on
@@ -25,6 +25,12 @@ AVFoundation and Core Image with its own compositor, so what you see in the prev
 every one of those operations to agents through a local [Model Context Protocol](https://modelcontextprotocol.io)
 server, and ships a chat panel that drives the coding agents you already have, with their own logins. No account,
 no backend, nothing leaves your Mac unless you ask a cloud model.
+
+<p align="center">
+  <img src="docs/demo-frames.jpg" width="920" alt="Three frames of the cut: a title over a city at dusk, apartment towers from above, fields at the edge of town">
+  <br>
+  <sub>The cut in the window above: three aerial shots, a Teal &amp; Orange look, two dissolves, fades and a title. An agent makes it in nine tool calls.</sub>
+</p>
 
 ## Why EditMax
 
@@ -95,8 +101,13 @@ Letter keys never fire while a text field has the focus.
 
 ### In the app
 
-Open the **Chat** tab in the inspector and type what you want: "cut the pauses, add bold captions, and give me a
-9:16 version". The chat runs one of the coding agents installed on your Mac through the bundled agent runtime, using
+Open the **Chat** tab in the inspector and type what you want:
+
+> Pick the three best moments, put a cross dissolve between them, warm it up with the Teal & Orange look,
+> add a title that says Golden Hour, and show me the result.
+
+The agent inspects the timeline, inserts and trims, sets the transitions and the look, adds the title, renders a
+frame to check its own work, then moves your playhead to it. The chat runs one of the coding agents installed on your Mac through the bundled agent runtime, using
 that agent's own login, so there is nothing to sign up for. The agent sees only EditMax's tools: file edits, shell
 commands and questions back to you are refused by policy, and every change it makes is a version you can restore.
 
@@ -161,6 +172,10 @@ Ducking (Project inspector) drops a music track under another track's clips with
 **Cleanup, then captions.** Remove silence listens to every audible clip, so a pause in the speech survives where
 music runs underneath; mute a track deliberately if you want it ignored. Remove filler words uses the transcript's
 word timings. Both ripple every track. Do cleanup before captions so the captions land on the final cut.
+
+**Titles and captions never collide.** A title added where a caption or another title is already on screen moves to
+the nearest free band, the inspector warns when two texts cover each other and offers to move one clear, and the
+Text lane stacks concurrent bars so both stay readable.
 
 **Transcript editing.** The clip inspector lists the clip's words: click a word, then another, to select a span and
 cut it. `search_transcript` and `cut_transcript` do the same for an agent.

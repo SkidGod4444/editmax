@@ -287,7 +287,12 @@ struct TimelineView: View {
                 case .text:
                     ZStack(alignment: .leading) {
                         Color.clear.contentShape(Rectangle()).onTapGesture { location in seek(x: location.x); state.selectedClipIDs = []; state.selectedTextID = nil }
-                        ForEach(document.project.texts) { t in textView(t) }
+                        let rows = TextLayout.laneRows(document.project.texts)
+                        let stacked = rows.values.contains(1)
+                        ForEach(document.project.texts) { t in
+                            // Concurrent texts take two sub-rows so neither bar covers the other; alone, a bar sits centred.
+                            textView(t).offset(y: stacked ? (rows[t.id] == 1 ? 16.5 : -16.5) : 0)
+                        }
                     }
                     .frame(height: rowHeight)
                     .uiFrame("lane.Text")

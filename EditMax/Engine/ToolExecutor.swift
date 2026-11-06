@@ -34,6 +34,8 @@ struct ToolExecutor {
         var tracks: [TrackInfo], clips: [ClipInfo], texts: [TextInfo], markers: [MarkerInfo], historyCount: Int
         var playhead: Double?
         var useProxies: Bool
+        /// Pairs of texts that cover each other at some moment ("'A' and 'B' overlap 1.4–4.4 s"); absent when none do.
+        var textOverlaps: [String]?
     }
 
     func inspectTimeline() -> TimelineSummary {
@@ -61,10 +63,16 @@ struct ToolExecutor {
             clips: clips.sorted { ($0.track, $0.start) < ($1.track, $1.start) },
             texts: p.texts.map { .init(id: $0.id.short, text: $0.text, start: r($0.start), end: r($0.end), preset: $0.preset, caption: $0.group?.short) },
             markers: p.markers.map { .init(id: $0.id.short, time: r($0.time), name: $0.name, color: $0.colorHex) },
-            historyCount: p.history.count, playhead: UIRegistry.shared.playheads[document.id]?().map(r), useProxies: p.settings.useProxies)
+            historyCount: p.history.count, playhead: UIRegistry.shared.playheads[document.id]?().map(r), useProxies: p.settings.useProxies,
+            textOverlaps: Self.textOverlaps(p))
     }
 
     struct AssetInfo: Codable { var id: String, name: String, kind: String, duration: Double, width: Int?, height: Int?, path: String }
+    static func textOverlaps(_ p: Project) -> [String]? {
+        let c = TextLayout.collisions(in: p.texts, canvas: p.settings.canvas)
+        return c.isEmpty ? nil : c.map { "'\($0.a.text.prefix(24))' and '\($0.b.text.prefix(24))' overlap \(String(format: "%.1f", $0.start))–\(String(format: "%.1f", $0.end)) s" }
+    }
+
     func listAssets() -> [AssetInfo] {
         project.assets.map { .init(id: $0.id.short, name: $0.name, kind: $0.kind.rawValue, duration: r($0.duration), width: $0.width, height: $0.height, path: $0.path) }
     }
@@ -177,6 +185,9 @@ struct ToolExecutor {
         document.apply("Add text \"\(text.prefix(20))\"", origin: origin) { p in
             t = p.addText(text, start: max(0, start), duration: duration, fontSize: fontSize ?? style.fontSize, colorHex: colorHex ?? style.color, x: x ?? 0.5, y: y ?? style.y)
             if preset != nil { p.texts[p.texts.count - 1].preset = style.name; t = p.texts[p.texts.count - 1] }
+            // Never on top of another text: a title added where a caption or another title already sits moves to the
+            // nearest free band (the UI and the tool result both say so).
+            if let clear = TextLayout.clearY(for: t, among: p.texts, canvas: p.settings.canvas) { p.texts[p.texts.count - 1].y = clear; t = p.texts[p.texts.count - 1] }
         }
         return t
     }

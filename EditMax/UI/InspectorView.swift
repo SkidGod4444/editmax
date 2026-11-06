@@ -830,6 +830,22 @@ struct TextInspector: View {
                         Slider(value: binding(\.y, "Text vertical"), in: 0...1).controlSize(.small).pointer().uiFrame("inspector.text.y")
                         Text("\(Int(text.y * 100))%").inspectorValue()
                     }
+                    // Two texts on screen together must not cover each other: name the other one and offer the fix.
+                    let blockers = TextLayout.blockers(of: text, among: document.project.texts, canvas: document.project.settings.canvas)
+                    if let other = blockers.first {
+                        HStack(spacing: 8) {
+                            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                            Text("Covers \u{201C}\(other.text.prefix(24))\u{201D} \(Timecode.string(max(text.start, other.start)))–\(Timecode.string(min(text.end, other.end)))")
+                                .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
+                            Spacer()
+                            Button("Move clear") {
+                                if let y = TextLayout.clearY(for: text, among: document.project.texts, canvas: document.project.settings.canvas) {
+                                    document.apply("Move text clear", origin: .user) { p in if let i = p.texts.firstIndex(where: { $0.id == text.id }) { p.texts[i].y = y } }
+                                }
+                            }.controlSize(.small).pointer().uiFrame("inspector.text.moveClear")
+                                .disabled(TextLayout.clearY(for: text, among: document.project.texts, canvas: document.project.settings.canvas) == nil)
+                        }
+                    }
                 }
                 InspectorCard("Timing") {
                     InspectorValueRow("Start", Timecode.string(text.start))

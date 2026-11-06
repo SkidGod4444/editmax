@@ -10,6 +10,7 @@ struct ProjectSettings: Codable, Equatable {
     var useProxies: Bool = false
 
     init(width: Int = 1920, height: Int = 1080, fps: Double = 30, useProxies: Bool = false) { self.width = width; self.height = height; self.fps = fps; self.useProxies = useProxies }
+    var canvas: CGSize { CGSize(width: width, height: height) }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         width = try c.decodeIfPresent(Int.self, forKey: .width) ?? 1920

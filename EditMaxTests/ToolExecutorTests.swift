@@ -106,3 +106,42 @@ final class ToolExecutorTests: XCTestCase {
         XCTAssertThrowsError(try x.applyTemplate("No such template"))
     }
 }
+
+/// Texts never sit on top of each other: the frame nudges a new one clear, the summary names overlaps, the lane stacks.
+@MainActor
+final class TextLayoutTests: XCTestCase {
+    private var doc: EditMaxDocument!
+    private var x: ToolExecutor { ToolExecutor(document: doc, origin: .agent) }
+    override func setUp() async throws { doc = EditMaxDocument() }
+
+    func testATitleAddedOverAnotherMovesToAFreeBand() throws {
+        let a = try x.addText("GOLDEN HOUR", start: 0, duration: 4, fontSize: 96, colorHex: nil, x: nil, y: 0.5)
+        let b = try x.addText("City at dusk", start: 1, duration: 3, fontSize: 34, colorHex: nil, x: nil, y: 0.5)
+        XCTAssertEqual(a.y, 0.5)
+        XCTAssertNotEqual(b.y, 0.5, "the second text is moved off the first")
+        XCTAssertGreaterThan(b.y, 0.5, "below first")
+        XCTAssertFalse(TextLayout.collide(a, b, canvas: doc.project.settings.canvas))
+        XCTAssertNil(x.inspectTimeline().textOverlaps)
+    }
+
+    func testTextsAtDifferentTimesKeepTheirPlace() throws {
+        _ = try x.addText("One", start: 0, duration: 2, fontSize: nil, colorHex: nil, x: nil, y: 0.5)
+        let b = try x.addText("Two", start: 2, duration: 2, fontSize: nil, colorHex: nil, x: nil, y: 0.5)
+        XCTAssertEqual(b.y, 0.5)
+    }
+
+    func testInspectTimelineReportsOverlapsMadeByHand() throws {
+        doc.project.texts = [TextOverlay(text: "A", start: 0, duration: 4, y: 0.5), TextOverlay(text: "B", start: 1, duration: 4, y: 0.5)]
+        let o = x.inspectTimeline().textOverlaps
+        XCTAssertEqual(o?.count, 1)
+        XCTAssertTrue(o![0].contains("'A' and 'B'"))
+        XCTAssertTrue(o![0].contains("1.0–4.0"))
+    }
+
+    func testLaneRowsStackOnlyConcurrentTexts() {
+        let a = TextOverlay(text: "a", start: 0, duration: 4), b = TextOverlay(text: "b", start: 1, duration: 2), c = TextOverlay(text: "c", start: 5, duration: 1)
+        let rows = TextLayout.laneRows([a, b, c])
+        XCTAssertEqual(rows[a.id], 0); XCTAssertEqual(rows[b.id], 1); XCTAssertEqual(rows[c.id], 0, "after both ended, back to the first row")
+        XCTAssertEqual(Set(TextLayout.laneRows([a, c]).values), [0], "nothing concurrent, nothing stacked")
+    }
+}

@@ -314,8 +314,10 @@ enum EditMaxTools {
         case "close_gaps":
             try x.rippleTrack(try req("track")); return message("Gaps closed")
         case "add_text":
+            let askedY = try d("y") ?? CaptionPresets.resolve(s("preset")).y
             let t = try x.addText(try req("text"), start: try reqNum("start"), duration: try reqNum("duration"), fontSize: d("font_size"), colorHex: s("color"), x: d("x"), y: d("y"), preset: s("preset"))
-            return message("Added text \(t.id.short) from \(t.start)s to \(t.end)s")
+            let moved = abs(t.y - askedY) > 0.001 ? " (moved to y \(String(format: "%.2f", t.y)) so it does not cover another text on screen at the same time)" : ""
+            return message("Added text \(t.id.short) from \(t.start)s to \(t.end)s\(moved)")
         case "get_transcript":
             return try payload(try await x.getTranscript(asset: s("asset"), clip: s("clip"), language: s("language")))
         case "add_captions":

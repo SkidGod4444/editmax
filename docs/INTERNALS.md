@@ -43,6 +43,10 @@ within 1.5 s (a slider drag) into one undo step and one version. Analysis caches
   later text and markers, so a separate voice track stays in sync.
 - Transcripts are stored per asset and mapped through each clip's source offset and speed, so they stay valid after
   any ripple.
+- Texts never cover each other. `TextLayout` measures a text's box in the frame with the rasterizer's font and
+  wrapping; a text added where another is already on screen moves to the nearest free band, below on a tie (the tool
+  result and the inspector say so), `inspect_timeline` lists `textOverlaps` made by hand, the text inspector offers
+  "Move clear", and the Text lane stacks concurrent bars into two sub-rows.
 
 ## Picture and sound
 

@@ -31,7 +31,7 @@ struct ToolExecutor {
         }
         struct KeyframeInfo: Codable { var time: Double, value: Double, ease: String }
         struct MarkerInfo: Codable { var id: String, time: Double, name: String, color: String }
-        struct TextInfo: Codable { var id: String, text: String, start: Double, end: Double, preset: String?, caption: String?; var animation: TextAnimation? = nil, lowerThird: LowerThird? = nil }
+        struct TextInfo: Codable { var id: String, text: String, start: Double, end: Double, preset: String?, caption: String?; var animation: TextAnimation? = nil, lowerThird: LowerThird? = nil; var font: String? = nil, face: String? = nil }   // font: the chosen family (absent = the preset's font); face: its PostScript name
         struct TrackInfo: Codable { var id: String, name: String, kind: String, clipCount: Int, muted: Bool, hidden: Bool; var duckUnder: String?; var duckLevel: Double? }
         var project: String, projectID: String, width: Int, height: Int, fps: Double, duration: Double
         var tracks: [TrackInfo], clips: [ClipInfo], texts: [TextInfo], markers: [MarkerInfo], historyCount: Int
@@ -67,7 +67,7 @@ struct ToolExecutor {
             tracks: p.tracks.map { t in .init(id: t.id.short, name: t.name, kind: t.kind.rawValue, clipCount: t.clips.count, muted: t.isMuted, hidden: t.isHidden,
                                               duckUnder: t.duck.flatMap { p.track($0.sourceTrackID)?.name }, duckLevel: t.duck?.level) },
             clips: clips.sorted { ($0.track, $0.start) < ($1.track, $1.start) },
-            texts: p.texts.map { .init(id: $0.id.short, text: $0.text, start: r($0.start), end: r($0.end), preset: $0.preset, caption: $0.group?.short) },
+            texts: p.texts.map { .init(id: $0.id.short, text: $0.text, start: r($0.start), end: r($0.end), preset: $0.preset, caption: $0.group?.short, font: $0.fontFamily, face: $0.fontName) },
             markers: p.markers.map { .init(id: $0.id.short, time: r($0.time), name: $0.name, color: $0.colorHex) },
             historyCount: p.history.count, playhead: UIRegistry.shared.playheads[document.id]?().map(r), useProxies: p.settings.useProxies,
             textOverlaps: Self.textOverlaps(p))
@@ -101,6 +101,8 @@ struct ToolExecutor {
         if !new.isEmpty {
             document.apply("Import \(new.count) file\(new.count == 1 ? "" : "s")", origin: origin) { $0.assets.append(contentsOf: new) }
         }
+        // Everything imported into any project is in the Assets library too (referenced where it is, as the project does).
+        if !imported.isEmpty { document.noteLibraryUse(imported) }
         if !failures.isEmpty, imported.isEmpty { throw EditError.invalid(failures.joined(separator: "; ")) }
         return imported.map { a in .init(id: a.id.short, name: a.name, kind: a.kind.rawValue, duration: r(a.duration), width: a.width, height: a.height, path: a.path) }
     }
@@ -187,18 +189,21 @@ struct ToolExecutor {
     // MARK: Text
 
     @discardableResult
-    func addText(_ text: String, start: Double, duration: Double, fontSize: Double?, colorHex: String?, x: Double?, y: Double?, preset: String? = nil) throws -> TextOverlay {
+    func addText(_ text: String, start: Double, duration: Double, fontSize: Double?, colorHex: String?, x: Double?, y: Double?, preset: String? = nil, font: FontChoice? = nil) throws -> TextOverlay {
         guard duration > 0 else { throw EditError.invalid("duration must be > 0") }
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw EditError.invalid("text is empty") }
         let style = try preset.map { try CaptionPresets.resolve($0) } ?? CaptionPresets.title
+        let chosen = try font.map { try face(for: $0, preset: style.name) }   // FontTools.swift
         var t: TextOverlay!
         document.apply("Add text \"\(text.prefix(20))\"", origin: origin) { p in
             t = p.addText(text, start: max(0, start), duration: duration, fontSize: fontSize ?? style.fontSize, colorHex: colorHex ?? style.color, x: x ?? 0.5, y: y ?? style.y)
             if preset != nil { p.texts[p.texts.count - 1].preset = style.name; t = p.texts[p.texts.count - 1] }
+            if let chosen { p.texts[p.texts.count - 1].fontName = chosen.name; p.texts[p.texts.count - 1].fontFamily = chosen.family; t = p.texts[p.texts.count - 1] }
             // Never on top of another text: a title added where a caption or another title already sits moves to the
             // nearest free band (the UI and the tool result both say so).
             if let clear = TextLayout.clearY(for: t, among: p.texts, canvas: p.settings.canvas) { p.texts[p.texts.count - 1].y = clear; t = p.texts[p.texts.count - 1] }
         }
+        if let family = chosen?.family { FontLibrary.shared.noteUsed(family) }
         return t
     }
 

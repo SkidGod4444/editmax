@@ -19,7 +19,7 @@ final class DocumentRegistry: ObservableObject {
         documents.removeAll { $0.id == doc.id }
         if activeID == doc.id { activeID = documents.last?.id }
         // The last project window closed: back to Home, unless the app is on its way out.
-        if documents.isEmpty {
+        if documents.isEmpty, !AppDelegate.isTesting {   // tests register documents too; Home never shows for them
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                 if self.documents.isEmpty, !AppDelegate.quitting, !HomeWindow.shared.isVisible { HomeWindow.shared.show() }
             }

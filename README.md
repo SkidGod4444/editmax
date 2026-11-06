@@ -66,7 +66,13 @@ The current download (0.1.1) does not have these yet. They are on `main` and shi
 - **Follow the agent:** while an agent edits, the window shows where: the clip is selected, the playhead moves onto
   it, the inspector scrolls to the setting that changes and the mixer opens for a mix change. It waits while you use
   the mouse or keyboard, and can be turned off in Settings.
-- 105 MCP tools (63 in 0.1.1).
+- **Assets:** everything you have imported or added, in one place on the Home screen, with what each file is used in.
+  A Library tab in the editor adds any of it to the project. [docs/assets.md](docs/assets.md)
+- **Notch drawer:** drag a file to the notch at the top of the screen to add it to Assets. New files in Downloads
+  show up there too, ready to add. [docs/assets.md](docs/assets.md)
+- **Fonts:** all of Google Fonts, sorted by trending or popular, plus your own .ttf and .otf files. Pick a font and
+  weight for any title; a project that uses a Google font fetches it on another Mac. [docs/fonts.md](docs/fonts.md)
+- 111 MCP tools (63 in 0.1.1).
 
 ## Highlights
 

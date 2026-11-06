@@ -788,6 +788,7 @@ struct TextInspector: View {
     @EnvironmentObject var player: PlayerController
     let text: TextOverlay
     @State private var draft = ""
+    @ObservedObject private var fonts = FontLibrary.shared   // a font arriving or going redraws the Font rows
 
     var body: some View {
         RevealScroller { ScrollView {
@@ -795,6 +796,12 @@ struct TextInspector: View {
                 InspectorCard(text.isCaption ? "Caption" : "Title", footer: text.isCaption ? "Part of caption group \(text.group!.short). Style changes apply to this line only." : nil) {
                     TextField("Text", text: $draft, axis: .vertical).lineLimit(1...4).textFieldStyle(.roundedBorder)
                         .onSubmit { commitText() }
+                    // Font, its weights, and a warning when the chosen font is not on this Mac (FontBrowser.swift).
+                    TextFontRow(document: document, text: text)
+                    let faces = text.fontIsMissing ? [] : text.fontFamily.map { TextFont.faces(family: $0) } ?? []
+                    if faces.count > 1 { TextFaceRow(document: document, text: text, faces: faces) }
+                    let status = fonts.status(of: text)
+                    if status != .ok { TextFontStatusRow(status: status) }
                     HStack(spacing: 8) {
                         Button("Apply text") { commitText() }.pointer().disabled(draft == text.text).uiFrame("inspector.text.apply")
                         Button("Show", systemImage: "eye") { player.pause(); player.seek(to: text.start + 0.05) }.help("Move the playhead to this text").pointer().uiFrame("inspector.text.show")

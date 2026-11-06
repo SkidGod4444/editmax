@@ -9,7 +9,7 @@ enum TextLayout {
     static func box(_ t: TextOverlay, canvas: CGSize) -> CGRect {
         if let s = TitleRasterizer.measure(t, canvas: canvas) { return CGRect(x: t.x - s.width / canvas.width / 2, y: t.y - s.height / canvas.height / 2, width: s.width / canvas.width, height: s.height / canvas.height) }   // lower thirds
         let style = CaptionPresets.style(t.preset)
-        let font = NSFont(name: style.fontName, size: t.fontSize) ?? NSFont.boldSystemFont(ofSize: t.fontSize)
+        let font = t.font(style: style, size: t.fontSize)
         let maxWidth = (canvas.width * 0.9).rounded()
         let str = NSAttributedString(string: style.uppercase ? t.text.uppercased() : t.text, attributes: [.font: font])
         let used = str.boundingRect(with: NSSize(width: maxWidth, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin])

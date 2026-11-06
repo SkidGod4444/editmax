@@ -19,7 +19,8 @@ struct PreviewView: NSViewRepresentable {
 
 /// The preview filling the screen: a borderless black window showing the same player (so play, scrub and edits stay
 /// live), on the screen the editor is on, with a transport bar (play/pause, scrubber, time, leave) that hides while the
-/// mouse rests. Esc, double-click or the preview button leaves; the editor's keys (space, J/K/L, arrows) still work.
+/// mouse rests. Esc, double-click or the preview button leaves, and so does any other EditMax window coming forward (a
+/// dialog, Home, Settings), which would otherwise open behind it; the editor's keys (space, J/K/L, arrows) still work.
 @MainActor final class FullScreenPreview {
     static let shared = FullScreenPreview()
     private var window: FullScreenWindow?
@@ -34,7 +35,7 @@ struct PreviewView: NSViewRepresentable {
         let player = controller.player
         guard window == nil, let screen = NSApp.keyWindow?.screen ?? NSScreen.main else { return }
         let w = FullScreenWindow(contentRect: screen.frame, styleMask: [.borderless], backing: .buffered, defer: false, screen: screen)
-        w.level = NSWindow.Level(rawValue: Int(CGShieldingWindowLevel()))   // above the menu bar and the Dock
+        w.level = Self.level
         w.backgroundColor = .black
         w.isReleasedWhenClosed = false
         w.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
@@ -54,11 +55,30 @@ struct PreviewView: NSViewRepresentable {
         window = w
         w.makeKeyAndOrderFront(nil)
         NSCursor.setHiddenUntilMouseMoves(true)
+        // Another EditMax window coming forward (a Save or Open panel, an alert, Home, Settings, a new project: a menu
+        // shortcut still works here) ends full screen, so it never opens hidden behind the picture with the app
+        // waiting on it. Delivered at once, inside a modal panel's own run loop too.
+        keyObserver = NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: nil) { [weak self] n in
+            guard let other = n.object as? NSWindow else { return }
+            MainActor.assumeIsolated { self?.otherWindowBecameKey(other) }
+        }
+    }
+
+    /// Above the menu bar, the Dock, the menu bar's icons and the notch drawer; below menus and tooltips, so the
+    /// transport bar's tooltips show. (It was the screen-shielding level, over everything including those.)
+    static let level = NSWindow.Level(rawValue: NSWindow.Level.mainMenu.rawValue + 4)
+
+    private var keyObserver: NSObjectProtocol?
+
+    func otherWindowBecameKey(_ other: NSWindow) {
+        guard let w = window, other !== w, !(other is NotchDrawerPanel) else { return }
+        close()
     }
 
     func close() {
         guard let w = window else { return }
         window = nil
+        if let o = keyObserver { NotificationCenter.default.removeObserver(o); keyObserver = nil }
         w.orderOut(nil)
         w.contentView = nil
     }

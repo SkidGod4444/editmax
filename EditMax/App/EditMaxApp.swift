@@ -6,7 +6,12 @@ struct EditMaxApp: App {
     @StateObject private var mcp = MCPService.shared
     /// The EditMax icon in the menu bar (Settings ▸ General can hide it).
     @AppStorage("showMenuBarIcon") private var showMenuBarIcon = true
-    init() { if !AppDelegate.isTesting { MCPService.shared.start(); CodemaxInstaller.shared.ensureInstalled(); CodemaxUpdater.shared.start(); AppUpdater.shared.start() } }
+    init() {
+        guard !AppDelegate.isTesting else { return }
+        // Downloaded and added fonts first, before any document window restores and renders (FontLibrary.swift).
+        FontLibrary.registerInstalledFonts()
+        MCPService.shared.start(); CodemaxInstaller.shared.ensureInstalled(); CodemaxUpdater.shared.start(); AppUpdater.shared.start()
+    }
 
     var body: some Scene {
         DocumentGroup(newDocument: { EditMaxDocument() }) { file in
@@ -93,6 +98,8 @@ struct EditorRootView: View {
         }
         .frame(minWidth: 1000, minHeight: 640)
         .onAppear { document.fileURL = fileURL; DocumentRegistry.shared.register(document); player.bind(to: document); if state.chat == nil { state.chat = ChatSession(document: document) }
+            FontLibrary.shared.ensureFonts(for: document.project)   // a Google font this Mac lacks downloads now; the picture redraws when it lands
+            document.noteLibraryUse()   // the Assets library's "Used in" is right from the moment a project opens
             // Debug affordances (used by automated checks): EDITMAX_INSPECTOR_TAB=chat|agents|history opens that tab;
             // EDITMAX_CHAT_AUTOSEND="..." sends a first chat message on launch.
             if let t = ProcessInfo.processInfo.environment["EDITMAX_INSPECTOR_TAB"], let tab = EditorState.InspectorTab.allCases.first(where: { $0.rawValue.lowercased() == t.lowercased() }) {
@@ -102,7 +109,12 @@ struct EditorRootView: View {
                 state.inspectorTab = .chat; state.chat?.input = t; state.chat?.send()
             }
         }
-        .onChange(of: fileURL) { _, new in document.fileURL = new }
+        .onChange(of: fileURL) { old, new in
+            document.fileURL = new
+            // Renamed or moved: "Used in" names the project under its new file.
+            if let old, old.standardizedFileURL != new?.standardizedFileURL { AssetLibrary.shared.forgetProject(AssetLibrary.projectID(for: old)) }
+            document.noteLibraryUse()
+        }
         .onDisappear { DocumentRegistry.shared.unregister(document); AgentFollow.shared.unregister(document.id); player.pause() }
         .background(WindowFocusObserver { DocumentRegistry.shared.activate(document) })
         .modifier(EditingSheets(document: document))   // relink on open, consolidate (RelinkSheet.swift)
@@ -277,9 +289,7 @@ struct EditorRootView: View {
             let name = (panel.nameFieldStringValue as NSString).deletingPathExtension
             panel.nameFieldStringValue = (name.isEmpty ? document.displayName : name) + "." + preset.fileExtension
         }
-        let host = NSHostingView(rootView: ExportFormatPicker(box: format))
-        host.frame = NSRect(x: 0, y: 0, width: 420, height: 48)
-        panel.accessoryView = host
+        panel.accessoryView = PanelAccessory.popUp(label: "Format:", items: ExportFormatBox.items, selected: format.preset) { format.preset = $0 }
         guard panel.runModal() == .OK, let url = panel.url else { return }
         state.isExporting = true
         state.exportStatus = "Exporting…"
@@ -373,22 +383,17 @@ extension Notification.Name {
 }
 
 /// The format choice in the export save panel. `onChange` lets the panel follow it (file type, name extension).
-final class ExportFormatBox: ObservableObject {
-    @Published var preset: ExportService.Preset = .high { didSet { onChange?(preset) } }
+/// The export format chosen in the Save panel (`PanelAccessory`); the panel's name field follows it.
+final class ExportFormatBox {
+    var preset: ExportService.Preset = .high { didSet { onChange?(preset) } }
     var onChange: ((ExportService.Preset) -> Void)?
-}
-struct ExportFormatPicker: View {
-    @ObservedObject var box: ExportFormatBox
-    var body: some View {
-        Picker("Format", selection: $box.preset) {
-            Text("H.264, 8-bit (plays everywhere)").tag(ExportService.Preset.high)
-            Text("HEVC 10-bit, Main 10 (for grading)").tag(ExportService.Preset.hevc10)
-            Divider()
-            Text("ProRes 422 HQ (edit and grade in Resolve, Final Cut)").tag(ExportService.Preset.prores422hq)
-            Text("ProRes 422 (smaller)").tag(ExportService.Preset.prores422)
-            Text("ProRes 4444 (highest quality)").tag(ExportService.Preset.prores4444)
-        }
-        .pickerStyle(.menu).pointer().uiFrame("export.format")
-        .padding(.horizontal, 12).padding(.vertical, 8)
-    }
+
+    static let items: [PanelAccessory.Item<ExportService.Preset>?] = [
+        .init(title: "H.264, 8-bit (plays everywhere)", value: .high),
+        .init(title: "HEVC 10-bit, Main 10 (for grading)", value: .hevc10),
+        nil,
+        .init(title: "ProRes 422 HQ (edit and grade in Resolve, Final Cut)", value: .prores422hq),
+        .init(title: "ProRes 422 (smaller)", value: .prores422),
+        .init(title: "ProRes 4444 (highest quality)", value: .prores4444),
+    ]
 }

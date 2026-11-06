@@ -58,9 +58,7 @@ struct DeliveryActions {
         panel.message = "Choose a folder: every built-in template is rendered into it, named \(document.displayName)-<template>.mp4 (.mov for ProRes)."
         panel.prompt = "Export Here"
         let format = ExportFormatBox()
-        let host = NSHostingView(rootView: ExportFormatPicker(box: format))
-        host.frame = NSRect(x: 0, y: 0, width: 420, height: 48)
-        panel.accessoryView = host
+        panel.accessoryView = PanelAccessory.popUp(label: "Format:", items: ExportFormatBox.items, selected: format.preset) { format.preset = $0 }
         panel.isAccessoryViewDisclosed = true
         guard panel.runModal() == .OK, let dir = panel.url else { return }
         let hasMarkers = !document.project.markers.isEmpty
@@ -106,9 +104,8 @@ struct DeliveryActions {
             let name = (panel.nameFieldStringValue as NSString).deletingPathExtension
             panel.nameFieldStringValue = (name.isEmpty ? document.displayName : name) + "." + f.fileExtension
         }
-        let host = NSHostingView(rootView: TimelineFormatPicker(box: box))
-        host.frame = NSRect(x: 0, y: 0, width: 460, height: 48)
-        panel.accessoryView = host
+        panel.accessoryView = PanelAccessory.popUp(label: "Format:", items: Interchange.Format.allCases.map { .init(title: $0.title, value: $0) },
+                                                   selected: box.format) { box.format = $0 }
         guard panel.runModal() == .OK, let url = panel.url else { return }
         state.isExporting = true
         state.exportStatus = "Exporting timeline…"
@@ -146,18 +143,8 @@ struct DeliveryActions {
     }
 }
 
-/// The format choice in the Export Timeline panel.
-final class TimelineFormatBox: ObservableObject {
-    @Published var format: Interchange.Format = .fcpxml { didSet { onChange?(format) } }
+/// The timeline format chosen in the Save panel (`PanelAccessory`); the panel's name field follows it.
+final class TimelineFormatBox {
+    var format: Interchange.Format = .fcpxml { didSet { onChange?(format) } }
     var onChange: ((Interchange.Format) -> Void)?
-}
-struct TimelineFormatPicker: View {
-    @ObservedObject var box: TimelineFormatBox
-    var body: some View {
-        Picker("Format", selection: $box.format) {
-            ForEach(Interchange.Format.allCases, id: \.self) { Text($0.title).tag($0) }
-        }
-        .pickerStyle(.menu).pointer().uiFrame("export.timelineFormat")
-        .padding(.horizontal, 12).padding(.vertical, 8)
-    }
 }

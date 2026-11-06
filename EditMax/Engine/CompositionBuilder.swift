@@ -310,7 +310,7 @@ enum OverlayLayerBuilder {
     /// The one place text is rasterized: preview, export and capture_frame all come through here. Returns the CGImage and its size in render pixels.
     static func renderText(_ t: TextOverlay, canvas: CGSize, scale: CGFloat = 1) -> (CGImage, CGSize)? {
         let style = CaptionPresets.style(t.preset)
-        let font = NSFont(name: style.fontName, size: t.fontSize * scale) ?? NSFont.boldSystemFont(ofSize: t.fontSize * scale)
+        let font = t.font(style: style, size: t.fontSize * scale)   // the chosen font, else the preset's (TextFont.swift)
         let para = NSMutableParagraphStyle(); para.alignment = .center
         var attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor(cgColor: cgColor(hex: t.colorHex)) ?? .white, .paragraphStyle: para]
         if style.shadow {

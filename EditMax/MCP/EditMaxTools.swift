@@ -25,6 +25,11 @@ enum EditMaxTools {
              inputSchema: schema(["project": projectArg]), annotations: .init(readOnlyHint: true)),
         Tool(name: "import_media", description: "Import video, audio or image files from absolute paths on this Mac into the project's asset list. Files are referenced, not copied.",
              inputSchema: schema(["paths": strs("Absolute file paths (~ is expanded)"), "project": projectArg], required: ["paths"])),
+        Tool(name: "list_library", description: "The user's Assets library: every file brought into EditMax across all projects (imports, files dropped on the notch drawer or the Assets section, added downloads, fonts), newest first. Each item has id, name, path, kind (video, audio, image, font), duration (seconds, none for images and fonts), used_in (names of the projects that use it) and missing true when the file is not at its path. Works with no project open; pass a path to import_media to use an item in a project.",
+             inputSchema: schema(["kind": str("video, audio, image or font (default: all)"), "search": str("Only names containing this, any case"), "limit": int("Max items (default 100)")]),
+             annotations: .init(readOnlyHint: true)),
+        Tool(name: "add_to_library", description: "Add files on this Mac to the user's Assets library without putting them in a project. By default the files are referenced where they are; copy true copies them into EditMax's Assets folder first (for files in Downloads or other places that get cleaned). A file already in the library is returned, not added twice. Returns the items and any files that were skipped and why.",
+             inputSchema: schema(["paths": strs("Absolute file paths (~ is expanded)"), "copy": .object(["type": "boolean", "description": "Copy into EditMax's Assets folder (default false)"])], required: ["paths"])),
         Tool(name: "insert_clip", description: "Place an asset on the timeline as a new clip. By default it is appended after the last clip on the first matching track.",
              inputSchema: schema(["asset": str("Asset id prefix or file name"), "track": str("Track id or name such as V1 or A1 (optional)"),
                                   "at": num("Timeline start in seconds (optional; default = end of track)"),
@@ -45,6 +50,7 @@ enum EditMaxTools {
         Tool(name: "add_text", description: "Add a text overlay (title, lower third, one caption) for a time range.",
              inputSchema: schema(["text": str("The text to show"), "start": num("Start in seconds"), "duration": num("Seconds on screen"),
                                   "preset": str("Look: title (default), subtitle, boxed, bold, outline, minimal"),
+                                  "font": str("Font family (any case) or PostScript name, from list_fonts; a Google font not on this Mac is downloaded first. Default: the preset's font"),
                                   "font_size": num("Points at project resolution (default from the preset)"), "color": str("Hex color like #FFFFFF"),
                                   "x": num("Horizontal center 0-1 (default 0.5)"), "y": num("Vertical center 0-1, 0 = top (default from the preset)"), "project": projectArg], required: ["text", "start", "duration"])),
         Tool(name: "get_transcript", description: "Speech in an asset or clip as timed words (on-device recognition, cached per asset; the first call on a long file takes a while). Clip times are timeline seconds, asset times are source seconds.",
@@ -322,6 +328,19 @@ enum EditMaxTools {
         Tool(name: "capture_matte", description: "The matte of a grade layer's mask at a timeline time, as a grayscale PNG: white where the layer applies, black where it does not, gray in between. Rendered from the clip on its own (its picture, transform and grade, nothing else). Returns the coverage (share of the frame the layer applies to) and a note when the matte is empty, for example when Vision finds no person in the frame.",
              inputSchema: schema(["clip": str("Clip id prefix or name"), "layer": str("Layer name or id prefix"), "seconds": num("Timeline time inside the clip (default its middle)"),
                                   "max_width": int("Image width, 160 to 1920 (default 640)"), "project": projectArg], required: ["clip", "layer"]), annotations: .init(readOnlyHint: true)),
+        // Fonts (FontLibrary.swift, FontTools.swift)
+        Tool(name: "list_fonts", description: "Fonts for titles: the families on this Mac, fonts the user added, and the Google Fonts catalogue (about 1,900 free families, downloaded on first use). Filter by search (part of the name), category and source; sort by trending (Google's trending rank, which favours fast-growing and often new families), popular (Google's use rank), newest (date added to Google Fonts) or name. Installed families list their faces (PostScript names). Use a family name with add_text font or set_text_style font.",
+             inputSchema: schema(["search": str("Part of a family name, any case"), "category": str("sans-serif, serif, display, handwriting or monospace"),
+                                  "sort": str("trending (default), popular, newest or name"), "source": str("installed (everything on this Mac), google, custom (added by the user) or system; default all"),
+                                  "limit": int("Max families, 1 to 500 (default 50)")]), annotations: .init(readOnlyHint: true)),
+        Tool(name: "install_font", description: "Download a Google Fonts family to this Mac (TTF files from Google, free licences) and make it available to every project, preview and export. By default every style the family has; weights narrows it (e.g. [\"400\", \"700\", \"400i\"], i = italic). Styles already here are not fetched again. Returns the faces (PostScript names) now on this Mac.",
+             inputSchema: schema(["family": str("Google Fonts family name, any case (list_fonts source google)"),
+                                  "weights": .object(["type": "array", "items": .object(["type": "string"]), "description": "Styles to get: 400, 700, \"400i\" (italic), regular, bold, italic. Default: all"])], required: ["family"])),
+        Tool(name: "add_font_files", description: "Add font files from this Mac (.ttf, .otf, .ttc, .otc, .woff, .woff2) to EditMax: they are copied into EditMax's fonts folder, available to every project at once and on every launch, and listed under My fonts. Returns the families and faces added and any file that could not be read.",
+             inputSchema: schema(["paths": strs("Absolute paths of font files (~ is expanded)")], required: ["paths"])),
+        Tool(name: "set_text_style", description: "Change a text overlay's font, size and color in one undoable edit. font is a family (any case) or a PostScript name from list_fonts; a Google family not on this Mac is downloaded first; a family picks the face nearest the text's preset weight (Title → bold); font \"default\" goes back to the preset's font. Works on titles, captions and lower thirds (the role line uses a lighter weight of the same family).",
+             inputSchema: schema(["text": str("Text overlay id prefix from inspect_timeline"), "font": str("Family or PostScript name, or default"), "font_size": num("Points at project resolution, 8 to 500"),
+                                  "color": str("Hex color like #FFFFFF"), "project": projectArg], required: ["text"])),
     ]
 
     /// Tools whose results carry what is said or shown in the footage.
@@ -385,6 +404,20 @@ enum EditMaxTools {
 
     struct Payload { var text: String; var value: Value?; var image: Data? = nil }
 
+    /// One Assets library item as list_library and add_to_library return it.
+    struct LibraryInfo: Codable {
+        var id: String, name: String, path: String, kind: String
+        var duration: Double?
+        var used_in: [String]
+        var missing: Bool?
+        @MainActor init(_ item: LibraryItem) {
+            id = item.id.short; name = item.name; path = item.path; kind = item.kind.rawValue
+            duration = item.duration.map { ($0 * 1000).rounded() / 1000 }
+            used_in = item.usedIn.values.sorted()
+            missing = item.exists ? nil : true
+        }
+    }
+
     private static let encoder: JSONEncoder = { let e = JSONEncoder(); e.outputFormatting = [.prettyPrinted, .sortedKeys]; e.dateEncodingStrategy = .iso8601; return e }()
     private static func encodeText<T: Encodable>(_ v: T) throws -> String { String(decoding: try encoder.encode(v), as: UTF8.self) }
     private static func payload<T: Codable>(_ v: T) throws -> Payload { Payload(text: try encodeText(v), value: try? Value(v)) }
@@ -420,6 +453,25 @@ enum EditMaxTools {
             let reg = DocumentRegistry.shared
             return try payload(reg.documents.map { P(id: $0.id.short, name: $0.displayName, active: $0.id == reg.activeID, duration: $0.project.duration, clips: $0.project.allClips.count) })
         }
+        // The Assets library spans projects, so it needs none open.
+        switch name {
+        case "list_library":
+            var kind: LibraryItem.Kind?
+            if let k = s("kind")?.lowercased(), !k.isEmpty, k != "all" {
+                guard let v = LibraryItem.Kind(rawValue: k == "images" ? "image" : k == "fonts" ? "font" : k) else { throw MCPError.invalidParams("kind must be video, audio, image or font") }
+                kind = v
+            }
+            let items = AssetLibrary.shared.items(kind: kind, search: s("search")).prefix(max(1, i("limit") ?? 100))
+            return try payload(items.map(LibraryInfo.init))
+        case "add_to_library":
+            let paths = list("paths"); guard !paths.isEmpty else { throw MCPError.invalidParams("'paths' must list at least one file") }
+            let urls = paths.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) }
+            let r = await AssetLibrary.shared.add(urls: urls, source: .upload, copy: b("copy"))
+            if r.items.isEmpty, !r.failures.isEmpty { throw EditError.invalid(r.failures.joined(separator: "; ")) }
+            struct Added: Codable { var items: [LibraryInfo]; var skipped: [String]? }
+            return try payload(Added(items: r.items.map(LibraryInfo.init), skipped: r.failures.isEmpty ? nil : r.failures))
+        default: break
+        }
         // The UI driver works on whichever EditMax window is up, Home included, so it needs no open project.
         switch name {
         case "ui_layout":
@@ -451,6 +503,17 @@ enum EditMaxTools {
         case "ui_screenshot":
             let shot = try await UIDriver.screenshot(maxWidth: i("max_width") ?? 1400)
             return Payload(text: "Window (\(shot.png.count) bytes PNG, \(shot.method))", value: nil, image: shot.png)
+        // Fonts belong to the app, not to a project.
+        case "list_fonts":
+            return try payload(try await ToolExecutor.fontList(search: s("search"), category: s("category"), sort: s("sort"), source: s("source"), limit: i("limit")))
+        case "install_font":
+            let weights = a["weights"]?.arrayValue?.compactMap { $0.stringValue ?? $0.intValue.map(String.init) ?? $0.doubleValue.map { String(Int($0)) } } ?? s("weights").map { [$0] }
+            return try payload(try await FontLibrary.shared.installGoogle(try req("family"), styles: weights))
+        case "add_font_files":
+            let paths = list("paths"); guard !paths.isEmpty else { throw MCPError.invalidParams("'paths' must list at least one font file") }
+            let r = await FontLibrary.shared.addFontFiles(paths.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) })
+            if r.files.isEmpty { throw EditError.invalid(r.failures.joined(separator: "; ")) }
+            return try payload(r)
         default: break
         }
         guard let doc = DocumentRegistry.shared.document(for: s("project")) else {
@@ -481,9 +544,15 @@ enum EditMaxTools {
             try x.rippleTrack(try req("track")); return message("Gaps closed")
         case "add_text":
             let askedY = try d("y") ?? CaptionPresets.resolve(s("preset")).y
-            let t = try x.addText(try req("text"), start: try reqNum("start"), duration: try reqNum("duration"), fontSize: d("font_size"), colorHex: s("color"), x: d("x"), y: d("y"), preset: s("preset"))
+            var font: ToolExecutor.FontChoice?
+            if let f = s("font") { font = try await FontLibrary.shared.resolve(f) }
+            let t = try x.addText(try req("text"), start: try reqNum("start"), duration: try reqNum("duration"), fontSize: d("font_size"), colorHex: s("color"), x: d("x"), y: d("y"), preset: s("preset"), font: font)
             let moved = abs(t.y - askedY) > 0.001 ? " (moved to y \(String(format: "%.2f", t.y)) so it does not cover another text on screen at the same time)" : ""
             return message("Added text \(t.id.short) from \(t.start)s to \(t.end)s\(moved)")
+        case "set_text_style":
+            var font: ToolExecutor.FontChoice?
+            if let f = s("font") { font = try await FontLibrary.shared.resolve(f) }
+            return try payload(try x.setTextStyle(try req("text"), font: font, fontSize: d("font_size"), color: s("color")))
         case "get_transcript":
             return try payload(try await x.getTranscript(asset: s("asset"), clip: s("clip"), language: s("language")))
         case "add_captions":

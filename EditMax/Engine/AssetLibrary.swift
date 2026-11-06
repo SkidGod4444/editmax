@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import UniformTypeIdentifiers
+import CryptoKit
 
 // The Assets library: everything the user has brought into EditMax, across projects. Every file imported into any
 // project, everything dropped on the notch drawer or added from Downloads, and every font the user added. Shown in the
@@ -30,6 +31,8 @@ struct LibraryItem: Codable, Identifiable, Equatable {
     /// Projects that use it: project id → project name (the name as of the last use).
     var usedIn: [String: String] = [:]
     var lastUsed: Date? = nil
+    /// For a copy (drawer, Downloads, a drop on Assets): the file it was copied from, so the same file is not copied twice.
+    var original: String? = nil
 
     var url: URL { URL(fileURLWithPath: path) }
     var exists: Bool { FileManager.default.fileExists(atPath: path) }
@@ -42,10 +45,24 @@ final class AssetLibrary: ObservableObject {
     /// Newest first.
     @Published private(set) var all: [LibraryItem] = []
 
-    /// The index. Tests point it somewhere else.
-    static var indexURL = MCPService.configDirectory.appendingPathComponent("library.json")
-    /// Where copied files (drawer drops, downloads) go: next to the projects.
-    static var storeDirectory: URL { ProjectLibrary.directory.appendingPathComponent("Assets", isDirectory: true) }
+    /// The index. Under XCTest it lives in a temporary folder, so a test run never writes to the user's library.
+    static var indexURL = AppDelegate.isTesting
+        ? testingDirectory.appendingPathComponent("library.json")
+        : MCPService.configDirectory.appendingPathComponent("library.json")
+    /// Where copies go instead of `storeDirectory`'s default (tests); a temporary folder under XCTest.
+    static var storeOverride: URL? = AppDelegate.isTesting ? testingDirectory.appendingPathComponent("Assets", isDirectory: true) : nil
+    /// Where copied files (drawer drops, downloads, drops on Assets) go: next to the projects.
+    static var storeDirectory: URL { storeOverride ?? ProjectLibrary.directory.appendingPathComponent("Assets", isDirectory: true) }
+    private static var testingDirectory: URL {
+        FileManager.default.temporaryDirectory.appendingPathComponent("EditMaxTests-library-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
+    }
+
+    /// A project's key in `usedIn`, derived from its file path (Home keys projects by path too), so a project gets the
+    /// same key every time it opens; a document's own `id` is new on every open.
+    static func projectID(for url: URL) -> UUID {
+        let d = Array(SHA256.hash(data: Data(url.standardizedFileURL.path.utf8)))
+        return UUID(uuid: (d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7], d[8], d[9], d[10], d[11], d[12], d[13], d[14], d[15]))
+    }
 
     static let fontExtensions: Set<String> = ["ttf", "otf", "ttc", "otc", "woff", "woff2"]
 
@@ -70,18 +87,40 @@ final class AssetLibrary: ObservableObject {
         var out: [LibraryItem] = [], failures: [String] = []
         for src in urls {
             guard let kind = Self.kind(of: src) else { failures.append("\(src.lastPathComponent): not a video, audio, image or font file"); continue }
-            var url = src.standardizedFileURL
+            let from = src.standardizedFileURL
+            // Already in the library, at this path or as a copy of it: returned as it is, never copied a second time.
+            if let existing = all.first(where: { ($0.path == from.path || $0.original == from.path) && $0.exists }) { out.append(existing); continue }
+            guard FileManager.default.fileExists(atPath: from.path) else { failures.append("\(src.lastPathComponent): file not found"); continue }
+            // A font that arrives to be kept (the drawer, Downloads, a drop on Assets) is installed, not only stored: the
+            // font library copies it into its fonts folder, registers it and adds that copy here, so it is in the Font
+            // picker straight away (FontLibrary.addFontFiles).
+            if kind == .font, copy {
+                let r = await FontLibrary.shared.addFontFiles([from])
+                failures += r.failures
+                for path in r.files {
+                    guard let i = all.firstIndex(where: { $0.path == path }) else { continue }
+                    if all[i].original == nil { all[i].original = from.path; all[i].source = source }
+                    out.append(all[i])
+                }
+                continue
+            }
+            var url = from
             if copy {
                 do { url = try Self.copyIntoStore(url) } catch { failures.append("\(src.lastPathComponent): \(error.localizedDescription)"); continue }
             }
             if let existing = all.first(where: { $0.path == url.path }) { out.append(existing); continue }
             var item = LibraryItem(name: url.lastPathComponent, path: url.path, kind: kind, source: source)
+            if url != from { item.original = from.path }
             if kind != .font {
                 do {
                     let a = try await MediaImporter.probe(url)
+                    item.kind = a.kind == .audio ? .audio : a.kind == .image ? .image : .video   // a sound-only .mp4 is audio
                     item.duration = a.kind == .image ? nil : a.duration
                     item.width = a.width; item.height = a.height; item.bookmark = a.bookmark
-                } catch { failures.append("\(src.lastPathComponent): \(error.localizedDescription)"); continue }
+                } catch {
+                    if url != from { try? FileManager.default.removeItem(at: url) }   // our copy of a file that cannot be read
+                    failures.append("\(src.lastPathComponent): \(error.localizedDescription)"); continue
+                }
             } else {
                 item.bookmark = try? url.bookmarkData()
             }
@@ -111,20 +150,65 @@ final class AssetLibrary: ObservableObject {
         if changed { save() }
     }
 
+    /// Adds project assets the library does not have yet (referenced in place) without recording a project: an import
+    /// into a project that has no file yet.
+    func register(_ assets: [Asset]) {
+        var changed = false
+        for a in assets where a.kind != .sequence && !all.contains(where: { $0.path == a.path }) {
+            let kind: LibraryItem.Kind = a.kind == .video ? .video : a.kind == .audio ? .audio : .image
+            all.insert(LibraryItem(name: a.name, path: a.path, bookmark: a.bookmark, kind: kind, duration: a.kind == .image ? nil : a.duration,
+                                   width: a.width, height: a.height, source: .project), at: 0)
+            changed = true
+        }
+        if changed { save() }
+    }
+
+    /// What a project uses now, after an open or a save: records every asset (`noteUsed`) and takes the project off the
+    /// items it no longer uses (an asset removed, relinked or consolidated elsewhere). Fonts are left alone; they are
+    /// not project assets.
+    func syncUse(_ assets: [Asset], projectID: UUID, projectName: String) {
+        noteUsed(assets, projectID: projectID, projectName: projectName)
+        let key = projectID.uuidString
+        let paths = Set(assets.map(\.path))
+        var changed = false
+        for i in all.indices where all[i].kind != .font && all[i].usedIn[key] != nil && !paths.contains(all[i].path) {
+            all[i].usedIn.removeValue(forKey: key); changed = true
+        }
+        if changed { save() }
+    }
+
+    /// A project that is gone (moved to the Trash, renamed): no item says it is used there any more.
+    func forgetProject(_ projectID: UUID) {
+        let key = projectID.uuidString
+        var changed = false
+        for i in all.indices where all[i].usedIn[key] != nil { all[i].usedIn.removeValue(forKey: key); changed = true }
+        if changed { save() }
+    }
+
     /// Items, newest first, optionally of one kind and matching `search` (name, any case).
     func items(kind: LibraryItem.Kind? = nil, search: String? = nil) -> [LibraryItem] {
         let q = search?.trimmingCharacters(in: .whitespaces).lowercased() ?? ""
         return all.filter { (kind == nil || $0.kind == kind) && (q.isEmpty || $0.name.lowercased().contains(q)) }
     }
 
-    /// Removes items from the library. A copy in `storeDirectory` goes to the Trash; a referenced file is left alone.
+    /// Removes items from the library. A copy in `storeDirectory` goes to the Trash unless a project still uses it (the
+    /// project would lose its media); a referenced file is left alone.
     func remove(_ ids: Set<UUID>) {
-        let store = Self.storeDirectory.standardizedFileURL.path
-        for item in all where ids.contains(item.id) && item.path.hasPrefix(store + "/") {
+        for item in all where ids.contains(item.id) && isCopy(item) && item.usedIn.isEmpty {
             try? FileManager.default.trashItem(at: item.url, resultingItemURL: nil)
         }
         all.removeAll { ids.contains($0.id) }
         save()
+    }
+
+    /// True for a file EditMax copied into its Assets folder (as opposed to one referenced where the user keeps it).
+    func isCopy(_ item: LibraryItem) -> Bool { item.path.hasPrefix(Self.storeDirectory.standardizedFileURL.path + "/") }
+
+    /// `add`, plus what it did in words for a confirmation ("Added 2 files to Assets").
+    func addFiles(_ urls: [URL], source: LibraryItem.Source, copy: Bool) async -> LibraryAddResult {
+        let before = Set(all.map(\.id))
+        let r = await add(urls: urls, source: source, copy: copy)
+        return LibraryAddResult(added: r.items.filter { !before.contains($0.id) }, existing: r.items.filter { before.contains($0.id) }, failures: r.failures)
     }
 
     // MARK: Storage
@@ -154,6 +238,24 @@ final class AssetLibrary: ObservableObject {
             try FileManager.default.createDirectory(at: Self.indexURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             try JSONEncoder.iso.encode(all).write(to: Self.indexURL, options: .atomic)
         } catch { DebugLog.event("library-save-failed", ["error": error.localizedDescription]) }
+    }
+}
+
+/// What one add did: new items, items that were already there, and the files that were skipped (with why).
+struct LibraryAddResult {
+    var added: [LibraryItem]
+    var existing: [LibraryItem]
+    var failures: [String]
+
+    /// One short line for the drawer and the Assets section.
+    var message: String {
+        if added.isEmpty && existing.isEmpty {
+            return failures.count == 1 ? "Could not add \(failures[0])" : failures.isEmpty ? "Nothing to add" : "Could not add \(failures.count) files"
+        }
+        var s = added.isEmpty ? (existing.count == 1 ? "Already in Assets" : "All \(existing.count) are already in Assets")
+                              : "Added \(added.count) file\(added.count == 1 ? "" : "s") to Assets"
+        if !failures.isEmpty { s += ". \(failures.count) could not be added" }
+        return s
     }
 }
 

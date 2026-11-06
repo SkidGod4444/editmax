@@ -37,7 +37,24 @@ final class EditMaxDocument: ReferenceFileDocument, ObservableObject {
     func snapshot(contentType: UTType) throws -> Project { project }
 
     func fileWrapper(snapshot: Project, configuration: WriteConfiguration) throws -> FileWrapper {
-        FileWrapper(regularFileWithContents: try Self.encoder.encode(snapshot))
+        let wrapper = FileWrapper(regularFileWithContents: try Self.encoder.encode(snapshot))
+        Task { @MainActor [weak self] in self?.noteLibraryUse() }   // a save (⌘S): the Assets library's "Used in" follows
+        return wrapper
+    }
+
+    // MARK: Assets library
+
+    /// This project's key in the Assets library's "Used in": from its file, so it is the same on every open. Nil for a
+    /// project that has no file yet (nothing to point back to).
+    var libraryProjectID: UUID? { fileURL.map(AssetLibrary.projectID(for:)) }
+
+    /// Tells the Assets library what this project uses (on open, on save, after an import). With `assets`, only those
+    /// are recorded (an import); without, the whole asset list is synced, which also drops assets the project no
+    /// longer has. A project without a file only registers what it imports. Nested-sequence renders are not library items.
+    func noteLibraryUse(_ assets: [Asset]? = nil) {
+        guard let pid = libraryProjectID else { if let assets { AssetLibrary.shared.register(assets) }; return }
+        if let assets { AssetLibrary.shared.noteUsed(assets, projectID: pid, projectName: displayName) }
+        else { AssetLibrary.shared.syncUse(project.assets, projectID: pid, projectName: displayName) }
     }
 
     // MARK: Mutations with history
@@ -151,6 +168,7 @@ final class EditMaxDocument: ReferenceFileDocument, ObservableObject {
                 nsdoc.fileModificationDate = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? Date()
                 nsdoc.updateChangeCount(.changeCleared)
             }
+            noteLibraryUse()
             DebugLog.event("autosave", ["project": displayName])
         } catch {
             DebugLog.error("autosave", error, ["project": displayName])

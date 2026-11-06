@@ -65,6 +65,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // With a splash up, Home waits until it has faded: the splash plays, then the app opens.
             SplashScreen.shared.afterDismiss { if NSDocumentController.shared.documents.isEmpty { HomeWindow.shared.show() } }
         }
+        // The notch drawer comes up once the splash has gone. The splash starts within 2 s of launch or not at all
+        // (applicationDidBecomeActive), so by then either it is up and the drawer waits for it, or it never comes.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { SplashScreen.shared.afterDismiss { NotchDrawer.shared.start() } }
     }
     /// Launch (and Dock reopen) with nothing to restore: Home, never an untitled document and never AppKit's Open panel.
     /// AppKit asks this first (`-[NSApplication _doOpenUntitled]`); when a document-based app does not answer, it may put

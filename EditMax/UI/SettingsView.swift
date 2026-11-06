@@ -30,7 +30,7 @@ struct SettingsView: View {
 
 // MARK: General
 
-private struct GeneralSettings: View {
+struct GeneralSettings: View {
     @ObservedObject private var s = AppSettings.shared
     @ObservedObject private var updates = AppUpdater.shared
     @AppStorage("showMenuBarIcon") private var showMenuBarIcon = true
@@ -70,6 +70,16 @@ private struct GeneralSettings: View {
                 Toggle("Show EditMax in the menu bar", isOn: $showMenuBarIcon).pointer().uiFrame("settings.general.menuBarIcon")
             } footer: {
                 Text("The icon at the top right of the screen: a new project, Home, recent projects, the MCP server and updates.")
+            }
+            Section {
+                Toggle("Notch drawer", isOn: $s.notchDrawer).pointer().uiFrame("settings.general.notchDrawer")
+            } footer: {
+                Text("Drop files on the notch at the top of the screen to add them to Assets, from any app.")
+            }
+            Section {
+                Toggle("Watch Downloads", isOn: $s.watchDownloads).pointer().disabled(!s.notchDrawer).uiFrame("settings.general.watchDownloads")
+            } footer: {
+                Text("New video, audio, images and fonts in Downloads show up in the drawer. macOS asks once to let EditMax see the folder.")
             }
             Section {
                 Toggle("Check for updates automatically", isOn: $updates.checksAutomatically)

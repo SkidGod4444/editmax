@@ -63,6 +63,9 @@ final class PlayerController: ObservableObject {
         IsolatedAudio.shared.$version.dropFirst().receive(on: DispatchQueue.main)   // an isolated sound file became ready: play it
             .sink { [weak self, weak document] v in guard let document else { return }; self?.rebuild(document.project, reason: "isolated-audio-version-\(v)") }
             .store(in: &cancellables)
+        FontLibrary.shared.$version.dropFirst().receive(on: DispatchQueue.main)   // a font arrived or went: redraw titles that use it
+            .sink { [weak self, weak document] v in guard let document, document.project.texts.contains(where: \.hasChosenFont) else { return }; self?.rebuild(document.project, reason: "fonts-version-\(v)") }
+            .store(in: &cancellables)
         document.$seekRequest
             .compactMap { $0 }
             .receive(on: DispatchQueue.main)

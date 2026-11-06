@@ -20,6 +20,7 @@ final class AppSettings: ObservableObject {
         static let autoUpdate = "autoUpdateRuntime", mcpPort = "mcpPort", liquidGlass = "useLiquidGlass"
         static let chatBackend = "chatBackend", chatAgent = "chatAgent", chatProvider = "chatProvider", chatModel = "chatModel"
         static let followAgent = "followAgent"
+        static let notchDrawer = "notchDrawer", watchDownloads = "watchDownloads"
     }
 
     /// A Bool default with a default: UserDefaults reads an unset key as false.
@@ -38,6 +39,9 @@ final class AppSettings: ObservableObject {
     @Published var mcpPort: Int { didSet { d.set(mcpPort, forKey: Key.mcpPort) } }
     @Published var useLiquidGlass: Bool { didSet { d.set(useLiquidGlass, forKey: Key.liquidGlass) } }
     @Published var followAgent: Bool { didSet { d.set(followAgent, forKey: Key.followAgent) } }
+    /// The notch drawer (NotchDrawer.swift) and its Downloads watcher. Both off under XCTest.
+    @Published var notchDrawer: Bool { didSet { d.set(notchDrawer, forKey: Key.notchDrawer); NotchDrawer.shared.applySettings() } }
+    @Published var watchDownloads: Bool { didSet { d.set(watchDownloads, forKey: Key.watchDownloads); NotchDrawer.shared.applySettings() } }
 
     @Published var chatBackend: String { didSet { d.set(chatBackend, forKey: Key.chatBackend); broadcast() } }
     @Published var chatAgent: String { didSet { d.set(chatAgent, forKey: Key.chatAgent); broadcast() } }
@@ -52,6 +56,8 @@ final class AppSettings: ObservableObject {
         mcpPort = d.integer(forKey: Key.mcpPort).nonZero ?? 19790
         useLiquidGlass = Self.bool(Key.liquidGlass, default: true)
         followAgent = Self.bool(Key.followAgent, default: true)
+        notchDrawer = !AppDelegate.isTesting && Self.bool(Key.notchDrawer, default: true)
+        watchDownloads = !AppDelegate.isTesting && Self.bool(Key.watchDownloads, default: true)
         chatBackend = d.string(forKey: Key.chatBackend) ?? "Agent"
         chatAgent = d.string(forKey: Key.chatAgent) ?? "claude"
         chatProvider = d.string(forKey: Key.chatProvider) ?? "claude-agent"

@@ -136,7 +136,7 @@ enum TitleRasterizer {
     /// The same box, font, wrapping and padding as `OverlayLayerBuilder.renderText`, split into box and text.
     static func title(_ t: TextOverlay, canvas: CGSize) -> TitleRaster? {
         let style = CaptionPresets.style(t.preset)
-        let font = NSFont(name: style.fontName, size: t.fontSize) ?? NSFont.boldSystemFont(ofSize: t.fontSize)
+        let font = t.font(style: style, size: t.fontSize)
         let para = NSMutableParagraphStyle(); para.alignment = .center
         var attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color(t.colorHex), .paragraphStyle: para]
         if style.shadow {
@@ -181,8 +181,8 @@ enum TitleRasterizer {
     static func lowerThirdLayout(_ t: TextOverlay, canvas: CGSize) -> LowerThirdLayout {
         let lt = t.lowerThird ?? LowerThird()
         let fs = CGFloat(t.fontSize)
-        let nameFont = NSFont(name: "HelveticaNeue-Bold", size: fs) ?? .boldSystemFont(ofSize: fs)
-        let roleFont = NSFont(name: "HelveticaNeue-Medium", size: fs * 0.55) ?? .systemFont(ofSize: fs * 0.55)
+        // The chosen font for the name and a lighter weight of it for the role; Helvetica Neue Bold / Medium without one.
+        let (nameFont, roleFont) = t.lowerThirdFonts(nameSize: fs, roleSize: fs * 0.55)
         let para = NSMutableParagraphStyle(); para.alignment = .left
         var nameAttrs: [NSAttributedString.Key: Any] = [.font: nameFont, .foregroundColor: color(t.colorHex), .paragraphStyle: para]
         var roleAttrs: [NSAttributedString.Key: Any] = [.font: roleFont, .foregroundColor: color("#FFFFFF", lt.template == .box ? 1 : 0.85), .paragraphStyle: para]

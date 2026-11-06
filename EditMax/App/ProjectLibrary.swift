@@ -103,6 +103,7 @@ final class ProjectLibrary: ObservableObject {
 
     func trash(_ entry: Entry) throws {
         try FileManager.default.trashItem(at: entry.url, resultingItemURL: nil)
+        AssetLibrary.shared.forgetProject(AssetLibrary.projectID(for: entry.url))   // Assets no longer says "Used in" it
         DebugLog.event("library-trash", ["name": entry.name])
         refresh()
     }
@@ -136,7 +137,8 @@ final class ProjectLibrary: ObservableObject {
         }
     }
 
-    private static func poster(url: URL, kind: AssetKind, at seconds: Double) async -> CGImage? {
+    /// One frame of a video (or the image itself), at most 640 points: Home's project cards and the Assets grid.
+    static func poster(url: URL, kind: AssetKind, at seconds: Double) async -> CGImage? {
         if kind == .image { return NSImage(contentsOf: url)?.cgImage(forProposedRect: nil, context: nil, hints: nil) }
         let asset = AVURLAsset(url: url)
         // No readable video track makes the generator abort the process (an uncatchable ObjC exception), so check first.

@@ -493,9 +493,19 @@ enum Interchange {
             // FCP sizes titles in points of a 1080-line frame.
             let size = t.fontSize * 1080 / Double(max(1, project.settings.height))
             let label = String(t.text.replacingOccurrences(of: "\n", with: " ").prefix(40))
+            // A chosen font goes as its family and face (what FCP's font menus list); the destination Mac needs it
+            // installed. Without one, the preset's font as before.
+            var font: [(String, String)] = [("font", style.fontName)]
+            if t.hasChosenFont {
+                if let f = t.chosenFont(size: CGFloat(size), nearWeightOf: style.fontName), let face = TextFont.face(of: f) {
+                    font = [("font", face.family), ("fontFace", face.style)]
+                } else if let family = t.fontFamily ?? t.fontName {
+                    font = [("font", family)]
+                }
+            }
             return Node("title", [("ref", effect("Basic Title", uid: Self.basicTitleUID)), ("offset", seq.time(offset).fcp), ("name", label.isEmpty ? "Title" : label), ("start", "0s"), ("duration", seq.time(length).fcp)], [
                 Node("text", [], [Node("text-style", [("ref", ts)], text: style.uppercase ? t.text.uppercased() : t.text)]),
-                Node("text-style-def", [("id", ts)], [Node("text-style", [("font", style.fontName), ("fontSize", num(size)), ("fontColor", rgba(t.colorHex)), ("alignment", "center")])])
+                Node("text-style-def", [("id", ts)], [Node("text-style", font + [("fontSize", num(size)), ("fontColor", rgba(t.colorHex)), ("alignment", "center")])])
             ])
         }
 
@@ -661,6 +671,8 @@ enum Interchange {
             let titles = p.texts.filter { !$0.isCaption }
             if !titles.isEmpty {
                 yes.append("\(n(titles.count, "title")) as text")
+                let families = Array(Set(titles.compactMap(\.fontDisplayName))).sorted()
+                if !families.isEmpty { yes.append("Title fonts by name (\(families.joined(separator: ", "))): the other Mac needs them installed") }
                 no.append("Title styles and positions: titles come in as basic centered titles")
             }
             if let srt { yes.append("\(n(layout.captions.count, "caption")) to \(URL(fileURLWithPath: srt).lastPathComponent): import it as subtitles") ; no.append("Caption styles") }

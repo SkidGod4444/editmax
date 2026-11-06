@@ -82,6 +82,7 @@ struct HomeView: View {
     let part: Part
     @ObservedObject var model: HomeModel
     @ObservedObject private var library = ProjectLibrary.shared
+    @ObservedObject private var assets = AssetLibrary.shared
 
     private var filtered: [ProjectLibrary.Entry] {
         let q = model.search.trimmingCharacters(in: .whitespaces).lowercased()
@@ -92,7 +93,14 @@ struct HomeView: View {
         Group {
             switch part {
             case .sidebar: sidebar
-            case .projects: projects.background(BehindWindowMaterial(material: .underWindowBackground).ignoresSafeArea())
+            case .projects:
+                Group {
+                    switch model.place {
+                    case .projects: projects
+                    case .assets: LibraryAssetsPane(model: model)
+                    }
+                }
+                .background(BehindWindowMaterial(material: .underWindowBackground).ignoresSafeArea())
             }
         }
         .confirmationDialog("Move “\(model.trashing?.name ?? "")” to the Trash?", isPresented: Binding(get: { model.trashing != nil }, set: { if !$0 { model.trashing = nil } }), titleVisibility: .visible) {
@@ -113,6 +121,11 @@ struct HomeView: View {
                 }
             }
             .padding(.top, 36)
+
+            VStack(alignment: .leading, spacing: 2) {
+                place(.projects, "Projects", "film.stack", count: library.entries.count)
+                place(.assets, "Assets", "photo.on.rectangle.angled", count: assets.all.count)
+            }
 
             VStack(alignment: .leading, spacing: 8) {
                 Text("NEW PROJECT").font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary).tracking(1.2)
@@ -165,7 +178,7 @@ struct HomeView: View {
                 Text("\(filtered.count)").font(.system(size: 12, weight: .semibold).monospacedDigit()).foregroundStyle(.secondary)
                     .padding(.horizontal, 7).padding(.vertical, 2).background(Color.primary.opacity(0.08), in: Capsule())
                 Spacer()
-                TextField("Search", text: $model.search).textFieldStyle(.roundedBorder).frame(width: 220).uiFrame("home.search")
+                NativeSearchField(placeholder: "Search Projects", text: $model.search).frame(width: 220).uiFrame("home.search")
             }
             .padding(.horizontal, 26).padding(.top, 40).padding(.bottom, 12)
             if filtered.isEmpty {
@@ -185,6 +198,10 @@ struct HomeView: View {
                 }
             }
         }
+    }
+
+    private func place(_ p: HomeModel.Place, _ title: String, _ symbol: String, count: Int) -> some View {
+        HomePlaceRow(place: p, title: title, symbol: symbol, count: count, model: model)
     }
 
     private func newProject() {
@@ -214,10 +231,44 @@ struct HomeView: View {
 
 @MainActor
 final class HomeModel: ObservableObject {
+    /// The sidebar's places: the user's projects (the default) and the Assets library.
+    enum Place: String, CaseIterable { case projects, assets }
+    @Published var place: Place = .projects
     @Published var search = ""
     @Published var template: Templates.Info = Templates.list().first!
     @Published var trashing: ProjectLibrary.Entry?
     @Published var problem: String?
+    // Assets (LibraryViews.swift)
+    @Published var assetFilter: LibraryFilter = .all
+    @Published var assetSearch = ""
+    @Published var removing: LibraryItem?
+    @Published var assetMessage: String?
+}
+
+/// One place in Home's sidebar (Projects, Assets): a row like the Finder's sidebar, highlighted when chosen.
+struct HomePlaceRow: View {
+    let place: HomeModel.Place
+    let title: String
+    let symbol: String
+    let count: Int
+    @ObservedObject var model: HomeModel
+
+    var body: some View {
+        let on = model.place == place
+        Button { model.place = place } label: {
+            HStack(spacing: 8) {
+                Image(systemName: symbol).font(.system(size: 13, weight: .medium)).foregroundStyle(on ? Color.accentColor : .secondary).frame(width: 20)
+                Text(title).font(.system(size: 13, weight: on ? .semibold : .regular))
+                Spacer()
+                if count > 0 { Text("\(count)").font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary) }
+            }
+            .padding(.horizontal, 8).frame(height: 28)
+            .background(on ? Color.primary.opacity(0.1) : Color.clear, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).focusable(false).pointer()
+        .uiFrame("home.place.\(place.rawValue)").uiTap("home.place.\(place.rawValue)") { model.place = place }
+    }
 }
 
 private struct ProjectCard: View {

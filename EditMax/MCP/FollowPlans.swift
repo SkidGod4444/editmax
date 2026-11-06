@@ -84,6 +84,7 @@ enum FollowPlans {
         "add_text": P(created: true, anchor: .title),
         "add_lower_third": P(text: "text", created: true, anchor: .lowerThird),
         "set_text_animation": P(text: "text", anchor: .textAnimation),
+        "set_text_style": P(text: "text", anchor: .title),
         "remove_texts": P(), "remove_captions": P(),
         "add_captions": P(clip: "clip"),
         // Speech
@@ -119,7 +120,10 @@ enum FollowPlans {
         "capture_frame", "capture_scopes", "capture_matte", "key_matte",
         "export_video", "export_batch", "export_chapters", "export_timeline", "save_template",
         "import_media", "make_proxies", "consolidate_media", "set_playhead",
+        "list_library", "add_to_library",   // the Assets library is not in the project window
         "ui_layout", "ui_drag", "ui_key", "ui_click", "ui_scroll", "ui_screenshot",
+        // Fonts belong to the app, not to a project: nothing in the window to show.
+        "list_fonts", "install_font", "add_font_files",
     ]
 
     static func keyframeCard(_ a: FollowPlan.Args) -> InspectorAnchor? {

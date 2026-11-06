@@ -502,6 +502,10 @@ struct TextOverlay: Codable, Identifiable, Equatable {
     var group: UUID? = nil      // set on captions made in one go, so they can be removed together
     var animation: TextAnimation? = nil   // how it comes on and goes off (nil = it cuts)
     var lowerThird: LowerThird? = nil     // drawn as a lower third: `text` is the name, the role goes under it
+    /// The chosen typeface: one face by PostScript name ("Inter-Bold") and its family ("Inter"). nil = the preset's font.
+    /// Both decode as nil from older files. Every renderer resolves it through `TextOverlay.font(style:size:)` (TextFont.swift).
+    var fontName: String? = nil
+    var fontFamily: String? = nil
     var end: Double { start + duration }
     var isCaption: Bool { group != nil }
 }

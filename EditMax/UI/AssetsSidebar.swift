@@ -9,13 +9,31 @@ struct AssetsSidebar: View {
     @State private var hovered: UUID?
     @ObservedObject private var thumbnails = ThumbnailStore.shared
     @ObservedObject private var proxies = ProxyStore.shared
+    /// Project: this project's media. Library: everything in Assets, across projects (LibraryViews.swift).
+    enum Mode: String { case project = "Project", library = "Library" }
+    @State private var mode: Mode
+
+    init(document: EditMaxDocument, mode: Mode = .project) {
+        self.document = document
+        _mode = State(initialValue: mode)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
-            // Title row: the panel name with a count badge, and one icon button to import.
+            // Title row: Project | Library, a count badge for this project's media, and one icon button to import.
             HStack(spacing: 8) {
-                Text("Media").font(.system(size: 13, weight: .semibold))
-                if !document.project.assets.isEmpty {
+                Picker("Media", selection: $mode) {
+                    Text(Mode.project.rawValue).tag(Mode.project)
+                    Text(Mode.library.rawValue).tag(Mode.library)
+                }
+                .pickerStyle(.segmented).labelsHidden().controlSize(.small).fixedSize()
+                .help("This project's media, or everything in Assets")
+                .pointer().uiFrame("media.mode")
+                .background {
+                    Color.clear.uiTap("media.mode.project") { mode = .project }
+                    Color.clear.uiTap("media.mode.library") { mode = .library }
+                }
+                if mode == .project, !document.project.assets.isEmpty {
                     Text("\(document.project.assets.count)").font(.system(size: 10, weight: .semibold)).monospacedDigit().foregroundStyle(.secondary)
                         .padding(.horizontal, 6).frame(height: 16).background(Color.primary.opacity(0.08), in: Capsule())
                 }
@@ -27,8 +45,28 @@ struct AssetsSidebar: View {
                 }
                 .buttonStyle(.borderless).focusable(false).help("Import media (or drop files here)").pointer().uiFrame("media.import")
             }
-            .padding(.leading, 12).padding(.trailing, 6).frame(height: 36)
+            .padding(.leading, 10).padding(.trailing, 6).frame(height: 36)
             Divider()
+            if mode == .library {
+                LibraryPanelList(document: document) { error = $0 }
+            } else {
+                projectList
+            }
+        }
+        .background(Color(nsColor: .controlBackgroundColor))
+        .fileImporter(isPresented: $importing, allowedContentTypes: [.movie, .audio, .image, .mpeg4Movie, .quickTimeMovie, .mp3, .wav, .png, .jpeg], allowsMultipleSelection: true) { result in
+            if case .success(let urls) = result { importURLs(urls) }
+        }
+        // Files dropped on the panel (from the Finder, or a Library row) go into the project, whichever list is showing.
+        .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+            Task { importURLs(await LibraryDrag.urls(from: providers)) }
+            return true
+        }
+        .alert("Import failed", isPresented: .init(get: { error != nil }, set: { if !$0 { error = nil } })) { Button("OK") {} } message: { Text(error ?? "") }
+    }
+
+    /// This project's media, one row per asset.
+    private var projectList: some View {
             // Plain rows, not a List: List owns the mouse-down for selection on macOS and a drag from a row never starts.
             ScrollView {
                 LazyVStack(spacing: 2) {
@@ -94,22 +132,6 @@ struct AssetsSidebar: View {
                     .allowsHitTesting(false)
                 }
             }
-        }
-        .background(Color(nsColor: .controlBackgroundColor))
-        .fileImporter(isPresented: $importing, allowedContentTypes: [.movie, .audio, .image, .mpeg4Movie, .quickTimeMovie, .mp3, .wav, .png, .jpeg], allowsMultipleSelection: true) { result in
-            if case .success(let urls) = result { importURLs(urls) }
-        }
-        .onDrop(of: [.fileURL], isTargeted: nil) { providers in
-            Task {
-                var urls: [URL] = []
-                for p in providers {
-                    if let data = try? await p.loadItem(forTypeIdentifier: UTType.fileURL.identifier) as? Data, let u = URL(dataRepresentation: data, relativeTo: nil) { urls.append(u) }
-                }
-                importURLs(urls)
-            }
-            return true
-        }
-        .alert("Import failed", isPresented: .init(get: { error != nil }, set: { if !$0 { error = nil } })) { Button("OK") {} } message: { Text(error ?? "") }
     }
 
     /// Assets behind the clips selected on the timeline, so the list reflects what the user is working on.

@@ -116,7 +116,9 @@ private struct FrameProbe: NSViewRepresentable {
         override func layout() { super.layout(); report() }
         override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); report() }
         func report() {
-            guard let w = window, let content = w.contentView, !id.isEmpty else { return }
+            // The notch drawer is its own panel: its frames are not in the driver's window, so its controls are driven
+            // through their `.uiTap` handlers instead (NotchDrawer.swift).
+            guard let w = window, !(w is NotchDrawerPanel), let content = w.contentView, !id.isEmpty else { return }
             let r = convert(bounds, to: nil)   // window base coordinates (origin bottom-left)
             let top = CGRect(x: r.minX, y: content.bounds.height - r.maxY, width: r.width, height: r.height)
             UIRegistry.shared.set(id, top)
@@ -306,13 +308,50 @@ enum UIDriver {
             guard w.windowNumber > 0, let wid = CGWindowID(exactly: w.windowNumber) else { throw EditError.invalid("window not on screen") }
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
             guard let win = content.windows.first(where: { $0.windowID == wid }) else { throw EditError.invalid("window not capturable") }
-            let filter = SCContentFilter(desktopIndependentWindow: win)
-            let cfg = SCStreamConfiguration()
             let scale = w.backingScaleFactor
-            cfg.width = Int(win.frame.width * scale); cfg.height = Int(win.frame.height * scale)
-            cfg.showsCursor = false
-            cfg.captureResolution = .best
-            cg = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: cfg)
+            func capture(_ sw: SCWindow) async throws -> CGImage {
+                let cfg = SCStreamConfiguration()
+                cfg.showsCursor = false
+                cfg.captureResolution = .best
+                cfg.width = Int(sw.frame.width * scale); cfg.height = Int(sw.frame.height * scale)
+                return try await SCScreenshotManager.captureImage(contentFilter: SCContentFilter(desktopIndependentWindow: sw), configuration: cfg)
+            }
+            cg = try await capture(win)
+            // The window's capture already has its child windows in it (popovers, sheets). Other EditMax windows over it
+            // (an open menu, a panel of its own) are part of what the user sees too: each is captured on its own, like
+            // the window (so it works on any Space), and laid over it in on-screen order. Other apps' windows and the
+            // desktop are never in the picture. The notch drawer is not over the window; it sits at the top of the screen.
+            let order = NSApp.orderedWindows
+            func attached(_ o: NSWindow) -> Bool {
+                var p = o.parent ?? o.sheetParent
+                while let x = p { if x === w { return true }; p = x.parent ?? x.sheetParent }
+                return false
+            }
+            let overlays = NSApp.windows
+                .filter { o in o !== w && o.isVisible && o.windowNumber > 0 && !(o is NotchDrawerPanel) && !attached(o)
+                    && o.frame.intersects(w.frame) && o.frame.width > 2 && o.frame.height > 2 }
+                .sorted { a, b in (a.level.rawValue, -(order.firstIndex(of: a) ?? -1)) < (b.level.rawValue, -(order.firstIndex(of: b) ?? -1)) }   // back to front
+            var layers: [(NSRect, CGImage)] = []
+            for o in overlays {
+                guard let oid = CGWindowID(exactly: o.windowNumber), let sw = content.windows.first(where: { $0.windowID == oid }),
+                      let img = try? await capture(sw) else { continue }
+                layers.append((o.frame, img))
+            }
+            if !layers.isEmpty {
+                let area = layers.reduce(w.frame) { $0.union($1.0) }
+                if let ctx = CGContext(data: nil, width: Int(area.width * scale), height: Int(area.height * scale), bitsPerComponent: 8, bytesPerRow: 0,
+                                       space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue) {
+                    func draw(_ frame: NSRect, _ img: CGImage) {
+                        ctx.draw(img, in: CGRect(x: (frame.minX - area.minX) * scale, y: (frame.minY - area.minY) * scale, width: frame.width * scale, height: frame.height * scale))
+                    }
+                    draw(w.frame, cg)
+                    for (frame, img) in layers { draw(frame, img) }
+                    if let out = ctx.makeImage() {
+                        cg = out
+                        method = "window-pixels + \(layers.count) EditMax window\(layers.count == 1 ? "" : "s") over it (popover, sheet or menu)"
+                    }
+                }
+            }
         } catch {
             DebugLog.event("ui-screenshot-fallback", ["error": error.localizedDescription])
             method = "layer-render (Screen Recording not granted to EditMax; grant it in System Settings → Privacy & Security for true pixels; the tool never prompts)"

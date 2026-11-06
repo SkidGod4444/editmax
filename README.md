@@ -249,7 +249,9 @@ bun run build   # the static site, in web/out
 
 It is hosted on Vercel with the project's root directory set to `web`. Vercel builds every push to `main`, so there
 is no workflow for it. Asset paths start at `/`, so host it at the root of a domain, not under a sub-path. The
-Download button looks up the newest release's DMG through the GitHub API: publishing a release updates it.
+Download button looks up the newest release's DMG through the GitHub API: publishing a release updates it. Page views go
+to [Vercel Web Analytics](https://vercel.com/docs/analytics) (`<Analytics />` in `web/src/app/layout.tsx`); it sends
+nothing in development, and it needs Analytics turned on in the Vercel project.
 
 ### Releases
 

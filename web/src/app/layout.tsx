@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Analytics } from "@vercel/analytics/next";
 import { GeistMono } from "geist/font/mono";
 import { GeistSans } from "geist/font/sans";
 import { GeistSerifRegular } from "geist/font/serif/regular";
@@ -21,7 +22,11 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       lang="en"
       className={`dark ${fonts} h-full scroll-smooth antialiased`}
     >
-      <body className="grain min-h-full flex flex-col">{children}</body>
+      <body className="grain min-h-full flex flex-col">
+        {children}
+        {/* Vercel Web Analytics: page views, sent only from the Vercel deployment (never in development). */}
+        <Analytics />
+      </body>
     </html>
   );
 }

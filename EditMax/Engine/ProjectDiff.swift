@@ -30,6 +30,7 @@ enum ProjectDiff {
             if x.stabilization != y.stabilization { c.append(y.stabilization.map { "stabilized (zoom \(fmt($0.zoom))×)" } ?? "stabilization removed") }
             if x.grades != y.grades { c.append("grade layers (\(y.grades.count))") }
             if x.finish != y.finish { c.append(y.finish.map { "finishing: " + fields(x.finish ?? ClipFinish(), $0) } ?? "finishing removed") }
+            if x.effects != y.effects { c.append(Effects.diff(x.effects, y.effects)) }   // EffectsRender.swift
             if c.isEmpty { c.append("changed") }
             parts.append("\(y.name): " + c.joined(separator: ", "))
         }

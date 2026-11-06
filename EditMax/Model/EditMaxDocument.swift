@@ -93,8 +93,8 @@ final class EditMaxDocument: ReferenceFileDocument, ObservableObject {
         guard let last = undoStack.popLast() else { return }
         let current = project.withoutHistory
         commit("Undo \(last.label)", origin: .user) { p in
-            let history = p.history, transcripts = p.transcripts, motionPaths = p.motionPaths
-            p = last.project; p.history = history; p.transcripts = transcripts ?? p.transcripts; p.motionPaths = motionPaths ?? p.motionPaths
+            let history = p.history, transcripts = p.transcripts, motionPaths = p.motionPaths, faceTracks = p.faceTracks
+            p = last.project; p.history = history; p.transcripts = transcripts ?? p.transcripts; p.motionPaths = motionPaths ?? p.motionPaths; p.faceTracks = faceTracks ?? p.faceTracks
         }
         redoStack.append((last.label, current))
     }
@@ -103,8 +103,8 @@ final class EditMaxDocument: ReferenceFileDocument, ObservableObject {
         guard let next = redoStack.popLast() else { return }
         let current = project.withoutHistory
         commit("Redo \(next.label)", origin: .user) { p in
-            let history = p.history, transcripts = p.transcripts, motionPaths = p.motionPaths
-            p = next.project; p.history = history; p.transcripts = transcripts ?? p.transcripts; p.motionPaths = motionPaths ?? p.motionPaths
+            let history = p.history, transcripts = p.transcripts, motionPaths = p.motionPaths, faceTracks = p.faceTracks
+            p = next.project; p.history = history; p.transcripts = transcripts ?? p.transcripts; p.motionPaths = motionPaths ?? p.motionPaths; p.faceTracks = faceTracks ?? p.faceTracks
         }
         undoStack.append((next.label, current))
     }
@@ -114,11 +114,12 @@ final class EditMaxDocument: ReferenceFileDocument, ObservableObject {
         guard let snap = project.history.first(where: { $0.id == snapshotID }) else { throw EditError.notFound("snapshot \(snapshotID)") }
         let restored = try Self.decoder.decode(Project.self, from: snap.project)
         try apply("Restore: \(snap.label)", origin: origin) { p in
-            let history = p.history, transcripts = p.transcripts, motionPaths = p.motionPaths
+            let history = p.history, transcripts = p.transcripts, motionPaths = p.motionPaths, faceTracks = p.faceTracks
             p = restored
             p.history = history
             p.transcripts = transcripts   // a cache of the media, not part of the edit
             p.motionPaths = motionPaths
+            p.faceTracks = faceTracks
         }
     }
 
@@ -170,11 +171,12 @@ final class EditMaxDocument: ReferenceFileDocument, ObservableObject {
     func restore(version v: ProjectVersion, origin: EditOrigin) throws {
         guard !v.isCurrent else { return }
         try apply("Restore: \(v.label)", origin: origin) { p in
-            let history = p.history, transcripts = p.transcripts, motionPaths = p.motionPaths
+            let history = p.history, transcripts = p.transcripts, motionPaths = p.motionPaths, faceTracks = p.faceTracks
             p = v.project
             p.history = history
             p.transcripts = transcripts
             p.motionPaths = motionPaths
+            p.faceTracks = faceTracks
         }
     }
 }

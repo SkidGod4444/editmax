@@ -111,6 +111,7 @@ enum ExportService {
             video[AVVideoCompressionPropertiesKey] = [AVVideoProfileLevelKey: kVTProfileLevel_HEVC_Main10_AutoLevel as String, AVVideoAverageBitRateKey: Int(Double(w * h) * fps * 0.25),
                                                       AVVideoExpectedSourceFrameRateKey: fps, AVVideoAllowFrameReorderingKey: true]
         }
+        ColorManagement.tagMaster(&video, preset: preset, color: project.settings.color, writer: writer)   // HDR projects: Rec.2020 HLG / PQ
         let vin = AVAssetWriterInput(mediaType: .video, outputSettings: video)
         vin.expectsMediaDataInRealTime = false
         guard writer.canAdd(vin) else { throw EditError.invalid("\(preset.rawValue) is not available on this Mac") }

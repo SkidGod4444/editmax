@@ -16,6 +16,7 @@ final class LayerSource {
     /// When `clip.transitionIn` is live: the time it is done, and the clip it plays over (nil = from black).
     let transitionEnd: Double?
     let outgoingID: UUID?
+    var output: ColorManagement.Output = .passthrough   // HDR projects (ColorManagement.swift)
 
     init(trackID: CMPersistentTrackID, still: CIImage?, naturalSize: CGSize, preferredTransform: CGAffineTransform, clip: Clip, effectiveEnd: Double, transitionEnd: Double?, outgoingID: UUID?) {
         self.trackID = trackID; self.still = still; self.naturalSize = naturalSize; self.preferredTransform = preferredTransform
@@ -34,6 +35,7 @@ struct TextLayer {
     let text: TextOverlay
     let image: CIImage
     let size: CGSize
+    var raster: TitleRaster? = nil   // animated titles and lower thirds (TitleAnimation.swift)
 }
 
 final class EditMaxInstruction: NSObject, AVVideoCompositionInstructionProtocol {
@@ -45,6 +47,7 @@ final class EditMaxInstruction: NSObject, AVVideoCompositionInstructionProtocol 
     let layers: [TrackLayer]      // top row of the timeline first
     let texts: [TextLayer]
     let renderSize: CGSize
+    var output: ColorManagement.Output = .passthrough   // HDR projects (ColorManagement.swift)
 
     init(timeRange: CMTimeRange, layers: [TrackLayer], texts: [TextLayer], renderSize: CGSize, requiredTrackIDs: [CMPersistentTrackID]) {
         self.timeRange = timeRange; self.layers = layers; self.texts = texts; self.renderSize = renderSize
@@ -96,7 +99,7 @@ class EditMaxCompositor: NSObject, AVVideoCompositing {
                 if let f { Self.noteFormat(CVPixelBufferGetPixelFormatType(f)) }
                 return f
             }
-            Self.context.render(image, to: out, bounds: CGRect(origin: .zero, size: inst.renderSize), colorSpace: nil)
+            if !ColorManagement.render(image, to: out, inst) { Self.context.render(image, to: out, bounds: CGRect(origin: .zero, size: inst.renderSize), colorSpace: nil) }
             request.finish(withComposedVideoFrame: out)
         }
     }
@@ -122,7 +125,7 @@ final class CompareState: @unchecked Sendable {
 }
 
 /// The player's compositor: the same drawing, plus the before/after view.
-final class EditMaxPreviewCompositor: EditMaxCompositor {
+class EditMaxPreviewCompositor: EditMaxCompositor {
     override func image(_ inst: EditMaxInstruction, at t: Double, source: (CMPersistentTrackID) -> CVPixelBuffer?) -> CIImage {
         let mode = CompareState.shared.mode
         guard mode != .off else { return FrameRenderer.frame(inst, at: t, source: source) }
@@ -139,7 +142,7 @@ final class EditMaxPreviewCompositor: EditMaxCompositor {
 
 /// The compositor for the 10-bit HEVC export: the same drawing, but it hands the encoder 16-bit half-float frames so
 /// the grade is not cut to 8 bits on the way out. A subclass, because the preview's compositor keeps running meanwhile.
-final class EditMaxCompositor10: EditMaxCompositor {
+class EditMaxCompositor10: EditMaxCompositor {
     private static let attrs10: [String: Any] = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_64RGBAHalf,
                                                  kCVPixelBufferMetalCompatibilityKey as String: true]
     override var requiredPixelBufferAttributesForRenderContext: [String: Any] { Self.attrs10 }
@@ -153,9 +156,10 @@ enum FrameRenderer {
         var canvas = CIImage(color: .black).cropped(to: canvasRect)
         for layer in inst.layers.reversed() {   // bottom row first; the top row is drawn last and covers
             guard let img = picture(layer, at: t, size: size, bypassColor: bypassColor, source: source) else { continue }
-            canvas = img.composited(over: canvas)
+            canvas = Effects.composite(img, over: canvas, mode: layer.current.clip.effects.blend)   // blend modes (EffectsRender.swift)
         }
         for tl in inst.texts where tl.text.start <= t && t < tl.text.end {
+            if let drawn = TitleAnimator.draw(tl, at: t, size: size, over: canvas) { canvas = drawn; continue }   // animated titles (TitleAnimation.swift)
             let origin = CGPoint(x: size.width * tl.text.x - tl.size.width / 2, y: size.height * (1 - tl.text.y) - tl.size.height / 2)
             canvas = tl.image.transformed(by: CGAffineTransform(translationX: origin.x.rounded(), y: origin.y.rounded())).composited(over: canvas)
         }
@@ -178,12 +182,13 @@ enum FrameRenderer {
         if let still = src.still { img = still }
         else {
             guard let buf = source(src.trackID) else { return nil }
-            img = oriented(CIImage(cvPixelBuffer: buf, options: [.colorSpace: NSNull()]), natural: src.naturalSize, preferred: src.preferredTransform)
+            img = oriented(src.output.isPassthrough ? CIImage(cvPixelBuffer: buf, options: [.colorSpace: NSNull()]) : ColorManagement.source(buf, src.output), natural: src.naturalSize, preferred: src.preferredTransform)
         }
         let clip = src.clip, local = t - clip.start, tf = clip.transform(at: local)
         let w = img.extent.width, h = img.extent.height
         guard w > 0, h > 0 else { return nil }
         img = img.transformed(by: CGAffineTransform(translationX: -img.extent.minX, y: -img.extent.minY))
+        img = Effects.source(img, clip: clip, sourceTime: clip.sourceIn + clip.sourceOffset(at: local))   // face blur, green-screen key (EffectsRender.swift)
         if tf.cropLeft + tf.cropRight + tf.cropTop + tf.cropBottom > 0 {
             let r = CGRect(x: w * tf.cropLeft, y: h * tf.cropBottom, width: w * max(0.01, 1 - tf.cropLeft - tf.cropRight), height: h * max(0.01, 1 - tf.cropTop - tf.cropBottom))
             img = img.cropped(to: r)
@@ -209,7 +214,7 @@ enum FrameRenderer {
             if let lut = color.inputLut, !lut.isEmpty { img = Looks.apply(img, key: lut, mix: 1) }
         } else { img = ColorPipeline.apply(img, clip: clip, color: color, at: t, size: size) }   // grade, grade layers, finishing (GradeStack.swift)
         let alpha = clip.opacity(at: local) * fade(clip, at: t)
-        if alpha < 1 { img = withAlpha(img, alpha) }
+        if alpha < 1 { img = clip.effects.blend == .normal ? withAlpha(img, alpha) : Effects.opacity(img, alpha) }
         return img.cropped(to: CGRect(origin: .zero, size: size))
     }
 
@@ -267,6 +272,8 @@ enum FrameRenderer {
             return b.cropped(to: CGRect(x: 0, y: 0, width: size.width * p, height: size.height)).composited(over: a)
         case .wipeLeft:
             return b.cropped(to: CGRect(x: size.width * (1 - p), y: 0, width: size.width * p, height: size.height)).composited(over: a)
+        default:
+            return Transitions.blend(kind, from: a, to: b, progress: p, size: size)   // the newer kinds (Transitions.swift)
         }
     }
 

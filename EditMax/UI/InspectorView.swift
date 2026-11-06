@@ -454,6 +454,7 @@ struct ClipInspector: View {
                     CurvesCard(document: document, clip: clip)        // UI/CurvesSection.swift
                     lookCard
                     ColorStackSections(document: document, clip: clip)   // shot match, grade layers, finishing (UI/ColorStackSections.swift)
+                    ClipEffectsSection(document: document, clip: clip)   // green screen, blend, face blur (EffectsInspector.swift)
                 }
                 audioCard
                 eqCard
@@ -822,6 +823,7 @@ struct TextInspector: View {
                         }), supportsOpacity: false).labelsHidden().pointer().uiFrame("inspector.text.color")
                     }
                 }
+                TextEffectsSection(document: document, text: text)   // animation, lower third (EffectsInspector.swift)
                 InspectorCard("Position", footer: "0% is the top-left of the frame, 100% the bottom-right. Drag the bar on the timeline to move it in time, its edges to change the length.") {
                     HStack(spacing: 8) {
                         Text("Horizontal").inspectorLabel()
@@ -951,6 +953,7 @@ struct ProjectInspector: View {
             InspectorValueRow("Resolution", "\(p.settings.width)×\(p.settings.height)")
             InspectorValueRow("Frame rate", "\(Int(p.settings.fps)) fps")
             InspectorValueRow("Duration", Timecode.string(p.duration))
+            ProjectColorRow(document: document)   // SDR / HDR (EffectsInspector.swift)
             InspectorValueRow("Clips", "\(p.allClips.count)")
             InspectorValueRow("Project ID", document.id.short)
         }

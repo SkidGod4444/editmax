@@ -26,10 +26,11 @@ struct ToolExecutor {
             var sequence: String?                      // name of the nested sequence this clip plays, if any
             var stabilized: Bool?                      // true when stabilize_clip has run on the clip
             var gradeLayers: [ToolExecutor.LayerInfo]? = nil, finish: ClipFinish? = nil   // color layers and finishing, only when set (ColorTools.swift)
+            var effects: [String: String]? = nil       // key, blend mode, face / region blur, only when set (EffectsTools.swift)
         }
         struct KeyframeInfo: Codable { var time: Double, value: Double, ease: String }
         struct MarkerInfo: Codable { var id: String, time: Double, name: String, color: String }
-        struct TextInfo: Codable { var id: String, text: String, start: Double, end: Double, preset: String?, caption: String? }
+        struct TextInfo: Codable { var id: String, text: String, start: Double, end: Double, preset: String?, caption: String?; var animation: TextAnimation? = nil, lowerThird: LowerThird? = nil }
         struct TrackInfo: Codable { var id: String, name: String, kind: String, clipCount: Int, muted: Bool, hidden: Bool; var duckUnder: String?; var duckLevel: Double? }
         var project: String, projectID: String, width: Int, height: Int, fps: Double, duration: Double
         var tracks: [TrackInfo], clips: [ClipInfo], texts: [TextInfo], markers: [MarkerInfo], historyCount: Int
@@ -37,6 +38,7 @@ struct ToolExecutor {
         var useProxies: Bool
         /// Pairs of texts that cover each other at some moment ("'A' and 'B' overlap 1.4–4.4 s"); absent when none do.
         var textOverlaps: [String]?
+        var color: String? = nil   // hlg or pq for an HDR project
     }
 
     func inspectTimeline() -> TimelineSummary {
@@ -57,7 +59,7 @@ struct ToolExecutor {
                 if !c.grades.isEmpty || c.finish != nil { clips[clips.count - 1].gradeLayers = c.grades.isEmpty ? nil : layersResult(c.id, "").layers; clips[clips.count - 1].finish = c.finish }
             }
         }
-        return TimelineSummary(
+        var summary = TimelineSummary(
             project: document.displayName, projectID: document.id.short,
             width: p.settings.width, height: p.settings.height, fps: p.settings.fps, duration: r(p.duration),
             tracks: p.tracks.map { t in .init(id: t.id.short, name: t.name, kind: t.kind.rawValue, clipCount: t.clips.count, muted: t.isMuted, hidden: t.isHidden,
@@ -67,6 +69,8 @@ struct ToolExecutor {
             markers: p.markers.map { .init(id: $0.id.short, time: r($0.time), name: $0.name, color: $0.colorHex) },
             historyCount: p.history.count, playhead: UIRegistry.shared.playheads[document.id]?().map(r), useProxies: p.settings.useProxies,
             textOverlaps: Self.textOverlaps(p))
+        addEffects(to: &summary)   // EffectsTools.swift
+        return summary
     }
 
     struct AssetInfo: Codable { var id: String, name: String, kind: String, duration: Double, width: Int?, height: Int?, path: String }

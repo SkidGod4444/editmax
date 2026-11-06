@@ -631,7 +631,7 @@ enum Interchange {
         let edlClips = layout.primary.items.filter { if case .clip(let c) = $0 { return c.enabled && c.streams != .audio }; return false }
         let inFile: [Clip] = format == .edl ? (base?.clips ?? []) : clips
         let dissolves = inFile.filter { $0.transitionIn != nil }
-        let others = dissolves.filter { $0.transitionIn?.kind != .crossDissolve }
+        let others = dissolves.filter { [.dipToBlack, .wipeLeft, .wipeRight].contains($0.transitionIn?.kind) }   // the newer kinds: Effects.notTransferred
         let constantSpeed = inFile.filter { !$0.isAnimated(.speed) && Swift.abs($0.speed - 1) > 0.0005 }
         let ramps = inFile.filter { $0.isAnimated(.speed) }
         let edlEvents = format == .edl ? edlEvents(p, media: media, layout: layout).events : 0
@@ -686,6 +686,7 @@ enum Interchange {
         let stab = inFile.filter { $0.stabilization != nil }
         if !stab.isEmpty { no.append("Stabilization on \(n(stab.count, "clip"))") }
         no += ColorPipeline.notTransferred(inFile)   // wheels, curves, grade layers, masks, finishing (GradeStack.swift)
+        no.append(contentsOf: Effects.notTransferred(p, clips: inFile, edl: format == .edl))   // keys, blend modes, blurs, newer transitions, title animations, HDR
         let keyed = inFile.filter { c in c.animations.contains { $0.key != ClipParam.speed.rawValue && !$0.value.isEmpty } }
         if !keyed.isEmpty { no.append("Keyframes on \(n(keyed.count, "clip")) (animated transform, auto-reframe, color, opacity or volume)") }
         let cropped = inFile.filter { $0.transform.cropLeft != 0 || $0.transform.cropRight != 0 || $0.transform.cropTop != 0 || $0.transform.cropBottom != 0 }

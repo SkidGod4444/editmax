@@ -114,8 +114,8 @@ enum EditMaxTools {
              inputSchema: schema(["seconds": num("Timeline time"), "project": projectArg]), annotations: .init(readOnlyHint: true)),
         Tool(name: "set_clip_fades", description: "Fade a clip in from black and silence and/or out to them, in seconds.",
              inputSchema: schema(["clip": str("Clip id prefix"), "fade_in": num("Seconds"), "fade_out": num("Seconds"), "project": projectArg], required: ["clip"])),
-        Tool(name: "set_transition", description: "Put a transition on the start of a clip, from the clip that ends where it starts (or from black): crossDissolve, dipToBlack, wipeLeft, wipeRight, or none to remove. It takes the first `duration` seconds of the clip; the outgoing clip needs that much media past its out point.",
-             inputSchema: schema(["clip": str("Incoming clip id prefix"), "kind": str("crossDissolve | dipToBlack | wipeLeft | wipeRight | none"), "duration": num("Seconds, default 0.5"), "project": projectArg], required: ["clip"])),
+        Tool(name: "set_transition", description: "Put a transition on the start of a clip, from the clip that ends where it starts (or from black): \(Transition.Kind.allCases.map(\.rawValue).joined(separator: ", ")), or none to remove. push* move both pictures, slide* bring the new one in over the old, wipe* reveal it behind an edge, iris opens a circle from the centre. It takes the first `duration` seconds of the clip; the outgoing clip needs that much media past its out point.",
+             inputSchema: schema(["clip": str("Incoming clip id prefix"), "kind": str(Transition.Kind.allCases.map(\.rawValue).joined(separator: " | ") + " | none"), "duration": num("Seconds, default 0.5"), "project": projectArg], required: ["clip"])),
         Tool(name: "set_keyframe", description: "Animate a clip parameter: set its value at a time (keyframe). Two or more keyframes on a parameter interpolate between them (linear, smooth = ease in/out, hold = jump). The first keyframe replaces the plain value. speed keyframes make a speed ramp (0 = freeze frame).",
              inputSchema: schema(["clip": str("Clip id prefix"), "param": str("scale, x, y, rotation, opacity, exposure, contrast, saturation, temperature, tint, volume, speed"), "time": num("Timeline seconds (default: the playhead); clamped to the clip"), "value": num("The value at that time"), "ease": str("linear (default), smooth, hold: how it moves to the next keyframe"), "project": projectArg], required: ["clip", "param", "value"])),
         Tool(name: "remove_keyframe", description: "Remove one keyframe (at time, default the playhead) or, with all=true, every keyframe of the parameter, which freezes it at its current value.",
@@ -174,6 +174,36 @@ enum EditMaxTools {
         Tool(name: "stabilize_clip", description: "Smooth camera shake on a video clip: analyses its motion frame by frame (on-device image registration, a few seconds per minute of footage), smooths the camera path over `strength` seconds and counter-shifts the picture every frame, zooming in slightly (up to 1.25×) to hide the borders. Keyed to source time, so later trims and speed changes keep working; call again to re-analyse. Returns samples, zoom, crop percentage and the largest shift; remove true clears it.",
              inputSchema: schema(["clip": str("Clip id prefix or name"), "strength": num("Smoothing window in seconds (default 0.6; larger = steadier but more zoom, 0.1-3)"),
                                   "remove": .object(["type": "boolean", "description": "Remove the stabilization instead"]), "project": projectArg], required: ["clip"])),
+        // MARK: Effects
+        Tool(name: "set_chroma_key", description: "Green-screen (chroma) key a video or still clip on a video track: the screen colour turns transparent and the rows below show through (put the background on a lower video track). color \"auto\" (the default for a clip without a key) picks the screen colour from the edges of the frame at `time` and refuses when no saturated colour dominates them; or give #RRGGBB. tolerance widens what counts as screen, softness the ramp at the edge, spill takes the screen's colour cast off hair and skin; shrink (+) / grow (-) and edge_blur clean the matte, in pixels of a 1080-line picture. Values out of range are refused, not clamped. Omitted values keep the clip's current ones (or the defaults: tolerance 0.4, softness 0.3, spill 0.6, shrink 0, edge_blur 0). One undoable edit; the result gives the key and how much of the frame at `time` is keyed, edge and kept. Check with key_matte and capture_frame.",
+             inputSchema: schema(["clip": str("Clip id prefix or name"), "color": str("auto (detect from the frame's edges) or #RRGGBB"), "tolerance": num("0-1 (default 0.4)"), "softness": num("0-1 (default 0.3)"),
+                                  "spill": num("0-1: spill suppression (default 0.6)"), "shrink": num("-20 to 20 px: + shrinks the kept area, - grows it (default 0)"), "edge_blur": num("0-20 px blur of the matte edge (default 0)"),
+                                  "time": num("Timeline seconds of the frame to detect and measure on (default: the playhead, inside the clip)"),
+                                  "remove": .object(["type": "boolean", "description": "Remove the key instead"]), "project": projectArg], required: ["clip"])),
+        Tool(name: "key_matte", description: "Show a keyed clip's matte at a time as a PNG (white = kept, black = keyed out, grey = partly transparent), with the share of each. Reads the clip's own picture, before crop, transform and grade. Use it to judge set_chroma_key: holes in the subject = lower tolerance; screen left grey = raise it.",
+             inputSchema: schema(["clip": str("Clip id prefix or name (it must have a key)"), "time": num("Timeline seconds inside the clip (default: the playhead)"), "max_width": int("PNG width in pixels, 64-4096 (default 960)"), "project": projectArg], required: ["clip"])),
+        Tool(name: "set_blend_mode", description: "How a clip's picture combines with the video rows below it: \(ClipBlendMode.allCases.map(\.rawValue).joined(separator: ", ")). normal covers them, as always. Opacity, fades and keyframed opacity mix the blended result with what is below. Transparent areas (outside a scaled-down picture, a keyed-out screen) leave the rows below untouched. Unknown modes are refused.",
+             inputSchema: schema(["clip": str("Clip id prefix or name"), "mode": str(ClipBlendMode.allCases.map(\.rawValue).joined(separator: " | ")), "project": projectArg], required: ["clip", "mode"])),
+        Tool(name: "blur_faces", description: "Find and follow every face in a video clip with on-device face detection (about 10 frames a second over the clip's source range, faces numbered 1, 2, ... in order of appearance) and blur, pixelate or black them out in every frame, following them through crop, transform and trims. The result lists each face with the timeline seconds it is seen. Leave chosen faces sharp with exclude [numbers] (or blur only some with only [numbers]). A second call with only look settings re-uses the analysis; reanalyse true runs it again. remove true takes the face blur off (blur regions stay). Detection can miss faces in profile, very small or blurred: check with capture_frame, and use blur_region for what it misses.",
+             inputSchema: schema(["clip": str("Clip id prefix or name"), "style": str("blur (default), pixelate or solid (black)"), "strength": num("0-1: blur radius or pixel size relative to the face (default 0.6)"),
+                                  "expand": num("0-1: grow each face box by this fraction (default 0.25)"), "feather": num("0-1: softness of the edge (default 0.4)"),
+                                  "exclude": .object(["type": "array", "items": .object(["type": "integer"]), "description": "Face numbers to leave sharp"]),
+                                  "only": .object(["type": "array", "items": .object(["type": "integer"]), "description": "Blur only these face numbers"]),
+                                  "reanalyse": .object(["type": "boolean", "description": "Run the face analysis again"]), "remove": .object(["type": "boolean", "description": "Remove the face blur"]), "project": projectArg], required: ["clip"])),
+        Tool(name: "blur_region", description: "Blur a rectangle of a clip (a licence plate, a screen, a logo): x, y, width, height normalized 0-1 to the clip's own picture (top-left corner, y down, before crop and transform), from start to end (timeline seconds, default the whole clip). track true follows it through the video from `start` with on-device object tracking and holds it where tracking is lost (the result says when). Uses the clip's blur look (style, strength, feather; shared with blur_faces). remove takes a region number or all.",
+             inputSchema: schema(["clip": str("Clip id prefix or name"), "x": num("Left edge, 0-1"), "y": num("Top edge, 0-1"), "width": num("0.01-1"), "height": num("0.01-1"),
+                                  "start": num("Timeline seconds (default: clip start)"), "end": num("Timeline seconds (default: clip end)"),
+                                  "track": .object(["type": "boolean", "description": "Follow the rectangle through the video from start"]),
+                                  "style": str("blur, pixelate or solid"), "strength": num("0-1"), "feather": num("0-1"), "remove": str("A region number, or all"), "project": projectArg], required: ["clip"])),
+        Tool(name: "set_text_animation", description: "Animate how a title or lower third comes on and goes off: in and out each take \(TextAnimation.Kind.allCases.map(\.rawValue).joined(separator: ", ")) (none = it cuts). fade, slideUp / slideDown (a short move with a fade), pop (scales up with a small overshoot), typewriter (letter by letter), words (word by word), wipe (left to right; on a lower third it builds piece by piece). Durations 0.05-5 s; in + out may not exceed the text's length. Omitted values keep the current ones. Preview, export and capture_frame show the same frames.",
+             inputSchema: schema(["text": str("Text id prefix (from inspect_timeline)"), "in": str("How it comes on"), "in_duration": num("Seconds (default 0.5)"), "out": str("How it goes off"), "out_duration": num("Seconds (default 0.4)"), "project": projectArg], required: ["text"])),
+        Tool(name: "add_lower_third", description: "Add a lower third: a name with a role under it, drawn by a template (bar: an accent bar beside a dark box; box: the name on an accent box, the role on a dark one; line: the name over an accent rule, no box), placed lower left unless x / y say otherwise, coming on with a wipe and going off with a fade unless in / out say otherwise. With `text` it edits that lower third instead. It is a text overlay: move, retime and remove it like any text. Returns its id and settings, and says when it leaves the frame or overlaps another text.",
+             inputSchema: schema(["name": str("The name (the big line)"), "role": str("The line under it (job title, place); empty for none"), "template": str("bar (default), box or line"),
+                                  "start": num("Timeline seconds (default: the playhead)"), "duration": num("Seconds, 0.5-600 (default 4)"), "x": num("Centre x, 0-1 (default: lower left)"), "y": num("Centre y, 0-1, down (default: lower left)"),
+                                  "accent": str("#RRGGBB of the bar / box / rule (default #FF9F0A)"), "color": str("#RRGGBB of the name (default white)"), "font_size": num("Name size in points at the project size, 16-200 (default 56); the role is 55 % of it"),
+                                  "in": str("In animation (default wipe)"), "out": str("Out animation (default fade)"), "text": str("Id prefix of a lower third to edit instead of adding one"), "project": projectArg], required: ["name"])),
+        Tool(name: "set_project_color", description: "The project's output colour: sdr (Rec.709, the default; frames pass through unmanaged, exactly as before), hlg or pq (HDR in Rec.2020). In an HDR project the preview and the hevc10 / ProRes masters are HDR (HLG or PQ tags; PQ also carries mastering-display metadata), SDR sources sit at reference white (203 nits) and HLG / PQ sources (iPhone HDR video) keep their highlights; H.264 exports and capture_frame stay SDR with HDR sources tone-mapped. Grades, LUTs and the key work in 0-1 and clip HDR highlights in the clips that use them.",
+             inputSchema: schema(["color": str("sdr | hlg | pq"), "project": projectArg], required: ["color"])),
         // MARK: Color
     ] + colorTools
 
@@ -227,7 +257,7 @@ enum EditMaxTools {
     private static let contentTools: Set<String> = ["get_transcript", "search_transcript", "cut_transcript", "remove_words", "add_captions"]
     /// Free-text arguments (titles, searched phrases, words to remove) are the user's or the footage's content:
     /// the log records how long they were, never what they said.
-    private static let textArgs: Set<String> = ["text", "phrase", "query", "words", "from_word", "to_word", "lines", "names"]
+    private static let textArgs: Set<String> = ["text", "phrase", "query", "words", "from_word", "to_word", "lines", "names", "role"]
     private static func loggableArgs(_ args: [String: Value]) -> String {
         var out: [String: Value] = [:]
         for (k, v) in args {
@@ -520,6 +550,25 @@ enum EditMaxTools {
             let (png, result) = try await x.captureMatte(try req("clip"), layer: try req("layer"), at: d("seconds"), maxWidth: i("max_width") ?? 640)
             let p = try payload(result)
             return Payload(text: p.text, value: p.value, image: png)
+        // MARK: Effects
+        case "set_chroma_key":
+            return try payload(try await x.setChromaKey(try req("clip"), color: s("color"), tolerance: d("tolerance"), softness: d("softness"), spill: d("spill"), shrink: d("shrink"), edgeBlur: d("edge_blur"), time: d("time"), remove: b("remove")))
+        case "key_matte":
+            let (r, png) = try await x.keyMatte(try req("clip"), time: d("time"), maxWidth: i("max_width") ?? 960)
+            var p = try payload(r); p.image = png; return p
+        case "set_blend_mode":
+            return try payload(try x.setBlendMode(try req("clip"), mode: try req("mode")))
+        case "blur_faces":
+            let ints = { (k: String) -> [Int]? in a[k]?.arrayValue.map { $0.compactMap { $0.intValue ?? $0.doubleValue.map { Int($0) } } } }
+            return try payload(try await x.blurFaces(try req("clip"), style: s("style"), strength: d("strength"), expand: d("expand"), feather: d("feather"), exclude: ints("exclude"), only: ints("only"), reanalyse: b("reanalyse"), remove: b("remove")))
+        case "blur_region":
+            return try payload(try await x.blurRegion(try req("clip"), x: d("x"), y: d("y"), width: d("width"), height: d("height"), start: d("start"), end: d("end"), track: b("track"), style: s("style"), strength: d("strength"), feather: d("feather"), remove: s("remove")))
+        case "set_text_animation":
+            return try payload(try x.setTextAnimation(try req("text"), inKind: s("in"), inDuration: d("in_duration"), outKind: s("out"), outDuration: d("out_duration")))
+        case "add_lower_third":
+            return try payload(try x.addLowerThird(name: try req("name"), role: s("role"), template: s("template"), start: d("start"), duration: d("duration"), x: d("x"), y: d("y"), accent: s("accent"), color: s("color"), fontSize: d("font_size"), inKind: s("in"), outKind: s("out"), text: s("text")))
+        case "set_project_color":
+            return try payload(try x.setProjectColor(try req("color")))
         default: throw MCPError.methodNotFound("Unknown tool \(name)")
         }
     }

@@ -8,6 +8,8 @@ struct ProjectSettings: Codable, Equatable {
     var fps: Double = 30
     /// Preview from low-resolution proxy files when they exist; the export always uses the originals.
     var useProxies: Bool = false
+    /// Output colour: SDR Rec.709 (the pass-through path) or HDR HLG / PQ in Rec.2020 (see `ColorManagement`).
+    var color: ProjectColor = .sdr
 
     init(width: Int = 1920, height: Int = 1080, fps: Double = 30, useProxies: Bool = false) { self.width = width; self.height = height; self.fps = fps; self.useProxies = useProxies }
     var canvas: CGSize { CGSize(width: width, height: height) }
@@ -17,6 +19,7 @@ struct ProjectSettings: Codable, Equatable {
         height = try c.decodeIfPresent(Int.self, forKey: .height) ?? 1080
         fps = try c.decodeIfPresent(Double.self, forKey: .fps) ?? 30
         useProxies = try c.decodeIfPresent(Bool.self, forKey: .useProxies) ?? false
+        color = (try? c.decodeIfPresent(String.self, forKey: .color)).flatMap(ProjectColor.init(rawValue:)) ?? .sdr
     }
 }
 
@@ -141,8 +144,10 @@ struct ClipColor: Codable, Equatable {
 struct Transition: Codable, Equatable {
     enum Kind: String, Codable, CaseIterable {
         case crossDissolve, dipToBlack, wipeLeft, wipeRight
+        case dipToWhite, blurDissolve, pushLeft, pushRight, pushUp, pushDown, slideLeft, slideRight, slideUp, slideDown, zoom, iris, wipeUp, wipeDown   // drawn by `Transitions`
         var title: String {
-            switch self { case .crossDissolve: return "Cross dissolve"; case .dipToBlack: return "Dip to black"; case .wipeLeft: return "Wipe left"; case .wipeRight: return "Wipe right" }
+            switch self { case .crossDissolve: return "Cross dissolve"; case .dipToBlack: return "Dip to black"; case .wipeLeft: return "Wipe left"; case .wipeRight: return "Wipe right"
+            default: return Transitions.title(self) }
         }
     }
     var kind: Kind = .crossDissolve
@@ -211,6 +216,8 @@ struct Clip: Codable, Identifiable, Equatable {
     var grades: [GradeLayer] = []
     /// Grain, glow, vignette, sharpen and noise reduction after the grade; nil = none.
     var finish: ClipFinish? = nil
+    /// Green-screen key, blend mode, face and region blur (all off by default).
+    var effects = ClipEffects()
     var end: Double { start + duration }
     /// Where the clip's media ends in the asset: with a speed ramp, the integral of speed over the clip.
     var sourceOut: Double { sourceIn + sourceOffset(at: duration) }
@@ -245,6 +252,7 @@ struct Clip: Codable, Identifiable, Equatable {
         stabilization = try c.decodeIfPresent(Stabilization.self, forKey: .stabilization)
         grades = try c.decodeIfPresent([GradeLayer].self, forKey: .grades) ?? []
         finish = try c.decodeIfPresent(ClipFinish.self, forKey: .finish)
+        effects = try c.decodeIfPresent(ClipEffects.self, forKey: .effects) ?? ClipEffects()
     }
 
     /// The two clips a split at `local` seconds produces; the right one gets a new id and no transition or fade-in.
@@ -475,6 +483,8 @@ struct TextOverlay: Codable, Identifiable, Equatable {
     var y: Double = 0.85
     var preset: String? = nil   // CaptionPresets name; nil = "title"
     var group: UUID? = nil      // set on captions made in one go, so they can be removed together
+    var animation: TextAnimation? = nil   // how it comes on and goes off (nil = it cuts)
+    var lowerThird: LowerThird? = nil     // drawn as a lower third: `text` is the name, the role goes under it
     var end: Double { start + duration }
     var isCaption: Bool { group != nil }
 }
@@ -520,6 +530,9 @@ struct Project: Codable, Equatable {
     /// Stabilization samples keyed by `Stabilization.pathKey` (asset, source range, strength): analysis results, a cache like
     /// `transcripts`, left out of history snapshots and kept across undo/redo/restore.
     var motionPaths: [String: [Stabilization.Sample]]? = nil
+    /// Face and tracked-region boxes keyed by `FaceBlur.pathKey` / `BlurRegion.pathKey`: analysis results, a cache like
+    /// `motionPaths`, left out of history snapshots and kept across undo/redo/restore.
+    var faceTracks: [String: [FaceTrack]]? = nil
     /// Nested sequences (timelines folded into one clip); assets of kind `.sequence` point at them.
     var sequences: [Sequence] = []
     var history: [HistoryEntry] = []
@@ -538,6 +551,7 @@ struct Project: Codable, Equatable {
         markers = try c.decodeIfPresent([Marker].self, forKey: .markers) ?? []
         transcripts = try c.decodeIfPresent([String: Transcript].self, forKey: .transcripts)
         motionPaths = try c.decodeIfPresent([String: [Stabilization.Sample]].self, forKey: .motionPaths)
+        faceTracks = try? c.decodeIfPresent([String: [FaceTrack]].self, forKey: .faceTracks)
         sequences = try c.decodeIfPresent([Sequence].self, forKey: .sequences) ?? []
         history = try c.decodeIfPresent([HistoryEntry].self, forKey: .history) ?? []
     }
@@ -564,9 +578,10 @@ struct Project: Codable, Equatable {
     }
 
     /// Copy of this project with history (and the transcript cache) stripped, for snapshots and resource reads.
-    var withoutHistory: Project { var p = self; p.history = []; p.transcripts = nil; p.motionPaths = nil; return p }
+    var withoutHistory: Project { var p = self; p.history = []; p.transcripts = nil; p.motionPaths = nil; p.faceTracks = nil; return p }
     /// The clip with its stabilization samples filled in from the cache (the compositor reads them from the clip).
     func hydrated(_ clip: Clip) -> Clip {
+        let clip = hydratedBlur(clip)   // face and region boxes from `faceTracks` (FaceBlur.swift)
         guard var st = clip.stabilization, st.samples.isEmpty, let samples = motionPaths?[st.pathKey], !samples.isEmpty else { return clip }
         var c = clip; st.samples = samples; c.stabilization = st; return c
     }

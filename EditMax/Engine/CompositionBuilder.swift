@@ -158,6 +158,7 @@ enum CompositionBuilder {
 
         // Titles, rasterized once per build.
         let texts: [TextLayer] = project.texts.compactMap { tx in
+            if let animated = TitleRasterizer.layer(tx, canvas: renderSize) { return animated }   // animated titles, lower thirds (TitleAnimation.swift)
             guard let (img, px) = OverlayLayerBuilder.renderText(tx, canvas: renderSize) else { return nil }
             let ci = CIImage(cgImage: img, options: [.colorSpace: NSNull()])   // rasterized at the screen's backing scale; bring it to render pixels
             let sx = px.width / max(1, ci.extent.width), sy = px.height / max(1, ci.extent.height)
@@ -196,6 +197,7 @@ enum CompositionBuilder {
             instructions.append(EditMaxInstruction(timeRange: range, layers: layers, texts: visibleTexts, renderSize: renderSize, requiredTrackIDs: required))
         }
         videoComp.instructions = instructions
+        ColorManagement.configure(videoComp, compositor: compositor, color: project.settings.color)   // HDR projects only
 
         let mix = AVMutableAudioMix()
         mix.inputParameters = audioParams

@@ -114,7 +114,7 @@ final class CodemaxUpdater: ObservableObject {
         guard !checking else { return }
         checking = true
         status.busy = true
-        status.message = "Checking for a codemax update…"
+        status.message = "Checking for an agent runtime update…"
         let bundledVersion = CodemaxInstaller.shared.status.bundledVersion ?? CodemaxInstaller.version(of: CodemaxRunner.bundledBinary(.codemax) ?? URL(fileURLWithPath: "/nonexistent"))
         Task.detached(priority: .utility) {
             let message = await Self.runCheck(reason: reason, bundledVersion: bundledVersion)
@@ -160,11 +160,11 @@ final class CodemaxUpdater: ObservableObject {
         guard let rel else { s.latest = nil; saveState(s); return "No release found." }
         s.latest = rel.version
         saveState(s)
-        guard isNewer(rel.version, current) else { return "codemax \(current) is current (latest release \(rel.version))." }
-        guard !s.badVersions.contains(rel.version) else { return "codemax \(rel.version) is available but failed here before; staying on \(current)." }
+        guard isNewer(rel.version, current) else { return "Agent runtime \(current) is current (latest release \(rel.version))." }
+        guard !s.badVersions.contains(rel.version) else { return "Agent runtime \(rel.version) is available but failed here before; staying on \(current)." }
         guard let assetURL = rel.asset else {
             DebugLog.event("update-no-asset", ["version": rel.version, "asset": assetName])
-            return "codemax \(rel.version) is released without a \(assetName) binary; staying on \(current)."
+            return "Agent runtime \(rel.version) is released without a \(assetName) binary; staying on \(current)."
         }
         // Download next to the binaries, check the checksum, then make sure it runs before it takes over.
         let tmp = binDirectory.appendingPathComponent("codemax-\(rel.version).download")
@@ -188,7 +188,7 @@ final class CodemaxUpdater: ObservableObject {
             try? FileManager.default.removeItem(at: tmp)
             s.badVersions.append(rel.version); saveState(s)
             DebugLog.error("update-rejected", error, ["version": rel.version])
-            return "codemax \(rel.version) was downloaded but failed its check (\(error.localizedDescription)); staying on \(current). It will not be tried again."
+            return "Agent runtime \(rel.version) was downloaded but failed its check (\(error.localizedDescription)); staying on \(current). It will not be tried again."
         }
         // Swap: the running copy becomes .prev (the way back), the new one takes its name.
         do {
@@ -199,11 +199,11 @@ final class CodemaxUpdater: ObservableObject {
             s.active = "updated"; s.updatedVersion = rel.version; s.failures = []
             saveState(s)
             DebugLog.event("update-installed", ["version": rel.version, "from": current])
-            return "codemax updated to \(rel.version) (was \(current)). The next chat session uses it."
+            return "Agent runtime updated to \(rel.version) (was \(current)). The next chat session uses it."
         } catch {
             try? FileManager.default.removeItem(at: tmp)
             DebugLog.error("update-swap-failed", error, ["version": rel.version])
-            return "codemax \(rel.version) passed its check but could not be put in place: \(error.localizedDescription)"
+            return "Agent runtime \(rel.version) passed its check but could not be put in place: \(error.localizedDescription)"
         }
     }
 
@@ -278,7 +278,7 @@ final class CodemaxUpdater: ObservableObject {
         if fm.fileExists(atPath: Self.previousBinary.path), (try? fm.moveItem(at: Self.previousBinary, to: Self.installedBinary)) != nil,
            let pv = CodemaxInstaller.version(of: Self.installedBinary), !s.badVersions.contains(pv),
            let bundled = CodemaxInstaller.shared.status.bundledVersion, Self.isNewer(pv, bundled) {
-            s.active = "updated"; s.updatedVersion = pv; restored = "codemax \(pv)"
+            s.active = "updated"; s.updatedVersion = pv; restored = "runtime \(pv)"
         } else {
             s.active = "bundled"; s.updatedVersion = nil
             // The installed copy (what ~/.local/bin/codemax points at) goes back to the bundled build.
@@ -288,7 +288,7 @@ final class CodemaxUpdater: ObservableObject {
         Self.saveState(s)
         try? fm.removeItem(at: bad)
         DebugLog.event("update-rollback", ["from": v, "to": s.updatedVersion ?? "bundled"])
-        self.status.message = "codemax \(v) kept failing and was rolled back to \(restored)."
+        self.status.message = "Agent runtime \(v) kept failing and was rolled back to \(restored)."
         refreshStatus()
         return true
     }

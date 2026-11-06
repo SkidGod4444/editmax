@@ -2,7 +2,7 @@
 
 <img src="docs/icon-256.png" width="128" align="right" alt="EditMax icon">
 
-Native macOS AI video editor (Swift / SwiftUI / AVFoundation). Working name chosen 2026-11-05.
+Native macOS agentic video editor (Swift / SwiftUI / AVFoundation). Working name chosen 2026-11-05.
 
 Inspired by Palmier Pro's architecture (an editor that exposes itself to coding agents over a local MCP server),
 with these deliberate differences:
@@ -20,7 +20,7 @@ with these deliberate differences:
 ## Status (2026-11-05)
 
 Working:
-- Document model (`.editmax` JSON), multi-window, media panel with import; drag media (or Finder files) onto a timeline lane to place a clip at that time, double-click to append
+- Document model (`.emx` JSON; older `.editmax` files still open), multi-window, media panel with import; drag media (or Finder files) onto a timeline lane to place a clip at that time, double-click to append
 - Timeline: video/audio tracks, clip move/split/trim/delete, speed, volume, opacity, close gaps, text overlays
 - Undo/redo (⌘Z, ⇧⌘Z, toolbar arrows) over every edit, the agent's included; the History tab stays the full log with restore points
 - Picture: EditMax's own compositor (`EditMax/Engine/Compositor.swift`, Core Image on the GPU) draws every frame of the preview, the export
@@ -89,11 +89,11 @@ Working:
   dark plate whose shape, corner curve and shadow come from a real macOS app icon's alpha mask, `scripts/icon/plate_mask.raw`,
   so it sits level with Apple's icons; `scripts/icon/build_svg.py` rebuilds the SVG). `scripts/make-icon.sh`
   renders it with headless Chrome and rebuilds `EditMax/Resources/AppIcon.icns` (`CFBundleIconFile` in `project.yml`),
-  `EditMax/Resources/ProjectDoc.icns` (the `.editmax` document icon from `scripts/icon/doc.html`, `CFBundleTypeIconFile` /
+  `EditMax/Resources/ProjectDoc.icns` (the `.emx` document icon from `scripts/icon/doc.html`, `CFBundleTypeIconFile` /
   `UTTypeIconFile`) and the README copies in `docs/`. The preview's empty state and the About panel use the same icon.
   Finder caches document icons per bundle version: after changing `ProjectDoc.icns`, bump `CFBundleVersion`, run
   `lsregister -f` on the built app, delete `$(getconf DARWIN_USER_CACHE_DIR)com.apple.iconservices` and
-  `killall iconservicesagent`, or `.editmax` files keep the generic page icon.
+  `killall iconservicesagent`, or `.emx` files keep the generic page icon.
 - Signing: debug builds are signed with the Apple Development certificate pinned by hash in `project.yml`, so macOS keeps
   the Screen Recording and keychain grants across rebuilds (ad-hoc signing made every build a new app). On another Mac,
   replace the hash with one from `security find-identity -v -p codesigning` or with `"-"` for ad-hoc.
@@ -159,6 +159,20 @@ chapter track (chapters are a sidecar text file).
 ## Build
 
 Requires Xcode 27 and `xcodegen` (`brew install xcodegen`). Re-run `xcodegen generate` after adding files.
+The deployment target is macOS 15. Liquid Glass goes through `EditMax/UI/Glass.swift` (`liquidGlass(in:tint:interactive:)`,
+`GlassGroup`, `glassButtonStyle(prominent:)`): real `glassEffect` / `GlassEffectContainer` / glass button styles on
+macOS 26, a material with a hairline before it, same layout either way. Never call the 26-only APIs directly. Glass is
+used only on the control layer: the window toolbar (Home / Focus / Export, native so it is glass on 26 by itself), the
+preview's overlay buttons, the export HUD and version banner, the transport pills in focus and full-screen mode, the
+inspector tab strip, the chat's input bar and suggestion chips, Home's format chips and New project button, the splash
+card. Panels, inspectors, the timeline strip and lists stay opaque, standard controls; nothing is glass on glass.
+Selected glass controls (inspector tab, Home chip, active preview-overlay button) share one tint,
+`Color.glassSelection`, so the accent reads as the same blue everywhere. `-noglass` on the command line forces the pre-26 material path on any Mac, so the fallback can be checked here; a real
+macOS 15 run is still needed before shipping (this Mac runs 27).
+
+Naming: "codemax" is the internal name of the bundled agent CLI (repo SkidGod4444/codemax-cli). User-facing text says
+"agent runtime" (the Agents tab, chat empty state, installer and updater messages); file paths, logs, README and code
+keep the real name.
 
 ```sh
 scripts/vendor-codemax.sh   # builds ../codemax-cli with bun into Vendor/codemax (bundled by Xcode)
@@ -204,6 +218,42 @@ UI conventions (every control): `.pointer()` for the hand cursor, written inside
 and icon buttons in bars and overlays get `.focusable(false)` so none of them takes the keyboard focus ring; sliders
 and continuous edits coalesce into one undo step. Menu items must not gate on `@FocusedObject` state: the focused
 document goes nil whenever the editor window is not key, so gate in the notification receiver instead.
+
+## Home
+
+Launching without a file opens Home (also Window → Home, ⇧⌘P, and whenever the last editor window closes): the
+project library as a grid of cards with a poster frame, name, last-edited time, frame size and duration, a Draft
+badge on projects not yet named, search, Open… and Show in Finder. Projects live in `~/Movies/EditMax Projects`;
+New project (⇧⌘N on Home) writes `Untitled N.emx` there with the chosen format chip (16:9, 9:16, 1:1, 4K,
+2.39:1, 4:5) and opens it, so every project is a file that autosaves. Double-click a card (or Open in its context
+menu) to open it; Move to Trash asks first. Driver ids: `home.new`, `home.open`, `home.template.<slug>`,
+`home.project.<stem>`. ⌘N anywhere (File → New Project, and New Project in Format…) creates a library project
+too, so no project is ever an unsaved in-memory document.
+
+Project files are `.emx` (JSON; the older `.editmax` extension still opens and still lists on Home). The type is
+declared in `project.yml` (`io.openhorizon.editmax.project`, tags `emx` + `editmax`). Opening goes through
+NSDocumentController, which resolves the file's type from LaunchServices, so a Mac whose database still holds an
+older EditMax build (one that did not declare `emx`) says "EditMax cannot open files of this type" until that
+build is unregistered: `lsregister -u <old app>` then `lsregister -f <this app>` (the tool lives in
+`/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/`). Every
+worktree build registers itself, so clean those out. A released build on a clean Mac has no such conflict.
+
+## Launch
+
+The splash is the app icon alone, centred on a Liquid Glass card (dark-tinted; a material before macOS 26): it lands with a spring (from 88 %, a soft
+overshoot, its shadow deepening) and one pass of light crosses its metal; the name and a one-line description sit under it (plain fades, nothing moves), and a thin loading bar below climbs while the app starts and completes when
+the agent server is up; the version sits small at the bottom; nothing else is on the card. With Reduce Motion on, everything simply fades. 2.2 s of motion,
+pure SwiftUI. The splash stays at least 2.2 s (longer on a slow Mac, 5 s at most) and fades once the MCP server is
+listening; nothing of the app is visible while it is up (restored document windows are kept out of sight and put
+back as it fades), and Home opens as it fades when no project is open.
+
+Launch with nothing to restore (every launch after a clean quit; macOS closes windows on quit by default) goes to
+Home. AppKit first asks the delegate `applicationShowsOpenPanelInsteadOfUntitledFile:`; left unanswered, a
+document-based app can get an Open panel at launch instead of an untitled document, so `AppDelegate` answers no and
+handles `applicationOpenUntitledFile` by showing Home. The empty untitled document `DocumentGroup` still makes at
+launch is closed 0.3 s in (`launch-docs` in the log). It shows only for a launch that activated the app (Dock, Finder, `open`); a
+background launch (`open -g`, as the agent's test relaunches use) gets none, so it never pops over other apps' windows.
+`-nosplash` on the command line skips it; `-splash-preview` shows it even on a background launch, `-splash-loop` replays it every 2.8 s for watching, `-splash-t <seconds>` freezes it at that moment of the choreography and keeps it up (capture the window with `screencapture -l <windowNumber>`, the number is in the `splash-show` log line), and `-splash-render <png>` writes a static still of the end state.
 
 ## Session log
 

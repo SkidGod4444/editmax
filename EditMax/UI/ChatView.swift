@@ -5,36 +5,46 @@ struct ChatView: View {
     @ObservedObject var chat: ChatSession
     @State private var keyDraft = ""
     @State private var editingKey = false
+    /// The composer field's current height: a capsule while it is one line, a rounded rectangle once it wraps.
+    @State private var fieldHeight: CGFloat = 0
+
+    /// The example requests in the empty state; a tap puts one in the input.
+    private static let suggestions = ["cut the first 2 seconds", "add a title that says Welcome at 0:01", "speed up the second clip"]
+    /// The transcript and the composer share one reading column, so the focus-mode (wide) chat does not run edge to edge.
+    private static let columnWidth: CGFloat = 760
 
     var body: some View {
         VStack(spacing: 0) {
-            header.padding(.horizontal, 8).padding(.vertical, 6)
+            header.padding(.horizontal, 12).padding(.vertical, 8)
             Divider()
             if chat.backend == .agent, hasAgentProblem {
-                agentProblem.padding(8); Divider()
-            } else if chat.backend == .apiKey, chat.apiProblem != nil || editingKey { keyEntry.padding(8); Divider() }
+                agentProblem.padding(12); Divider()
+            } else if chat.backend == .apiKey, chat.apiProblem != nil || editingKey { keyEntry.padding(12); Divider() }
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 10) {
-                        if chat.items.isEmpty { emptyState }
+                    LazyVStack(alignment: .leading, spacing: 12) {
                         ForEach(chat.items) { item in ItemView(item: item).id(item.id) }
                         if chat.isRunning {
-                            HStack(spacing: 6) {
-                                ProgressView().controlSize(.small)
+                            HStack(spacing: 8) {
+                                PulseDot()
                                 Text("\(workerName) is working…").font(.caption).foregroundStyle(.secondary)
                             }
-                            .padding(.vertical, 2).id("working")
+                            .padding(.horizontal, 4).id("working")
                         }
                     }
-                    .padding(10)
+                    .padding(12)
+                    .frame(maxWidth: Self.columnWidth)
+                    .frame(maxWidth: .infinity)
                 }
+                .overlay { if chat.items.isEmpty { emptyState } }
+                // The input bar floats over the transcript: the list scrolls under it and scroll-to-end stops above it.
+                .safeAreaInset(edge: .bottom, spacing: 0) { composer }
                 .onChange(of: chat.items.count) { _, _ in scrollToEnd(proxy) }
                 .onChange(of: chat.items.last?.text.count) { _, _ in scrollToEnd(proxy) }
                 .onChange(of: chat.isRunning) { _, _ in scrollToEnd(proxy) }
             }
-            Divider()
-            composer.padding(8)
         }
+        .animation(.snappy, value: chat.isRunning)
     }
 
     private func scrollToEnd(_ proxy: ScrollViewProxy) {
@@ -44,21 +54,14 @@ struct ChatView: View {
 
     private var workerName: String { chat.backend == .agent ? (chat.selectedAgent?.name ?? "The agent") : (chat.selectedProvider?.name ?? "The model") }
 
-    // MARK: Header: one row for the backend, one compact row for the agent (or model) choice.
+    // MARK: Header: one 28 pt row (backend, agent or provider, refresh, running dot … key, trash) and a status caption under it.
     private var header: some View {
-        VStack(spacing: 6) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
                 Picker("", selection: $chat.backend) { ForEach(ChatSession.Backend.allCases, id: \.self) { Text($0.rawValue).tag($0) } }
-                    .pickerStyle(.segmented).labelsHidden().controlSize(.small).frame(maxWidth: 160).pointer().uiFrame("chat.backend")
+                    .pickerStyle(.segmented).labelsHidden().controlSize(.small).frame(maxWidth: 130).pointer().uiFrame("chat.backend")
                     .onChange(of: chat.backend) { old, new in chat.switchBackend(from: old, to: new) }
-                Spacer()
-                if chat.backend == .apiKey {
-                    Button { editingKey.toggle() } label: { Image(systemName: "key") }.buttonStyle(.borderless).focusable(false).help("API keys").pointer().uiFrame("chat.keys")
-                }
-                Button { chat.clear() } label: { Image(systemName: "trash") }.buttonStyle(.borderless).focusable(false).help("Clear conversation").pointer().disabled(chat.items.isEmpty).uiFrame("chat.clear")
-            }
-            if chat.backend == .agent {
-                HStack(spacing: 6) {
+                if chat.backend == .agent {
                     Picker("", selection: $chat.agent) {
                         ForEach(chat.agents) { a in
                             HStack(spacing: 6) {
@@ -69,14 +72,9 @@ struct ChatView: View {
                         if chat.agents.isEmpty { Text(chat.agent).tag(chat.agent) }
                     }
                     .labelsHidden().controlSize(.small).frame(maxWidth: 200).pointer().disabled(chat.isRunning).uiFrame("chat.agent")
-                    Button { chat.refreshAgents() } label: { Image(systemName: "arrow.clockwise") }
+                    Button { chat.refreshAgents() } label: { Image(systemName: "arrow.clockwise").imageScale(.medium) }
                         .buttonStyle(.borderless).focusable(false).controlSize(.small).help("Look for installed agents again").pointer().disabled(chat.isRunning).uiFrame("chat.refreshAgents")
-                    Spacer(minLength: 4)
-                    Text(agentDetail).font(.caption2).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.middle)
-                        .help(chat.agentStatus)
-                }
-            } else {
-                HStack(spacing: 6) {
+                } else {
                     Picker("", selection: $chat.provider) {
                         ForEach(chat.providers) { p in
                             HStack(spacing: 6) {
@@ -87,14 +85,29 @@ struct ChatView: View {
                         if chat.providers.isEmpty { Text(chat.provider).tag(chat.provider) }
                     }
                     .labelsHidden().controlSize(.small).frame(maxWidth: 170).pointer().disabled(chat.isRunning).uiFrame("chat.provider")
+                    Button { chat.refreshProviders() } label: { Image(systemName: "arrow.clockwise").imageScale(.medium) }
+                        .buttonStyle(.borderless).focusable(false).controlSize(.small).help("Check keys and Claude Code again").pointer().disabled(chat.isRunning).uiFrame("chat.refreshProviders")
+                }
+                if chat.isRunning { PulseDot().transition(.opacity) }
+                Spacer(minLength: 4)
+                if chat.backend == .apiKey {
+                    Button { editingKey.toggle() } label: { Image(systemName: "key").imageScale(.medium) }
+                        .buttonStyle(.borderless).focusable(false).help("API keys").pointer().uiFrame("chat.keys")
+                }
+                Button { chat.clear() } label: { Image(systemName: "trash").imageScale(.medium) }
+                    .buttonStyle(.borderless).focusable(false).help("Clear conversation").pointer().disabled(chat.items.isEmpty).uiFrame("chat.clear")
+            }
+            .frame(height: 28)
+            if chat.backend == .apiKey {
+                HStack(spacing: 8) {
                     TextField(chat.selectedProvider?.defaultModel ?? "model id", text: $chat.model)
                         .textFieldStyle(.roundedBorder).controlSize(.small).frame(maxWidth: 150).disabled(chat.isRunning)
                         .help("Model id; empty uses the provider's default").uiFrame("chat.model")
-                    Button { chat.refreshProviders() } label: { Image(systemName: "arrow.clockwise") }
-                        .buttonStyle(.borderless).focusable(false).controlSize(.small).help("Check keys and Claude Code again").pointer().disabled(chat.isRunning).uiFrame("chat.refreshProviders")
-                    Spacer(minLength: 4)
-                    Text(apiDetail).font(.caption2).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.middle).help(chat.apiStatus)
+                    Text(apiDetailLine).font(.caption2).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.middle).help(chat.apiStatus)
+                    Spacer(minLength: 0)
                 }
+            } else if !agentDetail.isEmpty {
+                Text(agentDetail).font(.caption2).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.middle).help(chat.agentStatus)
             }
         }
     }
@@ -111,6 +124,9 @@ struct ChatView: View {
         return parts.count > 1 ? parts.dropFirst().joined(separator: " · ") : ""
     }
 
+    /// Status and, after a turn, its token usage: "Claude Agent 0.93.0 · fable · 1.2k in · 300 out · $0.012".
+    private var apiDetailLine: String { [apiDetail, chat.lastUsage].filter { !$0.isEmpty }.joined(separator: " · ") }
+
     /// "Claude Agent 0.93.0 · fable" without the codemax prefix; the full string is the tooltip.
     private var agentDetail: String {
         if chat.agents.isEmpty, CodemaxRunner.bundledBinary != nil { return "Looking for agents…" }
@@ -121,7 +137,7 @@ struct ChatView: View {
     /// Shown only when the agent backend cannot run: codemax missing, or the chosen agent is not installed.
     @ViewBuilder private var agentProblem: some View {
         if CodemaxRunner.bundledBinary == nil {
-            Label("codemax is missing from this build of EditMax.", systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.red)
+            Label("The agent runtime is missing from this build of EditMax.", systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.red)
         } else if let a = chat.selectedAgent, !a.installed {
             VStack(alignment: .leading, spacing: 4) {
                 Label("\(a.name) was not found on this Mac" + (a.problem.map { " (\($0))" } ?? "") + ".", systemImage: "exclamationmark.triangle")
@@ -135,18 +151,25 @@ struct ChatView: View {
     }
     private var hasAgentProblem: Bool { CodemaxRunner.bundledBinary == nil || (chat.selectedAgent.map { !$0.installed } ?? false) }
 
+    // MARK: Empty state: a symbol, one line, one short note on how it runs, and three example requests as chips.
     private var emptyState: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if chat.backend == .agent {
-                Text("Runs the coding agents you already use (Claude Code, Codex, OpenCode, Cursor…) with their own logins through EditMax's bundled codemax. No API key.")
-                Text("The agent may only call EditMax's editing tools. File edits, shell commands and questions are refused automatically, so it works unattended.")
-            } else {
-                Text("Uses your own API key through EditMax's bundled sidecar: Claude through the Claude Agent SDK (Claude Code's own harness; a key is optional there), or Claude, OpenAI, Google and xAI through the Vercel AI SDK. Pay per token, no subscription.")
-                Text("The model may only call EditMax's editing tools, the same as the agents.")
+        VStack(spacing: 12) {
+            Image(systemName: "sparkles").font(.system(size: 36, weight: .light)).foregroundStyle(.tertiary).padding(.bottom, 4)
+            Text("Tell \(workerName) what to change").font(.headline)
+            Text(chat.backend == .agent
+                 ? "Runs with its own login through EditMax's bundled agent runtime, no API key. It can only call EditMax's editing tools."
+                 : "Uses your own API key through EditMax's bundled sidecar, pay per token. It can only call EditMax's editing tools.")
+                .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center).frame(maxWidth: 320).fixedSize(horizontal: false, vertical: true)
+            VStack(spacing: 8) {
+                ForEach(Array(Self.suggestions.enumerated()), id: \.offset) { i, s in
+                    SuggestionChip(text: s, id: "chat.suggestion.\(i)") { chat.input = s }
+                }
             }
-            Text("Try: “cut the first 2 seconds”, “add a title that says Welcome at 0:01”, “speed up the second clip”.")
+            .padding(.top, 8)
         }
-        .font(.caption).foregroundStyle(.secondary).padding(.top, 6)
+        .padding(.horizontal, 16).padding(.vertical, 24)
+        .padding(.bottom, 56)   // keeps the group centred in the part of the list not under the input bar
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     /// The key box for the chosen provider's slot: what it needs, where the key is now (keychain or environment), save and remove.
@@ -179,22 +202,66 @@ struct ChatView: View {
         }
     }
 
+    // MARK: Composer: the floating control layer, so the only glass in this view. A capsule field and a round send / stop button.
     private var composer: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .bottom) {
+        GlassGroup(spacing: 8) {
+            HStack(alignment: .bottom, spacing: 8) {
                 TextField("Tell \(workerName) what to change…", text: $chat.input, axis: .vertical)
-                    .textFieldStyle(.roundedBorder).lineLimit(1...6)
-                    .onSubmit { chat.send() }.uiFrame("chat.input")
+                    .textFieldStyle(.plain).font(.body).lineLimit(1...6)
+                    .onSubmit { chat.send() }
+                    .padding(.horizontal, 14).padding(.vertical, 8)
+                    .frame(minHeight: 32)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fieldHeight = $0 }
+                    .liquidGlass(in: fieldShape)
+                    .uiFrame("chat.input")
                 if chat.isRunning {
-                    Button { chat.stop() } label: { Image(systemName: "stop.circle.fill").font(.title2) }.buttonStyle(.borderless).focusable(false).help("Stop").pointer().uiFrame("chat.stop")
+                    Button { chat.stop() } label: { Image(systemName: "stop.fill").font(.system(size: 12, weight: .bold)).frame(width: 18, height: 18) }
+                        .glassButtonStyle(prominent: true).buttonBorderShape(.circle).tint(.accentColor).focusable(false).help("Stop").pointer().uiFrame("chat.stop")
                 } else {
-                    Button { chat.send() } label: { Image(systemName: "arrow.up.circle.fill").font(.title2) }
-                        .buttonStyle(.borderless).focusable(false).keyboardShortcut(.return, modifiers: .command)
+                    Button { chat.send() } label: { Image(systemName: "arrow.up").font(.system(size: 14, weight: .semibold)).frame(width: 18, height: 18) }
+                        .glassButtonStyle(prominent: true).buttonBorderShape(.circle).tint(.accentColor).focusable(false).keyboardShortcut(.return, modifiers: .command)
+                        .help("Send (⌘↩)")
                         .pointer().disabled(chat.input.trimmingCharacters(in: .whitespaces).isEmpty || (chat.backend == .apiKey ? !chat.apiReady : !chat.agentReady)).uiFrame("chat.send")
                 }
             }
-            if chat.backend == .apiKey, !chat.lastUsage.isEmpty { Text(chat.lastUsage).font(.caption2).foregroundStyle(.tertiary) }
         }
+        .padding(12)
+        .frame(maxWidth: Self.columnWidth)
+        .frame(maxWidth: .infinity)
+    }
+
+    /// A capsule for a one-line field; once it wraps, a continuous rounded rectangle so the corners stay clear of the text.
+    private var fieldShape: AnyShape {
+        fieldHeight > 40 ? AnyShape(RoundedRectangle(cornerRadius: 16, style: .continuous)) : AnyShape(Capsule())
+    }
+}
+
+/// A small accent dot that pulses while a reply streams.
+private struct PulseDot: View {
+    var body: some View {
+        Image(systemName: "circle.fill").font(.system(size: 7)).foregroundStyle(Color.accentColor)
+            .symbolEffect(.pulse, options: .repeating)
+            .accessibilityLabel("Working")
+    }
+}
+
+/// One example request in the empty state: a capsule on the content layer (not glass), 6 % hover, fills the input on a click.
+private struct SuggestionChip: View {
+    let text: String
+    let id: String
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Text(text).font(.body).lineLimit(2).multilineTextAlignment(.center)
+                .padding(.horizontal, 12).padding(.vertical, 6)
+                .liquidGlass(tint: hovering ? Color.primary.opacity(0.06) : nil, interactive: true)
+        }
+        .buttonStyle(.plain).focusable(false)
+        .onHover { hovering = $0 }
+        .animation(.snappy, value: hovering)
+        .pointer().uiFrame(id).uiTap(id, action)
     }
 }
 
@@ -206,17 +273,24 @@ private struct ItemView: View {
         switch item.kind {
         case .user:
             HStack { Spacer(minLength: 40)
-                Text(item.text).font(.callout).padding(8).background(Color.accentColor.opacity(0.25)).cornerRadius(8).textSelection(.enabled) }
+                Text(item.text).font(.body).textSelection(.enabled)
+                    .padding(.horizontal, 12).padding(.vertical, 8)
+                    .background(Color.accentColor.opacity(0.18), in: RoundedRectangle(cornerRadius: 12, style: .continuous)) }
         case .assistant:
-            MarkdownBlocks(text: item.text).frame(maxWidth: .infinity, alignment: .leading)
+            MarkdownBlocks(text: item.text).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 4)
         case .tool:
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
                     statusIcon.frame(width: 14)
-                    Text(item.text).font(.system(size: 11, design: .monospaced)).foregroundStyle(item.status == "failed" ? .red : .secondary).lineLimit(1)
-                    Spacer()
+                    Text(item.text).font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .foregroundStyle(item.status == "failed" ? Color.red : Color.primary).lineLimit(1).layoutPriority(1)
+                    Text(summary).font(.system(size: 12)).foregroundStyle(item.status == "failed" ? Color.red.opacity(0.8) : Color.secondary)
+                        .lineLimit(1).truncationMode(.tail)
+                    Spacer(minLength: 0)
                     if hasDetails { Image(systemName: expanded ? "chevron.down" : "chevron.right").font(.caption2).foregroundStyle(.tertiary) }
                 }
+                .padding(.horizontal, 10).frame(height: 28)
+                .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                 .contentShape(Rectangle()).onTapGesture { if hasDetails { expanded.toggle() } }.pointer()
                 .uiFrame("chat.tool.\(item.id.short)").uiTap("chat.tool.\(item.id.short)") { if hasDetails { expanded.toggle() } }
                 if expanded {
@@ -224,15 +298,27 @@ private struct ItemView: View {
                     if let d = item.detail { block(item.status == "failed" ? "Error" : "Result", d) }
                 }
             }
-            .padding(.vertical, 2)
+            .animation(.snappy, value: expanded)
         case .note:
-            Label(item.text, systemImage: "info.circle").font(.caption).foregroundStyle(.secondary)
+            Label(item.text, systemImage: "info.circle").font(.caption).foregroundStyle(.secondary).padding(.horizontal, 4)
         case .error:
-            Label(item.text, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.red).textSelection(.enabled)
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill").imageScale(.medium).foregroundStyle(.red)
+                Text(item.text).font(.body).textSelection(.enabled)
+            }
+            .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.red.opacity(0.1), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
     }
 
     private var hasDetails: Bool { item.input != nil || item.detail != nil }
+
+    /// The one-line result after the tool name: the first line of its output, or what it is doing.
+    private var summary: String {
+        if item.status == "running" { return "running…" }
+        guard let d = item.detail else { return "" }
+        return d.split(separator: "\n", omittingEmptySubsequences: true).first.map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
+    }
 
     @ViewBuilder private var statusIcon: some View {
         switch item.status {
@@ -274,17 +360,17 @@ struct MarkdownBlocks: View {
             ForEach(Array(Self.parse(text).enumerated()), id: \.offset) { _, b in
                 switch b {
                 case .heading(let level, let t):
-                    Text(Self.inline(t)).font(level == 1 ? .headline : level == 2 ? .subheadline.weight(.semibold) : .callout.weight(.semibold)).padding(.top, 2)
+                    Text(Self.inline(t)).font(level == 1 ? .headline : level == 2 ? .subheadline.weight(.semibold) : .body.weight(.semibold)).padding(.top, 2)
                 case .bullets(let items):
                     VStack(alignment: .leading, spacing: 2) {
                         ForEach(Array(items.enumerated()), id: \.offset) { _, it in
-                            HStack(alignment: .firstTextBaseline, spacing: 6) { Text("•").foregroundStyle(.secondary); Text(Self.inline(it)).font(.callout) }
+                            HStack(alignment: .firstTextBaseline, spacing: 6) { Text("•").foregroundStyle(.secondary); Text(Self.inline(it)).font(.body) }
                         }
                     }
                 case .numbered(let items):
                     VStack(alignment: .leading, spacing: 2) {
                         ForEach(Array(items.enumerated()), id: \.offset) { i, it in
-                            HStack(alignment: .firstTextBaseline, spacing: 6) { Text("\(i + 1).").foregroundStyle(.secondary).monospacedDigit(); Text(Self.inline(it)).font(.callout) }
+                            HStack(alignment: .firstTextBaseline, spacing: 6) { Text("\(i + 1).").foregroundStyle(.secondary).monospacedDigit(); Text(Self.inline(it)).font(.body) }
                         }
                     }
                 case .code(let c):
@@ -303,7 +389,7 @@ struct MarkdownBlocks: View {
                     }
                     .padding(6).background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
                 case .paragraph(let t):
-                    Text(Self.inline(t)).font(.callout)
+                    Text(Self.inline(t)).font(.body)
                 }
             }
         }

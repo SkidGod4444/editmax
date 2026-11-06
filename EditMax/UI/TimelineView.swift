@@ -50,43 +50,74 @@ struct TimelineView: View {
         }
     }
 
+    /// Fixed strip above the ruler: transport | timecode HUD | undo/redo | icon-only edit actions in purpose groups | zoom.
+    /// Standard bordered/plain controls, not glass: nothing here floats over content.
     private var toolbar: some View {
-        HStack(spacing: 10) {
-            HStack(spacing: 2) {
-                Button { player.step(frames: -1, fps: document.project.settings.fps) } label: { Image(systemName: "backward.frame") }.focusable(false).help("Previous frame").pointer().uiFrame("toolbar.stepBack")
-                Button { player.togglePlay() } label: { Image(systemName: player.isPlaying ? "pause.fill" : "play.fill").frame(width: 18) }.focusable(false).help("Play or pause (space)").pointer().uiFrame("toolbar.play")
-                Button { player.step(frames: 1, fps: document.project.settings.fps) } label: { Image(systemName: "forward.frame") }.focusable(false).help("Next frame").pointer().uiFrame("toolbar.stepForward")
+        let fps = document.project.settings.fps
+        return HStack(spacing: 12) {
+            // Transport: one compact group on a faint plate.
+            HStack(spacing: 0) {
+                toolButton("backward.frame", help: "Previous frame", id: "toolbar.stepBack") { player.step(frames: -1, fps: fps) }
+                toolButton(player.isPlaying ? "pause.fill" : "play.fill", help: "Play or pause (space)", id: "toolbar.play", width: 28) { player.togglePlay() }
+                toolButton("forward.frame", help: "Next frame", id: "toolbar.stepForward") { player.step(frames: 1, fps: fps) }
             }
-            .font(.system(size: 12))
+            .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            // Timecode HUD: the current time prominent, the duration secondary.
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(Timecode.string(player.currentTime, fps: fps)).font(.system(size: 13, weight: .semibold, design: .monospaced)).monospacedDigit()
+                Text(Timecode.string(document.project.duration, fps: fps)).font(.system(size: 11, design: .monospaced)).monospacedDigit().foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 10).frame(height: 24)
+            .background(Color.black.opacity(0.18), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color.primary.opacity(0.08), lineWidth: 1))
+            .help("Playhead / project duration")
+            toolbarSeparator
+            HStack(spacing: 0) {
+                toolButton("arrow.uturn.backward", help: document.undoLabel.map { "Undo \($0) (⌘Z)" } ?? "Undo (⌘Z)", id: "toolbar.undo", disabled: !document.canUndo) { document.undo() }
+                toolButton("arrow.uturn.forward", help: document.redoLabel.map { "Redo \($0) (⇧⌘Z)" } ?? "Redo (⇧⌘Z)", id: "toolbar.redo", disabled: !document.canRedo) { document.redo() }
+            }
+            toolbarSeparator
+            // Editing actions, grouped by purpose: cut & remove | add | range.
+            HStack(spacing: 0) {
+                toolButton("scissors", help: "Split the selected clip at the playhead (S)", id: "toolbar.split", disabled: state.selectedClipIDs.isEmpty) { actions.splitAtPlayhead() }
+                toolButton("trash", help: "Delete the selection (⌫)", id: "toolbar.delete", disabled: state.selectedClipIDs.isEmpty && state.selectedTextID == nil) { actions.deleteSelection() }
+                toolButton("arrow.left.and.line.vertical.and.arrow.right", help: "Remove the empty space between clips", id: "toolbar.closeGaps") { actions.closeGaps() }
+            }
+            toolbarSeparator
+            HStack(spacing: 0) {
+                toolButton("square.on.square.dashed", help: "Cross dissolve into the selected clip from the one before it (⌘T)", id: "toolbar.transition", disabled: state.selectedClipIDs.isEmpty) { actions.addTransition() }
+                toolButton("flag", help: "Add a marker at the playhead (M)", id: "toolbar.marker") { actions.addMarker() }
+            }
+            toolbarSeparator
+            toolButton("scissors.badge.ellipsis", help: "Ripple out everything between the in and out points (I and O set them, X clears)", id: "toolbar.deleteRange", disabled: !actions.hasRange) { actions.deleteRange() }
+            Spacer(minLength: 8)
+            // Zoom: − slider + at the far right.
             HStack(spacing: 4) {
-                Text(Timecode.string(player.currentTime, fps: document.project.settings.fps)).font(.system(size: 13, weight: .semibold, design: .rounded)).monospacedDigit()
-                Text("/ \(Timecode.string(document.project.duration, fps: document.project.settings.fps))").font(.system(size: 11, design: .rounded)).monospacedDigit().foregroundStyle(.secondary)
+                toolButton("minus", help: "Zoom out", id: "toolbar.zoomOut", width: 20) { state.pixelsPerSecond = max(10, state.pixelsPerSecond / 1.4) }
+                Slider(value: $state.pixelsPerSecond, in: 10...400).frame(width: 110).controlSize(.small).help("Timeline zoom").pointer().uiFrame("toolbar.zoom")
+                toolButton("plus", help: "Zoom in", id: "toolbar.zoomIn", width: 20) { state.pixelsPerSecond = min(400, state.pixelsPerSecond * 1.4) }
             }
-            .frame(width: 170, alignment: .leading)
-            Divider().frame(height: 14)
-            HStack(spacing: 2) {
-                Button { document.undo() } label: { Image(systemName: "arrow.uturn.backward") }.focusable(false).help(document.undoLabel.map { "Undo \($0) (⌘Z)" } ?? "Undo (⌘Z)").pointer().disabled(!document.canUndo).uiFrame("toolbar.undo")
-                Button { document.redo() } label: { Image(systemName: "arrow.uturn.forward") }.focusable(false).help(document.redoLabel.map { "Redo \($0) (⇧⌘Z)" } ?? "Redo (⇧⌘Z)").pointer().disabled(!document.canRedo).uiFrame("toolbar.redo")
-            }
-            .font(.system(size: 12))
-            Divider().frame(height: 14)
-            HStack(spacing: 4) {
-                Button("Split", systemImage: "scissors") { actions.splitAtPlayhead() }.focusable(false).help("Split the selected clip at the playhead (S)").pointer().disabled(state.selectedClipIDs.isEmpty).uiFrame("toolbar.split")
-                Button("Delete", systemImage: "trash") { actions.deleteSelection() }.focusable(false).help("Delete the selection (⌫)").pointer().disabled(state.selectedClipIDs.isEmpty && state.selectedTextID == nil).uiFrame("toolbar.delete")
-                Button("Close gaps", systemImage: "arrow.left.and.line.vertical.and.arrow.right") { actions.closeGaps() }.focusable(false).help("Remove the empty space between clips").pointer().uiFrame("toolbar.closeGaps")
-                Divider().frame(height: 14)
-                Button("Transition", systemImage: "square.on.square.dashed") { actions.addTransition() }.focusable(false).help("Cross dissolve into the selected clip from the one before it (⌘T)").pointer().disabled(state.selectedClipIDs.isEmpty).uiFrame("toolbar.transition")
-                Button("Marker", systemImage: "flag") { actions.addMarker() }.focusable(false).help("Add a marker at the playhead (M)").pointer().uiFrame("toolbar.marker")
-                Button("Delete range", systemImage: "scissors.badge.ellipsis") { actions.deleteRange() }.focusable(false).help("Ripple out everything between the in and out points (I and O set them, X clears)").pointer().disabled(!actions.hasRange).uiFrame("toolbar.deleteRange")
-            }
-            .font(.system(size: 11))
-            Spacer()
-            Button { state.pixelsPerSecond = max(10, state.pixelsPerSecond / 1.4) } label: { Image(systemName: "minus.magnifyingglass") }.focusable(false).help("Zoom out").pointer().uiFrame("toolbar.zoomOut")
-            Slider(value: $state.pixelsPerSecond, in: 10...400).frame(width: 110).controlSize(.small).pointer().uiFrame("toolbar.zoom")
-            Button { state.pixelsPerSecond = min(400, state.pixelsPerSecond * 1.4) } label: { Image(systemName: "plus.magnifyingglass") }.focusable(false).help("Zoom in").pointer().uiFrame("toolbar.zoomIn")
         }
         .buttonStyle(.borderless)
-        .padding(.horizontal, 10).padding(.vertical, 6)
+        .padding(.horizontal, 12).padding(.vertical, 6)
+        .background(Color(nsColor: .controlBackgroundColor))
+    }
+
+    private var toolbarSeparator: some View {
+        Rectangle().fill(Color.primary.opacity(0.12)).frame(width: 1, height: 14)
+    }
+
+    /// One icon-only toolbar button: 24×22 hit area, medium symbol, help text, and the pointer/disabled/uiFrame chain in the required order.
+    private func toolButton(_ symbol: String, help: String, id: String, width: CGFloat = 24, disabled: Bool = false, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol).font(.system(size: 12, weight: .medium)).imageScale(.medium)
+                .frame(width: width, height: 22)
+                .contentShape(Rectangle())
+        }
+        .focusable(false)
+        .help(help)
+        .pointer().disabled(disabled)
+        .uiFrame(id)
     }
 
     private var headers: some View {
@@ -107,25 +138,51 @@ struct TimelineView: View {
         .overlay(alignment: .trailing) { Divider() }
     }
 
+    /// The row whose selection the user is working in: a track holding a selected clip, or the Text lane with a selected title.
+    private func isActiveRow(_ id: UUID) -> Bool {
+        if id == Project.textRowID { return state.selectedTextID != nil }
+        guard let track = document.project.track(id) else { return false }
+        return track.clips.contains { state.selectedClipIDs.contains($0.id) }
+    }
+
+    /// Name 12 pt semibold over the kind 10 pt secondary; mute/hide in a fixed trailing column so the icons line up across rows.
+    private func headerTitle(_ name: String, kind: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(name).font(.system(size: 12, weight: .semibold)).lineLimit(1).fixedSize()
+            Text(kind).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+        }
+    }
+
+    private func headerIcon(_ symbol: String, on: Bool, help: String, id: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol).font(.system(size: 10, weight: .medium)).imageScale(.medium)
+                .frame(width: 20, height: 20).contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless).focusable(false)
+        .foregroundStyle(on ? Color.orange : Color.secondary)
+        .help(help).pointer().uiFrame(id)
+    }
+
     private func trackHeader(_ track: Track) -> some View {
                 HStack(spacing: 6) {
                     Image(systemName: "line.3.horizontal").font(.system(size: 9)).foregroundStyle(hoveredHeader == track.id ? .secondary : .quaternary)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(track.name).font(.system(size: 12, weight: .semibold)).lineLimit(1).fixedSize()
-                        Text(track.kind == .video ? "Video" : "Audio").font(.system(size: 9)).foregroundStyle(.tertiary)
-                    }
+                    headerTitle(track.name, kind: track.kind == .video ? "Video" : "Audio")
                     Spacer(minLength: 2)
-                    if track.kind == .video {
-                        Button { toggleHidden(track) } label: { Image(systemName: track.isHidden ? "eye.slash" : "eye").frame(width: 16) }
-                            .buttonStyle(.borderless).focusable(false).font(.system(size: 10)).foregroundStyle(track.isHidden ? Color.orange : Color.secondary).help(track.isHidden ? "Hidden; click to show" : "Hide this track").pointer().uiFrame("header.\(track.name).hide")
+                    HStack(spacing: 0) {
+                        if track.kind == .video {
+                            headerIcon(track.isHidden ? "eye.slash" : "eye", on: track.isHidden, help: track.isHidden ? "Hidden; click to show" : "Hide this track", id: "header.\(track.name).hide") { toggleHidden(track) }
+                        } else {
+                            Color.clear.frame(width: 20, height: 20)
+                        }
+                        headerIcon(track.isMuted ? "speaker.slash" : "speaker.wave.2", on: track.isMuted, help: track.isMuted ? "Muted; click to unmute" : "Mute this track", id: "header.\(track.name).mute") { toggleMute(track) }
                     }
-                    Button { toggleMute(track) } label: { Image(systemName: track.isMuted ? "speaker.slash" : "speaker.wave.2").frame(width: 16) }
-                        .buttonStyle(.borderless).focusable(false).font(.system(size: 10)).foregroundStyle(track.isMuted ? Color.orange : Color.secondary).help(track.isMuted ? "Muted; click to unmute" : "Mute this track").pointer().uiFrame("header.\(track.name).mute")
+                    .frame(width: 40)
                 }
-                .padding(.leading, 6).padding(.trailing, 6).frame(height: rowHeight)
+                .padding(.leading, 8).padding(.trailing, 4).frame(height: rowHeight)
                 .contentShape(Rectangle())
                 .onHover { hoveredHeader = $0 ? track.id : (hoveredHeader == track.id ? nil : hoveredHeader) }
-                .background(trackDropTarget == track.id ? Color.accentColor.opacity(0.15) : hoveredHeader == track.id ? Color.primary.opacity(0.04) : Color.clear)
+                .background(trackDropTarget == track.id ? Color.accentColor.opacity(0.15) : hoveredHeader == track.id ? Color.primary.opacity(0.06) : Color.clear)
+                .overlay(alignment: .leading) { if isActiveRow(track.id) { Rectangle().fill(Color.accentColor).frame(width: 2) } }
                 .overlay(alignment: .top) { if trackDropTarget == track.id { Rectangle().fill(Color.accentColor).frame(height: 2) } }
                 // Drag a header onto another to reorder: the top row covers the rows below it in the picture.
                 .onDrag { NSItemProvider(object: TrackDrag.string(track.id) as NSString) } preview: {
@@ -150,16 +207,15 @@ struct TimelineView: View {
         let id = Project.textRowID
         return HStack(spacing: 6) {
             Image(systemName: "line.3.horizontal").font(.system(size: 9)).foregroundStyle(hoveredHeader == id ? .secondary : .quaternary)
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Text").font(.system(size: 12, weight: .semibold))
-                Text("Titles & captions").font(.system(size: 9)).foregroundStyle(.tertiary)
-            }
-            Spacer()
+            headerTitle("Text", kind: "Titles & captions")
+            Spacer(minLength: 2)
+            Color.clear.frame(width: 40, height: 20)   // keeps the title column aligned with the track rows
         }
-        .padding(.horizontal, 6).frame(height: rowHeight)
+        .padding(.leading, 8).padding(.trailing, 4).frame(height: rowHeight)
         .contentShape(Rectangle())
         .onHover { hoveredHeader = $0 ? id : (hoveredHeader == id ? nil : hoveredHeader) }
-        .background(trackDropTarget == id ? Color.accentColor.opacity(0.15) : hoveredHeader == id ? Color.primary.opacity(0.04) : Color.clear)
+        .background(trackDropTarget == id ? Color.accentColor.opacity(0.15) : hoveredHeader == id ? Color.primary.opacity(0.06) : Color.clear)
+        .overlay(alignment: .leading) { if isActiveRow(id) { Rectangle().fill(Color.accentColor).frame(width: 2) } }
         .overlay(alignment: .top) { if trackDropTarget == id { Rectangle().fill(Color.accentColor).frame(height: 2) } }
         .onDrag { NSItemProvider(object: TrackDrag.string(id) as NSString) } preview: {
             Label("Text", systemImage: "textformat").padding(6).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
@@ -170,12 +226,12 @@ struct TimelineView: View {
     }
 
     private var addTrackRow: some View {
-            HStack(spacing: 6) {
-                Button { addTrack(.video) } label: { Label("Video", systemImage: "plus").font(.system(size: 11)).fixedSize() }.focusable(false).help("Add a video track").pointer().uiFrame("addtrack.video")
-                Button { addTrack(.audio) } label: { Label("Audio", systemImage: "plus").font(.system(size: 11)).fixedSize() }.focusable(false).help("Add an audio track").pointer().uiFrame("addtrack.audio")
+            HStack(spacing: 8) {
+                Button { addTrack(.video) } label: { Label("Video", systemImage: "plus").font(.system(size: 11, weight: .medium)).fixedSize().padding(.horizontal, 6).frame(height: 20).contentShape(Rectangle()) }.focusable(false).help("Add a video track").pointer().uiFrame("addtrack.video")
+                Button { addTrack(.audio) } label: { Label("Audio", systemImage: "plus").font(.system(size: 11, weight: .medium)).fixedSize().padding(.horizontal, 6).frame(height: 20).contentShape(Rectangle()) }.focusable(false).help("Add an audio track").pointer().uiFrame("addtrack.audio")
             }
             .buttonStyle(.plain).labelStyle(.titleAndIcon).foregroundStyle(.secondary)
-            .padding(.horizontal, 10).frame(height: 30)
+            .padding(.horizontal, 8).frame(height: 32)
     }
 
     /// Time ticks and lane stripes behind the clips, covering the full pane height.
@@ -187,13 +243,14 @@ struct TimelineView: View {
             // Lanes carry a faint fill; the space below them stays bare so the stack has a visible end.
             for lane in 0..<rows {
                 let y = rulerHeight + CGFloat(lane) * (rowHeight + 1)
-                ctx.fill(Path(CGRect(x: 0, y: y, width: size.width, height: rowHeight)), with: .color(.primary.opacity(lane % 2 == 1 ? 0.035 : 0.02)))
+                ctx.fill(Path(CGRect(x: 0, y: y, width: size.width, height: rowHeight)), with: .color(.primary.opacity(lane % 2 == 1 ? 0.04 : 0.02)))
             }
+            // Grid lines sit well under the clips: 6 % for the step lines, 9 % on every fifth (the ruler's labelled marks).
             var t = 0.0
             while CGFloat(t) * pps < size.width {
-                let x = CGFloat(t) * pps
+                let x = CGFloat(t) * pps + 0.5
                 let major = t.truncatingRemainder(dividingBy: step * 5) == 0
-                ctx.stroke(Path { $0.move(to: CGPoint(x: x, y: rulerHeight)); $0.addLine(to: CGPoint(x: x, y: lanesBottom)) }, with: .color(.primary.opacity(major ? 0.10 : 0.045)))
+                ctx.stroke(Path { $0.move(to: CGPoint(x: x, y: rulerHeight)); $0.addLine(to: CGPoint(x: x, y: lanesBottom)) }, with: .color(.primary.opacity(major ? 0.09 : 0.06)), lineWidth: 1)
                 t += step
             }
         }
@@ -441,12 +498,12 @@ struct TimelineView: View {
         let x = CGFloat(player.currentTime) * pps
         return ZStack(alignment: .topLeading) {
             Rectangle().fill(Color.red).frame(width: 1).frame(maxHeight: .infinity).offset(x: x)
-            // Marker in the ruler: a small downward pentagon.
+            // Head in the ruler: a small downward triangle whose tip meets the line at the ruler's bottom edge.
             Path { p in
-                p.move(to: CGPoint(x: -5, y: 0)); p.addLine(to: CGPoint(x: 5, y: 0)); p.addLine(to: CGPoint(x: 5, y: rulerHeight - 10))
-                p.addLine(to: CGPoint(x: 0, y: rulerHeight - 4)); p.addLine(to: CGPoint(x: -5, y: rulerHeight - 10)); p.closeSubpath()
+                p.move(to: CGPoint(x: 0, y: rulerHeight - 8)); p.addLine(to: CGPoint(x: 10, y: rulerHeight - 8))
+                p.addLine(to: CGPoint(x: 5, y: rulerHeight)); p.closeSubpath()
             }
-            .fill(Color.red).frame(width: 10, height: rulerHeight).offset(x: x)
+            .fill(Color.red).frame(width: 10, height: rulerHeight).offset(x: x - 4.5)
         }
         .allowsHitTesting(false)
     }
@@ -567,11 +624,13 @@ private struct ClipBody: View, Equatable {
                 .clipShape(RoundedRectangle(cornerRadius: 6))
             }
             .overlay { if clip.transitionIn != nil || clip.fadeIn > 0 || clip.fadeOut > 0 || clip.isAnimated || clip.multicam != nil { marks.clipShape(RoundedRectangle(cornerRadius: 6)) } }
-            .overlay(RoundedRectangle(cornerRadius: 6).stroke(selected ? Color.white : Color.white.opacity(0.12), lineWidth: selected ? 1.5 : 0.5))
+            // Selection: a slight brightening plus a 1.5 pt accent ring; at rest a hairline edge.
+            .overlay { if selected { RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.08)).allowsHitTesting(false) } }
+            .overlay(RoundedRectangle(cornerRadius: 6).stroke(selected ? Color.accentColor : Color.white.opacity(0.12), lineWidth: selected ? 1.5 : 0.5))
             .overlay(alignment: .topLeading) {
                 Text(clip.name).font(.caption2.weight(.medium)).lineLimit(1).foregroundStyle(.white)
                     .padding(.horizontal, 5).padding(.vertical, 2)
-                    .background(Color.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 4))
+                    .background(Color.black.opacity(0.6), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
                     .padding(4)
             }
     }
@@ -584,9 +643,10 @@ private struct TextBody: View, Equatable {
     var body: some View {
         let tint = text.isCaption ? Color.teal : Color.orange
         RoundedRectangle(cornerRadius: 4)
-            .fill(tint.opacity(selected ? 0.55 : 0.28))
+            .fill(tint.opacity(selected ? 0.5 : 0.28))
             .overlay(alignment: .leading) { Rectangle().fill(tint).frame(width: 3) }
-            .overlay(RoundedRectangle(cornerRadius: 4).stroke(selected ? Color.white : tint.opacity(0.5), lineWidth: selected ? 1.5 : 0.5))
+            .overlay { if selected { RoundedRectangle(cornerRadius: 4).fill(Color.white.opacity(0.08)) } }
+            .overlay(RoundedRectangle(cornerRadius: 4).stroke(selected ? Color.accentColor : tint.opacity(0.5), lineWidth: selected ? 1.5 : 0.5))
             .overlay(alignment: .leading) {
                 Label(text.text, systemImage: text.isCaption ? "captions.bubble" : "textformat").font(.system(size: 10, weight: .medium)).lineLimit(1).padding(.leading, 8).padding(.trailing, 6).foregroundStyle(.white)
             }

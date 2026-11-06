@@ -86,6 +86,7 @@ final class EditMaxDocument: ReferenceFileDocument, ObservableObject {
         }
         project = next
         revision += 1
+        scheduleAutosave()
     }
 
     func undo() {
@@ -118,6 +119,32 @@ final class EditMaxDocument: ReferenceFileDocument, ObservableObject {
             p.history = history
             p.transcripts = transcripts   // a cache of the media, not part of the edit
             p.motionPaths = motionPaths
+        }
+    }
+
+    // MARK: Autosave
+    // Edits go through this document's own undo stack, not the NSDocument's UndoManager, so AppKit never sees the
+    // document as changed and never autosaves it. A file-backed project is written 2 s after the last edit instead.
+    private var saveTimer: Timer?
+    private func scheduleAutosave() {
+        guard fileURL != nil else { return }
+        saveTimer?.invalidate()
+        saveTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: false) { [weak self] _ in Task { @MainActor in self?.autosaveNow() } }
+    }
+    /// Writes the project straight to its file (same encoder as a normal save) and tells the NSDocument the disk now
+    /// matches, so no close/quit prompt follows. It deliberately bypasses NSDocument.save: that path renames the file to
+    /// the type's "preferred" extension as LaunchServices sees it, which a stale registration can make `.editmax`.
+    func autosaveNow() {
+        guard let url = fileURL else { return }
+        do {
+            try Self.encoder.encode(project).write(to: url, options: .atomic)
+            if let nsdoc = NSDocumentController.shared.documents.first(where: { $0.fileURL?.standardizedFileURL == url.standardizedFileURL }) {
+                nsdoc.fileModificationDate = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? Date()
+                nsdoc.updateChangeCount(.changeCleared)
+            }
+            DebugLog.event("autosave", ["project": displayName])
+        } catch {
+            DebugLog.error("autosave", error, ["project": displayName])
         }
     }
 

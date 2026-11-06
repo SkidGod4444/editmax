@@ -254,6 +254,39 @@ enum EditMaxTools {
             let reg = DocumentRegistry.shared
             return try payload(reg.documents.map { P(id: $0.id.short, name: $0.displayName, active: $0.id == reg.activeID, duration: $0.project.duration, clips: $0.project.allClips.count) })
         }
+        // The UI driver works on whichever EditMax window is up, Home included, so it needs no open project.
+        switch name {
+        case "ui_layout":
+            return try payload(try UIDriver.layout(prefix: s("prefix")))
+        case "ui_drag":
+            let from = try UIDriver.resolve(a["from"], dx: d("from_dx") ?? 0, dy: d("from_dy") ?? 0)
+            let to = try UIDriver.resolve(a["to"], dx: d("to_dx") ?? 0, dy: d("to_dy") ?? 0)
+            UIDriver.modifiers = UIDriver.flags(list("modifiers")); defer { UIDriver.modifiers = [] }
+            let how = try await UIDriver.drag(from: from, fromID: s("from"), to: to, steps: i("steps") ?? 12, holdMs: i("hold_ms") ?? 80)
+            let path = "from (\(Int(from.x)), \(Int(from.y))) to (\(Int(to.x)), \(Int(to.y)))"
+            switch how {
+            case .events(let n): return message("Dragged \(path) with \(n) mouse events")
+            case .handler(let id): return message("Dragged \(path) by calling \(id)'s own move/trim code: macOS would not make EditMax the active app, which SwiftUI gestures need. Media drops, header reorders and clicks always use real events.")
+            }
+        case "ui_click":
+            let p = try UIDriver.resolve(a["target"], dx: d("dx") ?? 0, dy: d("dy") ?? 0)
+            UIDriver.modifiers = UIDriver.flags(list("modifiers")); defer { UIDriver.modifiers = [] }
+            switch try await UIDriver.click(at: p, id: s("target"), count: i("count") ?? 1) {
+            case .events: return message("Clicked (\(Int(p.x)), \(Int(p.y)))")
+            case .handler(let id): return message("Clicked \(id) by calling its own tap code: macOS would not make EditMax the active app, which SwiftUI gestures need.")
+            }
+        case "ui_key":
+            let how = try await UIDriver.key(try req("key"), modifiers: list("modifiers"))
+            return message("Pressed \(try req("key"))" + (how == "events" ? "" : " (through the editor's key \(how): EditMax is not the active app)"))
+        case "ui_scroll":
+            let p = try UIDriver.resolve(a["target"], dx: 0, dy: 0)
+            let r = try await UIDriver.scroll(at: p, dx: d("dx") ?? 0, dy: d("dy") ?? 0)
+            return message("Scrolled to (\(Int(r.x)), \(Int(r.y))) of (\(Int(r.maxX)), \(Int(r.maxY)))")
+        case "ui_screenshot":
+            let shot = try await UIDriver.screenshot(maxWidth: i("max_width") ?? 1400)
+            return Payload(text: "Window (\(shot.png.count) bytes PNG, \(shot.method))", value: nil, image: shot.png)
+        default: break
+        }
         guard let doc = DocumentRegistry.shared.document(for: s("project")) else {
             throw MCPError.invalidParams(s("project") == nil ? "No project is open. Ask the user to open or create one in EditMax." : "No project matches '\(s("project")!)'")
         }
@@ -311,35 +344,6 @@ enum EditMaxTools {
             let want = (s("preset") ?? "high").lowercased().filter { $0.isLetter || $0.isNumber }   // "hevc10", "hevc", "high", "med"…
             let preset = ExportService.Preset.allCases.first { $0.rawValue.lowercased().filter { $0.isLetter || $0.isNumber }.hasPrefix(want) } ?? .high
             return try payload(try await x.exportVideo(to: try req("path"), preset: preset, chapters: b("chapters")))
-        case "ui_layout":
-            return try payload(try UIDriver.layout(prefix: s("prefix")))
-        case "ui_drag":
-            let from = try UIDriver.resolve(a["from"], dx: d("from_dx") ?? 0, dy: d("from_dy") ?? 0)
-            let to = try UIDriver.resolve(a["to"], dx: d("to_dx") ?? 0, dy: d("to_dy") ?? 0)
-            UIDriver.modifiers = UIDriver.flags(list("modifiers")); defer { UIDriver.modifiers = [] }
-            let how = try await UIDriver.drag(from: from, fromID: s("from"), to: to, steps: i("steps") ?? 12, holdMs: i("hold_ms") ?? 80)
-            let path = "from (\(Int(from.x)), \(Int(from.y))) to (\(Int(to.x)), \(Int(to.y)))"
-            switch how {
-            case .events(let n): return message("Dragged \(path) with \(n) mouse events")
-            case .handler(let id): return message("Dragged \(path) by calling \(id)'s own move/trim code: macOS would not make EditMax the active app, which SwiftUI gestures need. Media drops, header reorders and clicks always use real events.")
-            }
-        case "ui_click":
-            let p = try UIDriver.resolve(a["target"], dx: d("dx") ?? 0, dy: d("dy") ?? 0)
-            UIDriver.modifiers = UIDriver.flags(list("modifiers")); defer { UIDriver.modifiers = [] }
-            switch try await UIDriver.click(at: p, id: s("target"), count: i("count") ?? 1) {
-            case .events: return message("Clicked (\(Int(p.x)), \(Int(p.y)))")
-            case .handler(let id): return message("Clicked \(id) by calling its own tap code: macOS would not make EditMax the active app, which SwiftUI gestures need.")
-            }
-        case "ui_key":
-            let how = try await UIDriver.key(try req("key"), modifiers: list("modifiers"))
-            return message("Pressed \(try req("key"))" + (how == "events" ? "" : " (through the editor's key \(how): EditMax is not the active app)"))
-        case "ui_scroll":
-            let p = try UIDriver.resolve(a["target"], dx: 0, dy: 0)
-            let r = try await UIDriver.scroll(at: p, dx: d("dx") ?? 0, dy: d("dy") ?? 0)
-            return message("Scrolled to (\(Int(r.x)), \(Int(r.y))) of (\(Int(r.maxX)), \(Int(r.maxY)))")
-        case "ui_screenshot":
-            let shot = try await UIDriver.screenshot(maxWidth: i("max_width") ?? 1400)
-            return Payload(text: "Window (\(shot.png.count) bytes PNG, \(shot.method))", value: nil, image: shot.png)
         case "add_track":
             return try payload(try x.addTrack(kind: try req("kind"), name: s("name")))
         case "move_track":

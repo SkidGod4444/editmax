@@ -86,7 +86,7 @@ enum Templates {
     static func list() -> [Info] {
         var out = builtin.map { Info(name: $0.name, builtin: true, width: $0.w, height: $0.h, fps: $0.fps, summary: "\($0.w)×\($0.h) at \(Int($0.fps)) fps, empty timeline") }
         let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
-        for f in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) where f.pathExtension == "editmax" {
+        for f in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) where ProjectLibrary.extensions.contains(f.pathExtension.lowercased()) {
             guard let data = try? Data(contentsOf: f), let p = try? JSONDecoder().decode(Project.self, from: data) else { continue }
             let n = p.allClips.count, t = p.texts.count
             out.append(Info(name: f.deletingPathExtension().lastPathComponent, builtin: false, width: p.settings.width, height: p.settings.height, fps: p.settings.fps,
@@ -101,7 +101,7 @@ enum Templates {
             var p = Project(); p.settings = ProjectSettings(width: b.w, height: b.h, fps: b.fps); p.name = b.name
             return p
         }
-        let url = directory.appendingPathComponent(name + ".editmax")
+        let url = directory.appendingPathComponent(name + ".emx")
         guard let data = try? Data(contentsOf: url) else { throw EditError.notFound("template '\(name)'; templates: \(list().map(\.name).joined(separator: ", "))") }
         var p = try JSONDecoder().decode(Project.self, from: data)
         p.history = []; p.transcripts = nil
@@ -112,14 +112,14 @@ enum Templates {
         let clean = name.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "/", with: "-")
         guard !clean.isEmpty else { throw EditError.invalid("template name is empty") }
         guard !builtin.contains(where: { $0.name.caseInsensitiveCompare(clean) == .orderedSame }) else { throw EditError.invalid("'\(clean)' is a built-in template name") }
-        let url = directory.appendingPathComponent(clean + ".editmax")
+        let url = directory.appendingPathComponent(clean + ".emx")
         let enc = JSONEncoder(); enc.outputFormatting = [.prettyPrinted, .sortedKeys]
         try enc.encode(project.withoutHistory).write(to: url)
         return url
     }
 
     static func delete(_ name: String) throws {
-        let url = directory.appendingPathComponent(name + ".editmax")
+        let url = directory.appendingPathComponent(name + ".emx")
         guard FileManager.default.fileExists(atPath: url.path) else { throw EditError.notFound("saved template '\(name)'") }
         try FileManager.default.removeItem(at: url)
     }

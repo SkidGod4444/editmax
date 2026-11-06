@@ -59,7 +59,7 @@ targets:
             UTTypeConformsTo: [public.json, public.data]
             UTTypeIconFile: ProjectDoc
             UTTypeTagSpecification:
-              public.filename-extension: [editmax]
+              public.filename-extension: [emx, editmax]
     settings:
       base:
         SWIFT_VERSION: "5.0"

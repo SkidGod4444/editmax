@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// The clip's spoken words in the inspector: click a word, then another, to select a span and cut it from the
-/// timeline (ripple), like deleting text. Lives inside ClipInspector's Form.
+/// timeline (ripple), like deleting text. One card among ClipInspector's cards.
 struct TranscriptSection: View {
     @ObservedObject var document: EditMaxDocument
     let clip: Clip
@@ -14,7 +14,7 @@ struct TranscriptSection: View {
         let x = ToolExecutor(document: document, origin: .user)   // plain, not coalesced: every cut is its own undo step
         let words = document.project.transcript(for: clip.assetID).map { x.timelineWords($0, clip: clip) } ?? []
         let hasTranscript = document.project.transcript(for: clip.assetID) != nil
-        Section("Transcript") {
+        InspectorCard("Transcript") {
             if !hasTranscript {
                 HStack {
                     Button(busy ? "Transcribing…" : "Transcribe", systemImage: "text.quote") { transcribe(x) }
@@ -22,22 +22,15 @@ struct TranscriptSection: View {
                     Spacer()
                 }.controlSize(.small)
             } else if words.isEmpty {
-                Text("No speech was recognized in this clip.").font(.caption).foregroundStyle(.secondary)
+                InspectorFootnote("No speech was recognized in this clip.")
             } else {
                 ScrollView {
-                    FlowLayout(spacing: 2) {
+                    FlowLayout(spacing: 0, lineSpacing: 2) {
                         ForEach(Array(words.enumerated()), id: \.offset) { i, w in
-                            let selected = selection?.contains(i) ?? false
-                            Text(w.text)
-                                .font(.system(size: 12))
-                                .padding(.horizontal, 2).padding(.vertical, 1)
-                                .background(selected ? Color.accentColor.opacity(0.35) : (anchor == i ? Color.accentColor.opacity(0.15) : .clear))
-                                .clipShape(RoundedRectangle(cornerRadius: 3))
-                                .contentShape(Rectangle())
-                                .onTapGesture { tap(i) }
+                            TranscriptWordChip(text: w.text, selected: selection?.contains(i) ?? false, anchored: anchor == i) { tap(i) }
                         }
                     }
-                    .padding(2)
+                    .padding(.vertical, 4)
                 }
                 .frame(maxHeight: 220)
                 // One frame for the whole block: hundreds of per-word ids would flood the driver. The hand cursor sits
@@ -54,11 +47,9 @@ struct TranscriptSection: View {
                     Spacer()
                 }.controlSize(.small)
             }
-            Text(status ?? (hasTranscript ? "Click a word, then another, to select what to cut. The cut ripples every track." : Transcriber.privacyNote))
-                .font(.caption).foregroundStyle(.secondary)
-                // On this row, not the Section: a modifier on a Section can collapse it into one row of the Form.
-                // The section keeps its state when the inspector moves to another clip, so a selection made on one
-                // clip must not cut words of the next.
+            InspectorFootnote(status ?? (hasTranscript ? "Click a word, then another, to select what to cut. The cut ripples every track." : Transcriber.privacyNote))
+                // On this row, not the card: the card keeps its state when the inspector moves to another clip, so a
+                // selection made on one clip must not cut words of the next.
                 .onChange(of: clip.id) { _, _ in anchor = nil; selection = nil; status = nil }
                 .onChange(of: words.count) { _, _ in anchor = nil; selection = nil }
         }
@@ -96,10 +87,32 @@ struct TranscriptSection: View {
     }
 }
 
+/// One word of the paragraph: plain text that highlights under the mouse, tints as the anchor of a span and fills
+/// with the accent once selected. Hover state lives here so moving the mouse redraws one word, not the paragraph.
+private struct TranscriptWordChip: View {
+    let text: String
+    let selected: Bool
+    let anchored: Bool
+    let tap: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 13))
+            .padding(.horizontal, 3).padding(.vertical, 2)
+            .background(selected ? Color.accentColor.opacity(0.28) : anchored ? Color.accentColor.opacity(0.15) : hovering ? Color.primary.opacity(0.06) : Color.clear,
+                        in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+            .contentShape(Rectangle())
+            .onHover { hovering = $0 }
+            .onTapGesture { tap() }
+    }
+}
+
 /// Lays its children out like words in a paragraph: left to right, wrapping at the available width. Child sizes are
 /// cached between the measure and place passes, which keeps a few thousand words cheap.
 struct FlowLayout: Layout {
     var spacing: CGFloat = 2
+    var lineSpacing: CGFloat? = nil   // between rows; `spacing` when nil
 
     struct Cache { var sizes: [CGSize] = [] }
     func makeCache(subviews: Subviews) -> Cache { Cache(sizes: subviews.map { $0.sizeThatFits(.unspecified) }) }
@@ -107,18 +120,20 @@ struct FlowLayout: Layout {
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) -> CGSize {
         let width = proposal.width ?? .infinity
+        let rowGap = lineSpacing ?? spacing
         var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0, maxX: CGFloat = 0
         for s in cache.sizes {
-            if x > 0, x + s.width > width { x = 0; y += rowHeight + spacing; rowHeight = 0 }
+            if x > 0, x + s.width > width { x = 0; y += rowHeight + rowGap; rowHeight = 0 }
             x += s.width + spacing; rowHeight = max(rowHeight, s.height); maxX = max(maxX, x - spacing)
         }
         return CGSize(width: width.isFinite ? width : maxX, height: y + rowHeight)
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) {
+        let rowGap = lineSpacing ?? spacing
         var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0
         for (i, s) in cache.sizes.enumerated() {
-            if x > 0, x + s.width > bounds.width { x = 0; y += rowHeight + spacing; rowHeight = 0 }
+            if x > 0, x + s.width > bounds.width { x = 0; y += rowHeight + rowGap; rowHeight = 0 }
             subviews[i].place(at: CGPoint(x: bounds.minX + x, y: bounds.minY + y), proposal: ProposedViewSize(s))
             x += s.width + spacing; rowHeight = max(rowHeight, s.height)
         }

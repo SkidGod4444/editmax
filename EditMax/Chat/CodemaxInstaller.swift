@@ -35,7 +35,7 @@ final class CodemaxInstaller: ObservableObject {
         var st = Status()
         var updatedNote = ""
         guard let bundled else {
-            st.message = "This build of EditMax has no bundled codemax. Run scripts/vendor-codemax.sh and rebuild."
+            st.message = "This build of EditMax has no bundled agent runtime. Run scripts/vendor-codemax.sh and rebuild."
             return st
         }
         let fm = FileManager.default
@@ -61,7 +61,7 @@ final class CodemaxInstaller: ObservableObject {
             }
             st.installedPath = dest.path
         } catch {
-            st.message = "Could not install codemax: \(error.localizedDescription)"
+            st.message = "Could not install the agent runtime: \(error.localizedDescription)"
             return st
         }
         // Terminal use: a link in ~/.local/bin, only when the user has no codemax of their own.
@@ -71,7 +71,7 @@ final class CodemaxInstaller: ObservableObject {
         let existing = whichOnLoginShell("codemax")
         if let existing, existing != link.path, !ours {
             st.existingOnPath = existing
-            st.message = "codemax \(st.bundledVersion ?? "")\(updatedNote) is bundled. Your own codemax at \(existing) is left alone."
+            st.message = "Agent runtime \(st.bundledVersion ?? "")\(updatedNote) is bundled. Your own codemax command at \(existing) is left alone."
             return st
         }
         do {
@@ -82,10 +82,10 @@ final class CodemaxInstaller: ObservableObject {
             }
             st.linkPath = link.path
             st.message = existing != nil
-                ? "codemax \(st.bundledVersion ?? "")\(updatedNote) is installed and on your PATH (~/.local/bin/codemax)."
-                : "codemax \(st.bundledVersion ?? "")\(updatedNote) is installed at ~/.local/bin/codemax. Add ~/.local/bin to your PATH to use it in Terminal."
+                ? "Agent runtime \(st.bundledVersion ?? "")\(updatedNote) is installed and on your PATH as ~/.local/bin/codemax."
+                : "Agent runtime \(st.bundledVersion ?? "")\(updatedNote) is installed at ~/.local/bin/codemax. Add ~/.local/bin to your PATH to use it in Terminal."
         } catch {
-            st.message = "codemax is installed, but ~/.local/bin/codemax could not be linked: \(error.localizedDescription)"
+            st.message = "The agent runtime is installed, but ~/.local/bin/codemax could not be linked: \(error.localizedDescription)"
         }
         return st
     }

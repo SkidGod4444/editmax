@@ -2,6 +2,167 @@ import SwiftUI
 import UniformTypeIdentifiers
 import AppKit
 
+// MARK: - Inspector styling primitives
+// One visual system for every page of the right-hand panel: titled cards of rows with 1 px hairlines between them,
+// 12 pt inner padding, uppercase tracked section headers, 13 pt body and 11 pt secondary text. Everything in here is
+// content, so controls stay bordered or plain; Liquid Glass belongs to the floating layer over the video and timeline.
+
+enum InspectorStyle {
+    static let cardRadius: CGFloat = 12
+    static let rowInset: CGFloat = 12
+    static let labelWidth: CGFloat = 84
+    static let gap: CGFloat = 16
+    static var cardFill: Color { Color.primary.opacity(0.045) }   // a touch lighter than the panel in dark, a touch darker in light
+    static var hairline: Color { Color.primary.opacity(0.08) }
+}
+
+/// Section header: caption, semibold, tracked, uppercase, secondary.
+struct InspectorHeader: View {
+    let title: String
+    var body: some View {
+        Text(title).font(.caption.weight(.semibold)).tracking(0.8).textCase(.uppercase).foregroundStyle(.secondary).lineLimit(1)
+    }
+}
+
+/// A titled card. Every child of `content` is one row (`if` and `ForEach` children included), separated by hairlines.
+/// `trailing` sits at the right of the header (a Reset button, a count); `footer` is the explanatory line under the card.
+struct InspectorCard<Content: View, Trailing: View>: View {
+    let title: String?
+    let footer: String?
+    let trailing: Trailing
+    let content: Content
+
+    init(_ title: String? = nil, footer: String? = nil, @ViewBuilder trailing: () -> Trailing, @ViewBuilder content: () -> Content) {
+        self.title = title; self.footer = footer; self.trailing = trailing(); self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let title {
+                HStack(alignment: .center, spacing: 8) {
+                    InspectorHeader(title: title)
+                    Spacer(minLength: 8)
+                    trailing
+                }
+                .frame(minHeight: 20)
+                .padding(.horizontal, 4)
+            }
+            VStack(spacing: 0) {
+                Group(subviews: content) { subviews in
+                    // Rows keep their own identity (not their index), so a conditional row appearing above a stateful
+                    // one does not hand that row's state to its neighbour.
+                    ForEach(subviews) { row in
+                        row
+                            .frame(maxWidth: .infinity, minHeight: 18, alignment: .leading)
+                            .padding(.horizontal, InspectorStyle.rowInset).padding(.vertical, 5)
+                        if row.id != subviews.last?.id { InspectorSeparator() }
+                    }
+                }
+            }
+            .background(RoundedRectangle(cornerRadius: InspectorStyle.cardRadius, style: .continuous).fill(InspectorStyle.cardFill))
+            .overlay(RoundedRectangle(cornerRadius: InspectorStyle.cardRadius, style: .continuous).strokeBorder(Color.primary.opacity(0.06)))
+            if let footer { InspectorFootnote(footer).padding(.horizontal, 4) }
+        }
+    }
+}
+
+extension InspectorCard where Trailing == EmptyView {
+    init(_ title: String? = nil, footer: String? = nil, @ViewBuilder content: () -> Content) {
+        self.init(title, footer: footer, trailing: { EmptyView() }, content: content)
+    }
+}
+
+/// The 1 px hairline between two rows of a card.
+struct InspectorSeparator: View {
+    var body: some View { Rectangle().fill(InspectorStyle.hairline).frame(height: 1).padding(.leading, InspectorStyle.rowInset) }
+}
+
+/// Label left, read-only value right, digits monospaced.
+struct InspectorValueRow: View {
+    let label: String
+    let value: String
+    init(_ label: String, _ value: String) { self.label = label; self.value = value }
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text(label).font(.system(size: 13))
+            Spacer(minLength: 8)
+            Text(value).font(.system(size: 13)).monospacedDigit().foregroundStyle(.secondary).multilineTextAlignment(.trailing).textSelection(.enabled)
+        }
+    }
+}
+
+/// Label left, a control right.
+struct InspectorRow<Content: View>: View {
+    let label: String
+    let content: Content
+    init(_ label: String, @ViewBuilder content: () -> Content) { self.label = label; self.content = content() }
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(label).font(.system(size: 13))
+            Spacer(minLength: 8)
+            content
+        }
+    }
+}
+
+/// 11 pt secondary explanatory text; wraps.
+struct InspectorFootnote: View {
+    let text: String
+    init(_ text: String) { self.text = text }
+    var body: some View {
+        Text(text).font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// The fill, selection ring and hover of a history row. Hover state lives in the modifier so moving the mouse redraws
+/// one row, not the list (whose newest row decodes the project to describe its change).
+struct HistoryRowStyle: ViewModifier {
+    let selected: Bool
+    let current: Bool
+    @State private var hovering = false
+    func body(content: Content) -> some View {
+        content
+            .padding(.vertical, 6).padding(.horizontal, 8)
+            .background(selected ? Color.accentColor.opacity(0.18) : hovering ? Color.primary.opacity(0.06) : current ? Color.primary.opacity(0.05) : Color.clear, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.accentColor.opacity(selected ? 1 : 0), lineWidth: 1.5))
+            .onHover { hovering = $0 }
+    }
+}
+
+/// A status dot: green = ready, orange = attention, red = failure.
+struct StatusDot: View {
+    let color: Color
+    var body: some View { Circle().fill(color).frame(width: 7, height: 7) }
+}
+
+/// The centred empty state of a page: 40 pt symbol, headline, one-line hint.
+struct InspectorEmptyState: View {
+    let symbol: String
+    let title: String
+    let hint: String
+    var body: some View {
+        VStack(spacing: 8) {
+            Image(systemName: symbol).font(.system(size: 40, weight: .light)).foregroundStyle(.tertiary)
+            Text(title).font(.headline)
+            Text(hint).font(.system(size: 11)).foregroundStyle(.secondary).multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity).padding(.vertical, 32)
+    }
+}
+
+extension View {
+    /// The fixed label column of a slider row.
+    func inspectorLabel() -> some View {
+        font(.system(size: 13)).lineLimit(1).minimumScaleFactor(0.8).frame(width: InspectorStyle.labelWidth, alignment: .leading)
+    }
+    /// The value readout of a slider row.
+    func inspectorValue() -> some View {
+        font(.system(size: 11)).monospacedDigit().foregroundStyle(.secondary).frame(width: 44, alignment: .trailing)
+    }
+    /// A secondary 11 pt line inside a row.
+    func inspectorSecondary() -> some View { font(.system(size: 11)).foregroundStyle(.secondary) }
+}
+
 struct InspectorView: View {
     @ObservedObject var document: EditMaxDocument
     @EnvironmentObject var state: EditorState
@@ -12,10 +173,24 @@ struct InspectorView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Picker("", selection: $state.inspectorTab) {
-                ForEach(EditorState.InspectorTab.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            // The tab strip is control layer: one glass group, the selected tab tinted.
+            GlassGroup(spacing: 4) {
+                HStack(spacing: 4) {
+                    ForEach(EditorState.InspectorTab.allCases, id: \.self) { tab in
+                        let on = state.inspectorTab == tab
+                        Button { state.inspectorTab = tab } label: {
+                            Text(tab.rawValue).font(.system(size: 12, weight: on ? .semibold : .medium))
+                                .padding(.horizontal, 12).frame(height: 26).frame(maxWidth: .infinity)
+                                .contentShape(Capsule())
+                        }
+                        .buttonStyle(.plain).focusable(false)
+                        .liquidGlass(tint: on ? Color.glassSelection : nil, interactive: true)
+                        .foregroundStyle(on ? Color.white : Color.secondary)
+                        .pointer()
+                    }
+                }
             }
-            .pickerStyle(.segmented).padding(8).pointer().uiFrame("inspector.tabs")
+            .padding(.horizontal, 12).padding(.vertical, 8).uiFrame("inspector.tabs")
             // The driver switches tabs through these (ids tab.inspector, tab.chat, tab.agents, tab.history), never by posting a click on the control.
             .uiTap("tab.inspector") { state.inspectorTab = .inspector }.uiTap("tab.chat") { state.inspectorTab = .chat }
             .uiTap("tab.agents") { state.inspectorTab = .agents }.uiTap("tab.history") { state.inspectorTab = .history }
@@ -49,31 +224,33 @@ struct InspectorView: View {
 
     // MARK: Agents
     private var agents: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Circle().fill(statusColor).frame(width: 9, height: 9)
-                Text(statusText).font(.headline)
+        VStack(alignment: .leading, spacing: InspectorStyle.gap) {
+            InspectorCard("MCP server", footer: "Listens on localhost only. Clients send the bearer token that is part of each snippet below.", trailing: {
+                Text("\(mcp.requestCount) request\(mcp.requestCount == 1 ? "" : "s")").inspectorSecondary().monospacedDigit()
+            }) {
+                HStack(spacing: 8) {
+                    StatusDot(color: statusColor)
+                    Text(statusText).font(.system(size: 13, weight: .semibold))
+                    Spacer(minLength: 8)
+                    if let p = mcpPort { Text("port \(String(p))").inspectorSecondary().monospacedDigit() }
+                }
+                if case .failed(let e) = mcp.status { InspectorFootnote(e).lineLimit(2) }
+                if let c = mcp.lastClient { InspectorValueRow("Last client", c) }
             }
-            Text("Any MCP client can edit this project. The server listens on localhost only and requires the bearer token below. \(mcp.requestCount) requests served.").font(.caption).foregroundStyle(.secondary)
             agentRuntime
-            Group {
-                snippet("Claude Code", mcp.claudeCodeCommand, id: "claudeCode")
-                snippet("Codex CLI", mcp.codexCommand, id: "codex")
-                snippet("Cursor / Claude Desktop / any JSON config", mcp.genericJSON, id: "json")
-            }
-            if let c = mcp.lastClient { Text("Last connected client: \(c)").font(.caption) }
-            Text("Config file: \(MCPService.configDirectory.appendingPathComponent("mcp.json").path)").font(.caption2).foregroundStyle(.tertiary).textSelection(.enabled)
+            installedAgents
+            snippet("Claude Code", mcp.claudeCodeCommand, id: "claudeCode")
+            snippet("Codex CLI", mcp.codexCommand, id: "codex")
+            snippet("Cursor, Claude Desktop, any JSON config", mcp.genericJSON, id: "json")
             logs
         }
     }
     /// Where to look when something goes wrong, and one button that packs it all for a bug report.
     @State private var exportNote: String?
     private var logs: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Logs").font(.caption.bold())
-            Text("EditMax writes what it did with codemax, the updater and the MCP server to editmax.log; every line exchanged with codemax (the chat included) goes to codemax-protocol.log, secrets removed. Export packs both with codemax's own debug log and the versions involved.")
-                .font(.caption).foregroundStyle(.secondary)
-            HStack {
+        let config = MCPService.configDirectory.appendingPathComponent("mcp.json").path
+        return InspectorCard("Diagnostics", footer: "editmax.log records the agent runtime, the updater and the MCP server; codemax-protocol.log every line exchanged with codemax, secrets removed. Export packs both with codemax's own debug log.") {
+            HStack(spacing: 8) {
                 Button("Export diagnostics…") {
                     do {
                         let zip = try DebugLog.exportDiagnostics(versions: ["editmax": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "", "codemax-bundled": installer.status.bundledVersion ?? "", "codemax-installed": installer.status.installedPath ?? "", "editmax-agent": CodemaxRunner.bundledBinary(.agent)?.path ?? "missing"])
@@ -82,53 +259,71 @@ struct InspectorView: View {
                     } catch { exportNote = "Export failed: \(error.localizedDescription)" }
                 }.controlSize(.small).pointer().uiFrame("agents.exportDiagnostics")
                 Button("Reveal logs") { DebugLog.reveal() }.controlSize(.small).pointer().uiFrame("agents.revealLogs")
+                Spacer(minLength: 0)
             }
-            if let n = exportNote { Text(n).font(.caption2).foregroundStyle(.secondary) }
+            if let n = exportNote { InspectorFootnote(n) }
+            pathRow("Config file", config)
         }
-        .padding(8).background(Color(nsColor: .textBackgroundColor)).cornerRadius(6)
     }
-    /// The bundled codemax: install state and which agents it found.
+    /// The bundled codemax: install state and updates.
     private var agentRuntime: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Built-in agent runtime (codemax)").font(.caption.bold())
-            Text(installer.status.message).font(.caption).foregroundStyle(.secondary)
-            if let p = installer.status.installedPath { Text(p).font(.caption2).foregroundStyle(.tertiary).textSelection(.enabled) }
-            HStack(spacing: 6) {
-                Text("Updates: running \(updater.status.activeVersion ?? "?") (\(updater.status.activeSource))" + (updater.status.latest.map { " · latest release \($0)" } ?? "")).font(.caption2).foregroundStyle(.tertiary)
-                Spacer()
-                if updater.status.busy { ProgressView().controlSize(.mini) }
-                Button("Check now") { updater.check(reason: "button") }.controlSize(.mini).pointer().disabled(updater.status.busy).uiFrame("agents.checkUpdate")
+        let s = installer.status, u = updater.status
+        return InspectorCard("Agent runtime", footer: "The agent runtime ships inside EditMax. New releases install on their own (checked every 12 h) after a health check; one that crashes twice is rolled back.") {
+            InspectorValueRow("Bundled runtime", s.bundledVersion ?? "—")
+            InspectorValueRow("Running", (u.activeVersion ?? "?") + " · " + u.activeSource)
+            InspectorValueRow("Latest release", u.latest ?? "not checked")
+            HStack(spacing: 8) {
+                Text(u.message).inspectorSecondary().lineLimit(2).textSelection(.enabled)
+                Spacer(minLength: 8)
+                if u.busy { ProgressView().controlSize(.mini) }
+                Button("Check now") { updater.check(reason: "button") }.controlSize(.small).pointer().disabled(updater.status.busy).uiFrame("agents.checkUpdate")
             }
-            Text(updater.status.message).font(.caption2).foregroundStyle(.secondary).textSelection(.enabled)
-            Text("New codemax releases install on their own (checked every 12 h) after passing a health check; one that crashes twice is rolled back.").font(.caption2).foregroundStyle(.tertiary)
+            InspectorFootnote(s.message).lineLimit(2)
+            if let p = s.installedPath { pathRow("Location", p) }
+        }
+    }
+    /// Which agents codemax found on this Mac.
+    private var installedAgents: some View {
+        InspectorCard("Installed agents") {
             if let chat = state.chat {
                 ForEach(chat.agents) { a in
-                    HStack(spacing: 6) {
-                        Circle().fill(a.installed ? Color.green : Color.gray).frame(width: 7, height: 7)
-                        Text(a.name).font(.caption)
-                        if let v = a.version { Text(v).font(.caption2).foregroundStyle(.tertiary) }
-                        if !a.installed, let p = a.problem { Text(p).font(.caption2).foregroundStyle(.tertiary).lineLimit(1) }
-                        Spacer()
+                    HStack(spacing: 8) {
+                        StatusDot(color: a.installed ? .green : .orange)
+                        Text(a.name).font(.system(size: 13))
+                        if let v = a.version { Text(v).font(.system(size: 11)).monospacedDigit().foregroundStyle(.tertiary) }
+                        Spacer(minLength: 8)
+                        Text(a.installed ? "Ready" : (a.problem ?? "Not installed")).inspectorSecondary().lineLimit(1).truncationMode(.tail)
                     }
                 }
-                if chat.agents.isEmpty { Text("Looking for agents…").font(.caption2).foregroundStyle(.tertiary) }
+                if chat.agents.isEmpty { InspectorFootnote("Looking for agents…") }
+            } else {
+                InspectorFootnote("The agent runtime starts with the Chat tab.")
             }
         }
-        .padding(8).background(Color(nsColor: .textBackgroundColor)).cornerRadius(6)
     }
-    private var statusColor: Color { if case .running = mcp.status { return .green }; if case .failed = mcp.status { return .red }; return .gray }
+    /// A label with a file path on the right: one line, middle-truncated, selectable, full path on hover.
+    private func pathRow(_ label: String, _ path: String) -> some View {
+        HStack(spacing: 12) {
+            Text(label).font(.system(size: 13))
+            Spacer(minLength: 8)
+            Text(path).font(.system(size: 11, design: .monospaced)).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.middle).textSelection(.enabled).help(path)
+        }
+    }
+    private var mcpPort: UInt16? { if case .running(let p) = mcp.status { return p }; return nil }
+    private var statusColor: Color { if case .running = mcp.status { return .green }; if case .failed = mcp.status { return .red }; return .orange }
     private var statusText: String {
         switch mcp.status {
-        case .running(let p): return "MCP server running on port \(p)"
-        case .failed(let e): return "MCP server failed: \(e)"
-        case .stopped: return "MCP server stopped"
+        case .running: return "Running"
+        case .failed: return "Failed to start"
+        case .stopped: return "Stopped"
         }
     }
     private func snippet(_ title: String, _ text: String, id: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack { Text(title).font(.caption.bold()); Spacer(); Button("Copy") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string) }.pointer().font(.caption).uiFrame("agents.copy.\(id)") }
-            Text(text).font(.system(size: 10, design: .monospaced)).textSelection(.enabled).padding(6)
-                .frame(maxWidth: .infinity, alignment: .leading).background(Color(nsColor: .textBackgroundColor)).cornerRadius(4)
+        InspectorCard(title, trailing: {
+            Button("Copy") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string) }.controlSize(.small).pointer().uiFrame("agents.copy.\(id)")
+        }) {
+            Text(text).font(.system(size: 10.5, design: .monospaced)).textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 3)
         }
     }
 
@@ -138,57 +333,69 @@ struct InspectorView: View {
     private var history: some View {
         let h = document.project.history
         let viewing = state.viewingVersion
-        return VStack(alignment: .leading, spacing: 6) {
-            Text("Every edit is a version. Click one to see it in the preview, Restore to go back to it. Restoring is itself an edit, so nothing is lost.").font(.caption).foregroundStyle(.secondary)
+        return VStack(alignment: .leading, spacing: InspectorStyle.gap) {
+            InspectorFootnote("Every edit is a version. Click one to see it in the preview, Restore to go back to it. Restoring is itself an edit, so nothing is lost.").padding(.horizontal, 4)
             if let v = viewing, !v.isCurrent {
                 HStack(spacing: 8) {
-                    Image(systemName: "clock.arrow.circlepath").foregroundStyle(.orange)
-                    Text("Viewing: \(v.label) · \(v.date.formatted(date: .omitted, time: .shortened))").font(.caption).lineLimit(1)
-                    Spacer()
-                    Button("Back to current") { stopViewing() }.font(.caption).controlSize(.small).pointer().uiFrame("history.back").uiTap("history.back") { stopViewing() }
-                    Button("Restore") { restore(v) }.font(.caption).controlSize(.small).buttonStyle(.borderedProminent).pointer().uiFrame("history.restoreViewing").uiTap("history.restoreViewing") { restore(v) }
+                    Image(systemName: "clock.arrow.circlepath").imageScale(.medium).foregroundStyle(.orange)
+                    Text("Viewing \(v.label) · \(v.date.formatted(date: .omitted, time: .shortened))").font(.system(size: 11)).monospacedDigit().lineLimit(1)
+                    Spacer(minLength: 8)
+                    Button("Back to current") { stopViewing() }.controlSize(.small).pointer().uiFrame("history.back").uiTap("history.back") { stopViewing() }
+                    Button("Restore") { restore(v) }.controlSize(.small).buttonStyle(.borderedProminent).pointer().uiFrame("history.restoreViewing").uiTap("history.restoreViewing") { restore(v) }
                 }
-                .padding(6).background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+                .padding(.horizontal, 10).padding(.vertical, 8)
+                .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
-            ForEach(Array(h.indices.reversed()), id: \.self) { k in
-                let e = h[k]
-                let isCurrent = k == h.count - 1
-                let selected = viewing.map { $0.id == (isCurrent ? "current" : h[k + 1].id.short) } ?? isCurrent
-                HStack(spacing: 8) {
-                    Image(systemName: e.origin == .agent ? "sparkles" : e.origin == .user ? "person" : "gear").foregroundStyle(e.origin == .agent ? .purple : .secondary).frame(width: 16)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(e.label).font(.caption).lineLimit(1)
-                        Text((isCurrent ? "Current · " : "") + e.createdAt.formatted(date: .omitted, time: .shortened) + changes(k)).font(.caption2).foregroundStyle(.tertiary).lineLimit(2)
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(Array(h.indices.reversed()), id: \.self) { k in
+                    let e = h[k]
+                    let isCurrent = k == h.count - 1
+                    let selected = viewing.map { $0.id == (isCurrent ? "current" : h[k + 1].id.short) } ?? isCurrent
+                    HStack(spacing: 10) {
+                        historyNode(isCurrent ? Color.accentColor : e.origin == .agent ? Color.purple : Color.secondary.opacity(0.5))
+                        Image(systemName: e.origin == .agent ? "sparkles" : e.origin == .user ? "person" : "gear").font(.system(size: 11)).foregroundStyle(e.origin == .agent ? .purple : .secondary).frame(width: 14)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(e.label).font(.system(size: 13, weight: isCurrent ? .semibold : .regular)).lineLimit(1)
+                            Text((isCurrent ? "Current · " : "") + e.createdAt.formatted(date: .omitted, time: .shortened) + changes(k)).inspectorSecondary().monospacedDigit().lineLimit(2)
+                        }
+                        Spacer(minLength: 8)
+                        if !isCurrent {
+                            Button("Restore") { if let v = try? document.version(afterEditAt: k) { restore(v) } }.controlSize(.small).pointer().help("Make this version current again")
+                                .uiFrame("history.restore.\(k)").uiTap("history.restore.\(k)", key: e.id.uuidString) { if let v = try? document.version(afterEditAt: k) { restore(v) } }
+                        }
                     }
-                    Spacer()
-                    if !isCurrent {
-                        Button("Restore") { if let v = try? document.version(afterEditAt: k) { restore(v) } }.font(.caption).controlSize(.small).pointer().help("Make this version current again")
-                            .uiFrame("history.restore.\(k)").uiTap("history.restore.\(k)", key: e.id.uuidString) { if let v = try? document.version(afterEditAt: k) { restore(v) } }
+                    .modifier(HistoryRowStyle(selected: selected, current: isCurrent))
+                    .contentShape(Rectangle()).onTapGesture { if isCurrent { stopViewing() } else { view(try? document.version(afterEditAt: k)) } }
+                    .pointer().uiFrame("history.\(k)").help(isCurrent ? "The project as it is now" : "Show the project as it was after this edit")
+                    .uiTap("history.\(k)", key: "\(e.id.uuidString)-\(isCurrent)") { if isCurrent { stopViewing() } else { view(try? document.version(afterEditAt: k)) } }
+                }
+                if !h.isEmpty {
+                    let selected = viewing?.id == "original"
+                    HStack(spacing: 10) {
+                        historyNode(Color.secondary.opacity(0.5))
+                        Image(systemName: "doc").font(.system(size: 11)).foregroundStyle(.secondary).frame(width: 14)
+                        VStack(alignment: .leading, spacing: 2) { Text("Original").font(.system(size: 13)); Text("Before the first edit").inspectorSecondary() }
+                        Spacer(minLength: 8)
+                        Button("Restore") { if let v = try? document.version(afterEditAt: nil) { restore(v) } }.controlSize(.small).pointer().uiFrame("history.restore.original")
+                            .uiTap("history.restore.original") { if let v = try? document.version(afterEditAt: nil) { restore(v) } }
                     }
+                    .modifier(HistoryRowStyle(selected: selected, current: false))
+                    .contentShape(Rectangle()).onTapGesture { view(try? document.version(afterEditAt: nil)) }.pointer().uiFrame("history.original")
+                    .uiTap("history.original") { view(try? document.version(afterEditAt: nil)) }
                 }
-                .padding(.vertical, 3).padding(.horizontal, 6)
-                .background(selected ? Color.accentColor.opacity(0.18) : isCurrent ? Color.primary.opacity(0.05) : Color.clear, in: RoundedRectangle(cornerRadius: 5))
-                .contentShape(Rectangle()).onTapGesture { if isCurrent { stopViewing() } else { view(try? document.version(afterEditAt: k)) } }
-                .pointer().uiFrame("history.\(k)").help(isCurrent ? "The project as it is now" : "Show the project as it was after this edit")
-                .uiTap("history.\(k)", key: "\(e.id.uuidString)-\(isCurrent)") { if isCurrent { stopViewing() } else { view(try? document.version(afterEditAt: k)) } }
             }
-            if !h.isEmpty {
-                HStack(spacing: 8) {
-                    Image(systemName: "doc").foregroundStyle(.secondary).frame(width: 16)
-                    VStack(alignment: .leading, spacing: 1) { Text("Original").font(.caption); Text("Before the first edit").font(.caption2).foregroundStyle(.tertiary) }
-                    Spacer()
-                    Button("Restore") { if let v = try? document.version(afterEditAt: nil) { restore(v) } }.font(.caption).controlSize(.small).pointer().uiFrame("history.restore.original")
-                        .uiTap("history.restore.original") { if let v = try? document.version(afterEditAt: nil) { restore(v) } }
-                }
-                .padding(.vertical, 3).padding(.horizontal, 6)
-                .background(viewing?.id == "original" ? Color.accentColor.opacity(0.18) : Color.clear, in: RoundedRectangle(cornerRadius: 5))
-                .contentShape(Rectangle()).onTapGesture { view(try? document.version(afterEditAt: nil)) }.pointer().uiFrame("history.original")
-                .uiTap("history.original") { view(try? document.version(afterEditAt: nil)) }
+            // The timeline rail behind the nodes: one hairline from the newest edit down to the original.
+            .background(alignment: .topLeading) {
+                if !h.isEmpty { Rectangle().fill(InspectorStyle.hairline).frame(width: 1).padding(.leading, 15.5).padding(.vertical, 16) }
             }
-            if h.isEmpty { Text("No edits yet.").font(.caption).foregroundStyle(.tertiary) }
+            if h.isEmpty { InspectorEmptyState(symbol: "clock.arrow.circlepath", title: "No edits yet", hint: "Every change shows up here as a version you can go back to.") }
         }
         .onChange(of: document.revision) { _, _ in if state.viewingVersion != nil { state.viewingVersion = nil } }   // any edit returns to the live project
         .onDisappear { if state.viewingVersion != nil { stopViewing() } }
+    }
+    /// The dot of a history row on the timeline rail.
+    private func historyNode(_ color: Color) -> some View {
+        Circle().fill(color).frame(width: 7, height: 7).frame(width: 16, height: 16)
     }
 
     private func view(_ v: ProjectVersion?) {
@@ -227,229 +434,271 @@ struct ClipInspector: View {
     @State private var reframing = false
     @State private var reframeNote: String?
 
+    /// Slider drags make one undo step.
+    private var x: ToolExecutor { ToolExecutor(document: document, origin: .user, coalesce: true) }
+    private var asset: Asset? { document.project.asset(clip.assetID) }
+
     var body: some View {
-        let x = ToolExecutor(document: document, origin: .user, coalesce: true)   // slider drags make one undo step
-        let asset = document.project.asset(clip.assetID)
-        Form {
-            Section {
-                HStack(spacing: 10) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 5).fill(track.kind == .audio ? Color.green.opacity(0.25) : Color.black.opacity(0.35))
-                        if let frame = thumbnails.strips[clip.assetID]?.frames.first { Image(decorative: frame, scale: 1).resizable().aspectRatio(contentMode: .fill) }
-                        else { Image(systemName: track.kind == .video ? "film" : "waveform").foregroundStyle(.secondary) }
-                    }
-                    .frame(width: 64, height: 36).clipShape(RoundedRectangle(cornerRadius: 5))
-                    VStack(alignment: .leading, spacing: 2) {
-                        TextField("Name", text: $nameDraft).textFieldStyle(.plain).font(.system(size: 13, weight: .semibold))
-                            .onSubmit { commitName(x) }
-                        Text(asset?.name ?? "missing file").font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-                    }
+        ScrollView {
+            VStack(alignment: .leading, spacing: InspectorStyle.gap) {
+                headerCard
+                timingCard
+                if let seq = document.project.sequence(of: clip) { sequenceCard(seq) }
+                if let mc = clip.multicam { multicamCard(mc) }
+                speedCard
+                if let asset, asset.kind == .video || asset.kind == .audio { TranscriptSection(document: document, clip: clip) }
+                if track.kind == .video {
+                    transformCard
+                    colorCard
+                    lookCard
                 }
-                .padding(.vertical, 2)
-                if state.selectedClipIDs.count >= 1 {
-                    // Read the selection when the button fires: the driver keeps the handler it registered first.
-                    let nest = { Task { @MainActor in
-                        let nestIDs = [clip.id.uuidString] + state.selectedClipIDs.subtracting([clip.id]).map(\.uuidString)
-                        if let info = try? await ToolExecutor(document: document, origin: .user).nestClips(nestIDs, name: nil), let c = info.clip, let id = Project.resolve(c, in: document.project.allClips.map(\.id)) { state.selectedClipIDs = [id] } } }
-                    Button("Nest \(state.selectedClipIDs.count) selected into a sequence", systemImage: "square.stack.3d.down.right") { _ = nest() }
-                        .controlSize(.small).pointer().uiTap("inspector.sequence.nest") { _ = nest() }.uiFrame("inspector.sequence.nest")
+                audioCard
+                eqCard
+                transitionCard
+                Text("Clip \(clip.id.short)").font(.system(size: 11)).monospacedDigit().foregroundStyle(.tertiary).textSelection(.enabled)
+                    .frame(maxWidth: .infinity).padding(.top, 4)
+            }
+            .padding(12)
+        }
+        .onAppear { nameDraft = clip.name }
+        .onChange(of: clip.id) { _, _ in nameDraft = clip.name }
+    }
+
+    /// Thumbnail, name and the actions that apply to the clip as a whole.
+    private var headerCard: some View {
+        InspectorCard {
+            HStack(spacing: 10) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous).fill(track.kind == .audio ? Color.green.opacity(0.25) : Color.black.opacity(0.35))
+                    if let frame = thumbnails.strips[clip.assetID]?.frames.first { Image(decorative: frame, scale: 1).resizable().aspectRatio(contentMode: .fill) }
+                    else { Image(systemName: track.kind == .video ? "film" : "waveform").imageScale(.medium).foregroundStyle(.secondary) }
                 }
-                if state.selectedClipIDs.count >= 2, clip.multicam == nil {
-                    let make = { Task { @MainActor in
-                        let ids = [clip.id.uuidString] + state.selectedClipIDs.subtracting([clip.id]).map(\.uuidString)
-                        if let info = try? await ToolExecutor(document: document, origin: .user).makeMulticam(ids, sync: "audio"), let id = Project.resolve(info.clip, in: document.project.allClips.map(\.id)) { state.selectedClipIDs = [id] } } }
-                    Button("Make multicam from \(state.selectedClipIDs.count) selected", systemImage: "camera.on.rectangle") { _ = make() }.controlSize(.small).pointer()
-                    .uiTap("inspector.multicam.make") { _ = make() }
-                    .uiFrame("inspector.multicam.make")
+                .frame(width: 64, height: 36).clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                VStack(alignment: .leading, spacing: 2) {
+                    TextField("Name", text: $nameDraft).textFieldStyle(.plain).font(.system(size: 13, weight: .semibold))
+                        .onSubmit { commitName(x) }
+                    Text(asset?.name ?? "missing file").inspectorSecondary().lineLimit(1).truncationMode(.middle)
                 }
-                HStack(spacing: 8) {
-                    Button("Split at playhead", systemImage: "scissors") { try? x.splitClip(clip.id.uuidString, at: player.currentTime) }
-                        .pointer().disabled(player.currentTime <= clip.start + 0.01 || player.currentTime >= clip.end - 0.01).uiFrame("inspector.clip.split")
-                    Button("Delete", systemImage: "trash", role: .destructive) { state.selectedClipIDs = []; try? x.removeClips([clip.id.uuidString]) }.pointer().uiFrame("inspector.clip.delete")
+            }
+            .padding(.vertical, 4)
+            if state.selectedClipIDs.count >= 1 {
+                // Read the selection when the button fires: the driver keeps the handler it registered first.
+                let nest = { Task { @MainActor in
+                    let nestIDs = [clip.id.uuidString] + state.selectedClipIDs.subtracting([clip.id]).map(\.uuidString)
+                    if let info = try? await ToolExecutor(document: document, origin: .user).nestClips(nestIDs, name: nil), let c = info.clip, let id = Project.resolve(c, in: document.project.allClips.map(\.id)) { state.selectedClipIDs = [id] } } }
+                Button("Nest \(state.selectedClipIDs.count) selected into a sequence", systemImage: "square.stack.3d.down.right") { _ = nest() }
+                    .controlSize(.small).pointer().uiTap("inspector.sequence.nest") { _ = nest() }.uiFrame("inspector.sequence.nest")
+            }
+            if state.selectedClipIDs.count >= 2, clip.multicam == nil {
+                let make = { Task { @MainActor in
+                    let ids = [clip.id.uuidString] + state.selectedClipIDs.subtracting([clip.id]).map(\.uuidString)
+                    if let info = try? await ToolExecutor(document: document, origin: .user).makeMulticam(ids, sync: "audio"), let id = Project.resolve(info.clip, in: document.project.allClips.map(\.id)) { state.selectedClipIDs = [id] } } }
+                Button("Make multicam from \(state.selectedClipIDs.count) selected", systemImage: "camera.on.rectangle") { _ = make() }.controlSize(.small).pointer()
+                .uiTap("inspector.multicam.make") { _ = make() }
+                .uiFrame("inspector.multicam.make")
+            }
+            HStack(spacing: 8) {
+                Button("Split at playhead", systemImage: "scissors") { try? x.splitClip(clip.id.uuidString, at: player.currentTime) }
+                    .pointer().disabled(player.currentTime <= clip.start + 0.01 || player.currentTime >= clip.end - 0.01).uiFrame("inspector.clip.split")
+                Button("Delete", systemImage: "trash", role: .destructive) { state.selectedClipIDs = []; try? x.removeClips([clip.id.uuidString]) }.pointer().uiFrame("inspector.clip.delete")
+                Spacer()
+            }
+            .controlSize(.small)
+        }
+    }
+
+    private var timingCard: some View {
+        InspectorCard("Timing") {
+            InspectorValueRow("Track", track.name)
+            InspectorValueRow("Start", Timecode.string(clip.start))
+            InspectorValueRow("End", Timecode.string(clip.end))
+            InspectorValueRow("Duration", Timecode.string(clip.duration))
+            InspectorValueRow("Source in", Timecode.string(clip.sourceIn))
+        }
+    }
+
+    private func sequenceCard(_ seq: Sequence) -> some View {
+        let n = seq.project.allClips.count
+        return InspectorCard("Nested sequence", footer: "Speed, color, fades, transitions and keyframes on this clip apply to the whole group.") {
+            InspectorValueRow("Sequence", seq.name)
+            InspectorValueRow("Contents", "\(n) clip\(n == 1 ? "" : "s") on \(seq.project.tracks.map(\.name).joined(separator: ", ")), \(Timecode.string(seq.project.duration))")
+            let unnest = { _ = try? ToolExecutor(document: document, origin: .user).unnestClip(clip.id.uuidString); state.selectedClipIDs = [] }
+            Button("Unnest onto the timeline", systemImage: "square.stack.3d.up") { unnest() }.controlSize(.small).pointer()
+                .uiTap("inspector.sequence.unnest") { unnest() }.uiFrame("inspector.sequence.unnest")
+        }
+    }
+
+    private func multicamCard(_ mc: Multicam) -> some View {
+        let plain = ToolExecutor(document: document, origin: .user)
+        let active = mc.angle(at: localTime)
+        return InspectorCard("Multicam", footer: "Click an angle to cut to it at the playhead. The cut line shows on the clip.") {
+            HStack(spacing: 6) {
+                ForEach(Array(mc.angles.enumerated()), id: \.offset) { i, aid in
+                    Button("\(i + 1)") { _ = try? plain.cutAngle(clip.id.uuidString, at: player.currentTime, angle: i + 1) }
+                        .buttonStyle(.bordered).tint(active == i ? Color.accentColor : nil)
+                        .help(document.project.asset(aid)?.name ?? "missing").pointer()
+                        .uiTap("inspector.angle.\(i + 1)") { _ = try? plain.cutAngle(clip.id.uuidString, at: player.currentTime, angle: i + 1) }
+                        .uiFrame("inspector.angle.\(i + 1)")
+                }
+                Spacer(minLength: 8)
+                Text("angle \(active + 1) at playhead").inspectorSecondary().monospacedDigit()
+            }
+            InspectorRow("Sound from") {
+                Picker("Sound from", selection: Binding(get: { mc.audioAngle }, set: { v in _ = try? plain.setMulticam(clip.id.uuidString, audioAngle: v + 1, offsets: nil, flatten: false) })) {
+                    ForEach(0..<mc.angles.count, id: \.self) { i in Text("Angle \(i + 1) · \(document.project.asset(mc.angles[i])?.name ?? "")").tag(i) }
+                }.labelsHidden().pointer().uiFrame("inspector.multicam.audio")
+            }
+            ForEach(mc.cuts.map { ("cut-\($0.time)", $0) }, id: \.0) { _, cut in
+                HStack {
+                    Text("\(Timecode.string(clip.start + cut.time))  →  angle \(cut.angle + 1)").font(.system(size: 13)).monospacedDigit()
                     Spacer()
-                }
-                .controlSize(.small)
-            }
-            Section("Timing") {
-                LabeledContent("Track", value: track.name)
-                LabeledContent("Start", value: Timecode.string(clip.start))
-                LabeledContent("End", value: Timecode.string(clip.end))
-                LabeledContent("Duration", value: Timecode.string(clip.duration))
-                LabeledContent("Source in", value: Timecode.string(clip.sourceIn))
-            }
-            if let seq = document.project.sequence(of: clip) {
-                Section("Nested sequence") {
-                    let n = seq.project.allClips.count
-                    LabeledContent("Sequence", value: seq.name)
-                    LabeledContent("Contents", value: "\(n) clip\(n == 1 ? "" : "s") on \(seq.project.tracks.map(\.name).joined(separator: ", ")), \(Timecode.string(seq.project.duration))")
-                    let unnest = { _ = try? ToolExecutor(document: document, origin: .user).unnestClip(clip.id.uuidString); state.selectedClipIDs = [] }
-                    Button("Unnest onto the timeline", systemImage: "square.stack.3d.up") { unnest() }.controlSize(.small).pointer()
-                        .uiTap("inspector.sequence.unnest") { unnest() }.uiFrame("inspector.sequence.unnest")
-                    Text("Speed, color, fades, transitions and keyframes on this clip apply to the whole group.").font(.caption).foregroundStyle(.secondary)
+                    Button { player.pause(); player.seek(to: clip.start + cut.time) } label: { Image(systemName: "arrow.right.to.line") }.buttonStyle(.borderless).focusable(false).help("Go to cut").pointer().uiFrame("inspector.multicam.cut.\(cut.time).go")
+                    Button { _ = try? plain.cutAngle(clip.id.uuidString, at: clip.start + cut.time, angle: 0, remove: true) } label: { Image(systemName: "trash") }.buttonStyle(.borderless).focusable(false).help("Remove cut").pointer().uiFrame("inspector.multicam.cut.\(cut.time).remove")
                 }
             }
-            if let mc = clip.multicam {
-                Section("Multicam") {
-                    let plain = ToolExecutor(document: document, origin: .user)
-                    let active = mc.angle(at: localTime)
-                    HStack(spacing: 6) {
-                        ForEach(Array(mc.angles.enumerated()), id: \.offset) { i, aid in
-                            Button("\(i + 1)") { _ = try? plain.cutAngle(clip.id.uuidString, at: player.currentTime, angle: i + 1) }
-                                .buttonStyle(.bordered).tint(active == i ? Color.accentColor : nil)
-                                .help(document.project.asset(aid)?.name ?? "missing").pointer()
-                                .uiTap("inspector.angle.\(i + 1)") { _ = try? plain.cutAngle(clip.id.uuidString, at: player.currentTime, angle: i + 1) }
-                                .uiFrame("inspector.angle.\(i + 1)")
-                        }
-                        Spacer()
-                        Text("angle \(active + 1) at playhead").font(.caption).foregroundStyle(.secondary)
-                    }
-                    Text("Click an angle to cut to it at the playhead. The cut line shows on the clip.").font(.caption).foregroundStyle(.secondary)
-                    Picker("Sound from", selection: Binding(get: { mc.audioAngle }, set: { v in _ = try? plain.setMulticam(clip.id.uuidString, audioAngle: v + 1, offsets: nil, flatten: false) })) {
-                        ForEach(0..<mc.angles.count, id: \.self) { i in Text("Angle \(i + 1) · \(document.project.asset(mc.angles[i])?.name ?? "")").tag(i) }
-                    }.pointer().uiFrame("inspector.multicam.audio")
-                    ForEach(mc.cuts.map { ("cut-\($0.time)", $0) }, id: \.0) { _, cut in
-                        HStack {
-                            Text("\(Timecode.string(clip.start + cut.time))  →  angle \(cut.angle + 1)").font(.caption).monospacedDigit()
-                            Spacer()
-                            Button { player.pause(); player.seek(to: clip.start + cut.time) } label: { Image(systemName: "arrow.right.to.line") }.buttonStyle(.borderless).help("Go to cut").pointer().uiFrame("inspector.multicam.cut.\(cut.time).go")
-                            Button { _ = try? plain.cutAngle(clip.id.uuidString, at: clip.start + cut.time, angle: 0, remove: true) } label: { Image(systemName: "trash") }.buttonStyle(.borderless).help("Remove cut").pointer().uiFrame("inspector.multicam.cut.\(cut.time).remove")
-                        }
-                    }
-                    if mc.angles.count > 1 {
-                        Text("Offsets: " + mc.angles.indices.dropFirst().map { "angle \($0 + 1) \(String(format: "%+.2f", mc.offset($0))) s" }.joined(separator: ", ")).font(.caption).foregroundStyle(.secondary)
-                    }
-                    HStack {
-                        Button("Sync by audio", systemImage: "waveform.badge.magnifyingglass") { Task { @MainActor in _ = try? await plain.syncAngles(clip.id.uuidString) } }.pointer()
-                            .uiTap("inspector.multicam.sync") { Task { @MainActor in _ = try? await plain.syncAngles(clip.id.uuidString) } }.uiFrame("inspector.multicam.sync")
-                        Button("Flatten to clips", systemImage: "rectangle.split.3x1") { _ = try? plain.setMulticam(clip.id.uuidString, audioAngle: nil, offsets: nil, flatten: true) }.pointer()
-                            .uiTap("inspector.multicam.flatten") { _ = try? plain.setMulticam(clip.id.uuidString, audioAngle: nil, offsets: nil, flatten: true) }.uiFrame("inspector.multicam.flatten")
-                    }.controlSize(.small)
+            if mc.angles.count > 1 {
+                InspectorFootnote("Offsets: " + mc.angles.indices.dropFirst().map { "angle \($0 + 1) \(String(format: "%+.2f", mc.offset($0))) s" }.joined(separator: ", "))
+            }
+            HStack(spacing: 8) {
+                Button("Sync by audio", systemImage: "waveform.badge.magnifyingglass") { Task { @MainActor in _ = try? await plain.syncAngles(clip.id.uuidString) } }.pointer()
+                    .uiTap("inspector.multicam.sync") { Task { @MainActor in _ = try? await plain.syncAngles(clip.id.uuidString) } }.uiFrame("inspector.multicam.sync")
+                Button("Flatten to clips", systemImage: "rectangle.split.3x1") { _ = try? plain.setMulticam(clip.id.uuidString, audioAngle: nil, offsets: nil, flatten: true) }.pointer()
+                    .uiTap("inspector.multicam.flatten") { _ = try? plain.setMulticam(clip.id.uuidString, audioAngle: nil, offsets: nil, flatten: true) }.uiFrame("inspector.multicam.flatten")
+                Spacer(minLength: 0)
+            }.controlSize(.small)
+        }
+    }
+
+    private var speedCard: some View {
+        InspectorCard("Speed", footer: clip.isAnimated(.speed)
+                      ? "Speed ramp: \(clip.keyframes(.speed).count) keyframes, uses \(Timecode.string(clip.sourceOut - clip.sourceIn)) of media. 0× holds a frame."
+                      : "Click the diamond to start a speed ramp from the playhead.") {
+            slider("Speed", param: .speed, value: clip.speed, range: 0...4, format: { String(format: "%.2f×", $0) }, reset: 1) { try? x.setClipProperties(clip.id.uuidString, speed: $0) }
+        }
+    }
+
+    private var transformCard: some View {
+        let tf = clip.transform
+        return InspectorCard("Transform", trailing: {
+            if !clip.transform.isIdentity { Button("Reset") { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: nil, y: nil, rotation: nil, cropLeft: nil, cropRight: nil, cropTop: nil, cropBottom: nil, reset: true) }.controlSize(.mini).pointer().uiFrame("inspector.transform.reset") }
+        }) {
+            slider("Scale", param: .scale, value: tf.scale, range: 0.1...4, format: { "\(Int($0 * 100))%" }, reset: 1) { try? x.setClipTransform(clip.id.uuidString, scale: $0, x: nil, y: nil, rotation: nil, cropLeft: nil, cropRight: nil, cropTop: nil, cropBottom: nil, reset: false) }
+            slider("Position X", param: .x, value: tf.x, range: -1...1, format: { "\(Int($0 * 100))%" }, reset: 0) { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: $0, y: nil, rotation: nil, cropLeft: nil, cropRight: nil, cropTop: nil, cropBottom: nil, reset: false) }
+            slider("Position Y", param: .y, value: tf.y, range: -1...1, format: { "\(Int($0 * 100))%" }, reset: 0) { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: nil, y: $0, rotation: nil, cropLeft: nil, cropRight: nil, cropTop: nil, cropBottom: nil, reset: false) }
+            slider("Rotation", param: .rotation, value: tf.rotation, range: -180...180, format: { "\(Int($0))°" }, reset: 0) { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: nil, y: nil, rotation: $0, cropLeft: nil, cropRight: nil, cropTop: nil, cropBottom: nil, reset: false) }
+            slider("Crop left", value: tf.cropLeft, range: 0...0.9, format: { "\(Int($0 * 100))%" }, reset: 0) { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: nil, y: nil, rotation: nil, cropLeft: $0, cropRight: nil, cropTop: nil, cropBottom: nil, reset: false) }
+            slider("Crop right", value: tf.cropRight, range: 0...0.9, format: { "\(Int($0 * 100))%" }, reset: 0) { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: nil, y: nil, rotation: nil, cropLeft: nil, cropRight: $0, cropTop: nil, cropBottom: nil, reset: false) }
+            slider("Crop top", value: tf.cropTop, range: 0...0.9, format: { "\(Int($0 * 100))%" }, reset: 0) { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: nil, y: nil, rotation: nil, cropLeft: nil, cropRight: nil, cropTop: $0, cropBottom: nil, reset: false) }
+            slider("Crop bottom", value: tf.cropBottom, range: 0...0.9, format: { "\(Int($0 * 100))%" }, reset: 0) { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: nil, y: nil, rotation: nil, cropLeft: nil, cropRight: nil, cropTop: nil, cropBottom: $0, reset: false) }
+            slider("Opacity", param: .opacity, value: clip.opacity, range: 0...1, format: { "\(Int($0 * 100))%" }, reset: 1) { try? x.setClipProperties(clip.id.uuidString, opacity: $0) }
+            if asset?.kind == .video {
+                // Auto-reframe: cover the frame and keyframe the position so the subject stays in view (Vision person / saliency).
+                let reframe = { Task { @MainActor in
+                    guard !reframing else { return }
+                    reframing = true; reframeNote = "Analysing…"
+                    defer { reframing = false }
+                    do {
+                        let r = try await ToolExecutor(document: document, origin: .user).autoReframe(clip.id.uuidString)
+                        reframeNote = "\(r.mode): \(r.keyframesX + r.keyframesY) keyframes, scale \(Int((r.scale * 100).rounded()))%" + (r.note.map { " — \($0)" } ?? "")
+                    } catch { reframeNote = error.localizedDescription }
+                } }
+                HStack(spacing: 8) {
+                    Button("Auto-reframe", systemImage: "person.crop.rectangle.badge.plus") { _ = reframe() }
+                        .controlSize(.small).pointer().disabled(reframing).uiTap("inspector.autoReframe") { _ = reframe() }.uiFrame("inspector.autoReframe")
+                    if reframing { ProgressView().controlSize(.mini) }
+                    if let reframeNote { Text(reframeNote).inspectorSecondary().lineLimit(2) }
+                    Spacer(minLength: 0)
                 }
             }
-            Section("Speed") {
-                slider("Speed", param: .speed, value: clip.speed, range: 0...4, format: { String(format: "%.2f×", $0) }, reset: 1) { try? x.setClipProperties(clip.id.uuidString, speed: $0) }
-                if clip.isAnimated(.speed) {
-                    Text("Speed ramp: \(clip.keyframes(.speed).count) keyframes, uses \(Timecode.string(clip.sourceOut - clip.sourceIn)) of media. 0× holds a frame.").font(.caption).foregroundStyle(.secondary)
-                } else {
-                    Text("Click the diamond to start a speed ramp from the playhead.").font(.caption).foregroundStyle(.secondary)
-                }
+            if asset?.kind == .video { StabilizeRow(document: document, clip: clip) }
+        }
+    }
+
+    private var colorCard: some View {
+        let c = clip.color
+        return InspectorCard("Color", trailing: {
+            if !clip.color.isIdentity { Button("Reset") { try? x.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: nil, temperature: nil, tint: nil, reset: true) }.controlSize(.mini).pointer().uiFrame("inspector.color.reset") }
+        }) {
+            slider("Exposure", param: .exposure, value: c.exposure, range: -2...2, format: { String(format: "%+.1f", $0) }, reset: 0) { try? x.setClipColor(clip.id.uuidString, exposure: $0, contrast: nil, saturation: nil, temperature: nil, tint: nil, reset: false) }
+            slider("Contrast", param: .contrast, value: c.contrast, range: 0.5...2, format: { "\(Int($0 * 100))%" }, reset: 1) { try? x.setClipColor(clip.id.uuidString, exposure: nil, contrast: $0, saturation: nil, temperature: nil, tint: nil, reset: false) }
+            slider("Saturation", param: .saturation, value: c.saturation, range: 0...2, format: { "\(Int($0 * 100))%" }, reset: 1) { try? x.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: $0, temperature: nil, tint: nil, reset: false) }
+            slider("Temperature", param: .temperature, value: c.temperature, range: -100...100, format: { "\(Int($0))" }, reset: 0) { try? x.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: nil, temperature: $0, tint: nil, reset: false) }
+            slider("Tint", param: .tint, value: c.tint, range: -100...100, format: { "\(Int($0))" }, reset: 0) { try? x.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: nil, temperature: nil, tint: $0, reset: false) }
+            slider("Shadows", param: .shadows, value: c.shadows, range: -1...1, format: { "\(Int($0 * 100))" }, reset: 0) { try? x.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: nil, temperature: nil, tint: nil, reset: false, shadows: $0) }
+            slider("Midtones", param: .midtones, value: c.midtones, range: -1...1, format: { "\(Int($0 * 100))" }, reset: 0) { try? x.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: nil, temperature: nil, tint: nil, reset: false, midtones: $0) }
+            slider("Highlights", param: .highlights, value: c.highlights, range: -1...1, format: { "\(Int($0 * 100))" }, reset: 0) { try? x.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: nil, temperature: nil, tint: nil, reset: false, highlights: $0) }
+            slider("Vibrance", param: .vibrance, value: c.vibrance, range: -1...1, format: { "\(Int($0 * 100))" }, reset: 0) { try? x.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: nil, temperature: nil, tint: nil, reset: false, vibrance: $0) }
+        }
+    }
+
+    private var lookCard: some View {
+        let c = clip.color
+        let plain = ToolExecutor(document: document, origin: .user)
+        return InspectorCard("Look", footer: "The input LUT runs first, at full strength: it turns log footage (DJI D-Log, S-Log, V-Log) into a normal Rec.709 image, so the color controls behave as expected. A look is a 3D LUT applied after them. Built-in looks are generated; .cube files from any grading app load as they are.") {
+            InspectorRow("Input LUT") {
+                Picker("Input LUT", selection: Binding(get: { c.inputLut ?? "none" }, set: { v in
+                    if v == "file" { pickCube(plain, input: true) } else { try? plain.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: nil, temperature: nil, tint: nil, reset: false, inputLut: v) }
+                })) {
+                    Text("None (footage is already Rec.709)").tag("none")
+                    if let path = c.inputLut { Text(URL(fileURLWithPath: path).lastPathComponent).tag(path) }
+                    Divider()
+                    Text("Load conversion .cube (D-Log → Rec.709…)…").tag("file")
+                }.labelsHidden().pointer().uiFrame("inspector.inputLut")
             }
-            if let asset, asset.kind == .video || asset.kind == .audio { TranscriptSection(document: document, clip: clip) }
-            if track.kind == .video {
-                Section {
-                    let tf = clip.transform
-                    slider("Scale", param: .scale, value: tf.scale, range: 0.1...4, format: { "\(Int($0 * 100))%" }, reset: 1) { try? x.setClipTransform(clip.id.uuidString, scale: $0, x: nil, y: nil, rotation: nil, cropLeft: nil, cropRight: nil, cropTop: nil, cropBottom: nil, reset: false) }
-                    slider("Position X", param: .x, value: tf.x, range: -1...1, format: { "\(Int($0 * 100))%" }, reset: 0) { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: $0, y: nil, rotation: nil, cropLeft: nil, cropRight: nil, cropTop: nil, cropBottom: nil, reset: false) }
-                    slider("Position Y", param: .y, value: tf.y, range: -1...1, format: { "\(Int($0 * 100))%" }, reset: 0) { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: nil, y: $0, rotation: nil, cropLeft: nil, cropRight: nil, cropTop: nil, cropBottom: nil, reset: false) }
-                    slider("Rotation", param: .rotation, value: tf.rotation, range: -180...180, format: { "\(Int($0))°" }, reset: 0) { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: nil, y: nil, rotation: $0, cropLeft: nil, cropRight: nil, cropTop: nil, cropBottom: nil, reset: false) }
-                    slider("Crop left", value: tf.cropLeft, range: 0...0.9, format: { "\(Int($0 * 100))%" }, reset: 0) { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: nil, y: nil, rotation: nil, cropLeft: $0, cropRight: nil, cropTop: nil, cropBottom: nil, reset: false) }
-                    slider("Crop right", value: tf.cropRight, range: 0...0.9, format: { "\(Int($0 * 100))%" }, reset: 0) { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: nil, y: nil, rotation: nil, cropLeft: nil, cropRight: $0, cropTop: nil, cropBottom: nil, reset: false) }
-                    slider("Crop top", value: tf.cropTop, range: 0...0.9, format: { "\(Int($0 * 100))%" }, reset: 0) { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: nil, y: nil, rotation: nil, cropLeft: nil, cropRight: nil, cropTop: $0, cropBottom: nil, reset: false) }
-                    slider("Crop bottom", value: tf.cropBottom, range: 0...0.9, format: { "\(Int($0 * 100))%" }, reset: 0) { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: nil, y: nil, rotation: nil, cropLeft: nil, cropRight: nil, cropTop: nil, cropBottom: $0, reset: false) }
-                    slider("Opacity", param: .opacity, value: clip.opacity, range: 0...1, format: { "\(Int($0 * 100))%" }, reset: 1) { try? x.setClipProperties(clip.id.uuidString, opacity: $0) }
-                    if asset?.kind == .video {
-                        // Auto-reframe: cover the frame and keyframe the position so the subject stays in view (Vision person / saliency).
-                        let reframe = { Task { @MainActor in
-                            guard !reframing else { return }
-                            reframing = true; reframeNote = "Analysing…"
-                            defer { reframing = false }
-                            do {
-                                let r = try await ToolExecutor(document: document, origin: .user).autoReframe(clip.id.uuidString)
-                                reframeNote = "\(r.mode): \(r.keyframesX + r.keyframesY) keyframes, scale \(Int((r.scale * 100).rounded()))%" + (r.note.map { " — \($0)" } ?? "")
-                            } catch { reframeNote = error.localizedDescription }
-                        } }
-                        HStack {
-                            Button("Auto-reframe", systemImage: "person.crop.rectangle.badge.plus") { _ = reframe() }
-                                .controlSize(.small).pointer().disabled(reframing).uiTap("inspector.autoReframe") { _ = reframe() }.uiFrame("inspector.autoReframe")
-                            if reframing { ProgressView().controlSize(.mini) }
-                            if let reframeNote { Text(reframeNote).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
-                        }
-                    }
-                    if asset?.kind == .video { StabilizeRow(document: document, clip: clip) }
-                } header: {
-                    HStack { Text("Transform"); Spacer(); if !clip.transform.isIdentity { Button("Reset") { try? x.setClipTransform(clip.id.uuidString, scale: nil, x: nil, y: nil, rotation: nil, cropLeft: nil, cropRight: nil, cropTop: nil, cropBottom: nil, reset: true) }.controlSize(.mini).pointer().uiFrame("inspector.transform.reset") } }
-                }
-                Section {
-                    let c = clip.color
-                    slider("Exposure", param: .exposure, value: c.exposure, range: -2...2, format: { String(format: "%+.1f", $0) }, reset: 0) { try? x.setClipColor(clip.id.uuidString, exposure: $0, contrast: nil, saturation: nil, temperature: nil, tint: nil, reset: false) }
-                    slider("Contrast", param: .contrast, value: c.contrast, range: 0.5...2, format: { "\(Int($0 * 100))%" }, reset: 1) { try? x.setClipColor(clip.id.uuidString, exposure: nil, contrast: $0, saturation: nil, temperature: nil, tint: nil, reset: false) }
-                    slider("Saturation", param: .saturation, value: c.saturation, range: 0...2, format: { "\(Int($0 * 100))%" }, reset: 1) { try? x.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: $0, temperature: nil, tint: nil, reset: false) }
-                    slider("Temperature", param: .temperature, value: c.temperature, range: -100...100, format: { "\(Int($0))" }, reset: 0) { try? x.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: nil, temperature: $0, tint: nil, reset: false) }
-                    slider("Tint", param: .tint, value: c.tint, range: -100...100, format: { "\(Int($0))" }, reset: 0) { try? x.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: nil, temperature: nil, tint: $0, reset: false) }
-                    slider("Shadows", param: .shadows, value: c.shadows, range: -1...1, format: { "\(Int($0 * 100))" }, reset: 0) { try? x.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: nil, temperature: nil, tint: nil, reset: false, shadows: $0) }
-                    slider("Midtones", param: .midtones, value: c.midtones, range: -1...1, format: { "\(Int($0 * 100))" }, reset: 0) { try? x.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: nil, temperature: nil, tint: nil, reset: false, midtones: $0) }
-                    slider("Highlights", param: .highlights, value: c.highlights, range: -1...1, format: { "\(Int($0 * 100))" }, reset: 0) { try? x.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: nil, temperature: nil, tint: nil, reset: false, highlights: $0) }
-                    slider("Vibrance", param: .vibrance, value: c.vibrance, range: -1...1, format: { "\(Int($0 * 100))" }, reset: 0) { try? x.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: nil, temperature: nil, tint: nil, reset: false, vibrance: $0) }
-                } header: {
-                    HStack { Text("Color"); Spacer(); if !clip.color.isIdentity { Button("Reset") { try? x.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: nil, temperature: nil, tint: nil, reset: true) }.controlSize(.mini).pointer().uiFrame("inspector.color.reset") } }
-                }
+            InspectorRow("Look") {
+                Picker("Look", selection: Binding(get: { c.lut ?? "none" }, set: { v in
+                    if v == "file" { pickCube(plain) } else { try? plain.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: nil, temperature: nil, tint: nil, reset: false, lut: v) }
+                })) {
+                    Text("None").tag("none")
+                    ForEach(Looks.builtin, id: \.self) { Text($0).tag($0) }
+                    if let path = c.lut, !Looks.isBuiltin(path) { Text(URL(fileURLWithPath: path).lastPathComponent).tag(path) }
+                    Divider()
+                    Text("Load .cube file…").tag("file")
+                }.labelsHidden().pointer().uiFrame("inspector.look")
             }
-            if track.kind == .video {
-                Section("Look") {
-                    let c = clip.color
-                    let plain = ToolExecutor(document: document, origin: .user)
-                    Picker("Input LUT", selection: Binding(get: { c.inputLut ?? "none" }, set: { v in
-                        if v == "file" { pickCube(plain, input: true) } else { try? plain.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: nil, temperature: nil, tint: nil, reset: false, inputLut: v) }
-                    })) {
-                        Text("None (footage is already Rec.709)").tag("none")
-                        if let path = c.inputLut { Text(URL(fileURLWithPath: path).lastPathComponent).tag(path) }
-                        Divider()
-                        Text("Load conversion .cube (D-Log → Rec.709…)…").tag("file")
-                    }.pointer().uiFrame("inspector.inputLut")
-                    Picker("Look", selection: Binding(get: { c.lut ?? "none" }, set: { v in
-                        if v == "file" { pickCube(plain) } else { try? plain.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: nil, temperature: nil, tint: nil, reset: false, lut: v) }
-                    })) {
-                        Text("None").tag("none")
-                        ForEach(Looks.builtin, id: \.self) { Text($0).tag($0) }
-                        if let path = c.lut, !Looks.isBuiltin(path) { Text(URL(fileURLWithPath: path).lastPathComponent).tag(path) }
-                        Divider()
-                        Text("Load .cube file…").tag("file")
-                    }.pointer().uiFrame("inspector.look")
-                    if c.lut != nil {
-                        slider("Mix", param: .lutMix, value: c.lutMix, range: 0...1, format: { "\(Int($0 * 100))%" }, reset: 1) { try? x.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: nil, temperature: nil, tint: nil, reset: false, lutMix: $0) }
-                    }
-                    Text("The input LUT runs first, at full strength: it turns log footage (DJI D-Log, S-Log, V-Log) into a normal Rec.709 image, so the controls above behave as expected. A look is a 3D LUT applied after the color controls. Built-in looks are generated; .cube files from any grading app load as they are.").font(.caption).foregroundStyle(.secondary)
-                }
+            if c.lut != nil {
+                slider("Mix", param: .lutMix, value: c.lutMix, range: 0...1, format: { "\(Int($0 * 100))%" }, reset: 1) { try? x.setClipColor(clip.id.uuidString, exposure: nil, contrast: nil, saturation: nil, temperature: nil, tint: nil, reset: false, lutMix: $0) }
             }
-            Section("Audio") {
-                slider("Volume", param: .volume, value: clip.volume, range: 0...2, format: { "\(Int($0 * 100))%" }, reset: 1) { try? x.setClipProperties(clip.id.uuidString, volume: $0) }
-                slider("Fade in", value: clip.fadeIn, range: 0...min(5, clip.duration), format: { String(format: "%.1f s", $0) }, reset: 0) { try? x.setClipFades(clip.id.uuidString, fadeIn: $0, fadeOut: nil) }
-                slider("Fade out", value: clip.fadeOut, range: 0...min(5, clip.duration), format: { String(format: "%.1f s", $0) }, reset: 0) { try? x.setClipFades(clip.id.uuidString, fadeIn: nil, fadeOut: $0) }
-                if track.kind == .video { Text("Fades take the picture to black and the sound to silence.").font(.caption).foregroundStyle(.secondary) }
-            }
-            Section {
-                let au = clip.audio
-                slider("Low", value: au.lowGain, range: -18...18, format: { String(format: "%+.0f dB", $0) }, reset: 0) { try? x.setClipAudio(clip.id.uuidString, low: $0, mid: nil, high: nil, highPass: nil, gate: nil, reset: false) }
-                slider("Mid", value: au.midGain, range: -18...18, format: { String(format: "%+.0f dB", $0) }, reset: 0) { try? x.setClipAudio(clip.id.uuidString, low: nil, mid: $0, high: nil, highPass: nil, gate: nil, reset: false) }
-                slider("High", value: au.highGain, range: -18...18, format: { String(format: "%+.0f dB", $0) }, reset: 0) { try? x.setClipAudio(clip.id.uuidString, low: nil, mid: nil, high: $0, highPass: nil, gate: nil, reset: false) }
-                slider("High-pass", value: au.highPass, range: 0...400, format: { $0 <= 0 ? "off" : "\(Int($0)) Hz" }, reset: 0) { try? x.setClipAudio(clip.id.uuidString, low: nil, mid: nil, high: nil, highPass: $0 < 20 ? 0 : $0, gate: nil, reset: false) }
-                slider("Noise gate", value: au.gate, range: -80...0, format: { $0 >= 0 ? "off" : "\(Int($0)) dB" }, reset: 0) { try? x.setClipAudio(clip.id.uuidString, low: nil, mid: nil, high: nil, highPass: nil, gate: $0 > -1 ? 0 : $0, reset: false) }
-                Text("EQ shelves at 200 Hz and 6 kHz, a 1 kHz peak. A high-pass around 80–120 Hz removes rumble; the gate drops 26 dB below its threshold.").font(.caption).foregroundStyle(.secondary)
-                slider("Voice isolation", value: au.voiceIsolation, range: 0...1, format: { $0 < 0.005 ? "off" : "\(Int(($0 * 100).rounded()))%" }, reset: 0) { try? x.setClipAudio(clip.id.uuidString, low: nil, mid: nil, high: nil, highPass: nil, gate: nil, voiceIsolation: $0, reset: false) }
-                Text(isolated.caption(for: IsolatedAudio.audioAsset(of: clip, in: document.project), amount: au.voiceIsolation)).font(.caption).foregroundStyle(.secondary)
-            } header: {
-                HStack { Text("EQ & cleanup"); Spacer(); if !clip.audio.isDefault { Button("Reset") { try? x.setClipAudio(clip.id.uuidString, low: nil, mid: nil, high: nil, highPass: nil, gate: nil, reset: true) }.controlSize(.mini).pointer().uiFrame("inspector.audio.reset") } }
-            }
-            Section("Transition in") {
+        }
+    }
+
+    private var audioCard: some View {
+        InspectorCard("Audio", footer: track.kind == .video ? "Fades take the picture to black and the sound to silence." : nil) {
+            slider("Volume", param: .volume, value: clip.volume, range: 0...2, format: { "\(Int($0 * 100))%" }, reset: 1) { try? x.setClipProperties(clip.id.uuidString, volume: $0) }
+            slider("Fade in", value: clip.fadeIn, range: 0...min(5, clip.duration), format: { String(format: "%.1f s", $0) }, reset: 0) { try? x.setClipFades(clip.id.uuidString, fadeIn: $0, fadeOut: nil) }
+            slider("Fade out", value: clip.fadeOut, range: 0...min(5, clip.duration), format: { String(format: "%.1f s", $0) }, reset: 0) { try? x.setClipFades(clip.id.uuidString, fadeIn: nil, fadeOut: $0) }
+        }
+    }
+
+    private var eqCard: some View {
+        let au = clip.audio
+        return InspectorCard("EQ & cleanup", footer: isolated.caption(for: IsolatedAudio.audioAsset(of: clip, in: document.project), amount: au.voiceIsolation), trailing: {
+            if !clip.audio.isDefault { Button("Reset") { try? x.setClipAudio(clip.id.uuidString, low: nil, mid: nil, high: nil, highPass: nil, gate: nil, reset: true) }.controlSize(.mini).pointer().uiFrame("inspector.audio.reset") }
+        }) {
+            slider("Low", value: au.lowGain, range: -18...18, format: { String(format: "%+.0f dB", $0) }, reset: 0) { try? x.setClipAudio(clip.id.uuidString, low: $0, mid: nil, high: nil, highPass: nil, gate: nil, reset: false) }
+            slider("Mid", value: au.midGain, range: -18...18, format: { String(format: "%+.0f dB", $0) }, reset: 0) { try? x.setClipAudio(clip.id.uuidString, low: nil, mid: $0, high: nil, highPass: nil, gate: nil, reset: false) }
+            slider("High", value: au.highGain, range: -18...18, format: { String(format: "%+.0f dB", $0) }, reset: 0) { try? x.setClipAudio(clip.id.uuidString, low: nil, mid: nil, high: $0, highPass: nil, gate: nil, reset: false) }
+            slider("High-pass", value: au.highPass, range: 0...400, format: { $0 <= 0 ? "off" : "\(Int($0)) Hz" }, reset: 0) { try? x.setClipAudio(clip.id.uuidString, low: nil, mid: nil, high: nil, highPass: $0 < 20 ? 0 : $0, gate: nil, reset: false) }
+            slider("Noise gate", value: au.gate, range: -80...0, format: { $0 >= 0 ? "off" : "\(Int($0)) dB" }, reset: 0) { try? x.setClipAudio(clip.id.uuidString, low: nil, mid: nil, high: nil, highPass: nil, gate: $0 > -1 ? 0 : $0, reset: false) }
+            InspectorFootnote("EQ shelves at 200 Hz and 6 kHz, a 1 kHz peak. A high-pass around 80–120 Hz removes rumble; the gate drops 26 dB below its threshold.")
+            slider("Voice isolation", value: au.voiceIsolation, range: 0...1, format: { $0 < 0.005 ? "off" : "\(Int(($0 * 100).rounded()))%" }, reset: 0) { try? x.setClipAudio(clip.id.uuidString, low: nil, mid: nil, high: nil, highPass: nil, gate: nil, voiceIsolation: $0, reset: false) }
+        }
+    }
+
+    private var transitionCard: some View {
+        InspectorCard("Transition in", footer: transitionNote ?? (document.project.clipBefore(clip, on: track) == nil ? "No clip ends where this one starts, so a transition would come from black." : "Plays over the end of \(document.project.clipBefore(clip, on: track)!.name), which needs that much media past its out point.")) {
+            InspectorRow("Kind") {
                 Picker("Kind", selection: Binding(get: { clip.transitionIn?.kind.rawValue ?? "none" }, set: { v in _ = try? ToolExecutor(document: document, origin: .user).setTransition(clip.id.uuidString, kind: v, duration: nil); transitionNote = nil })) {
                     Text("None").tag("none")
                     ForEach(Transition.Kind.allCases, id: \.rawValue) { Text($0.title).tag($0.rawValue) }
-                }.pointer().uiFrame("inspector.transition.kind")
-                if let tr = clip.transitionIn {
-                    slider("Duration", value: tr.duration, range: 0.1...min(3, clip.duration), format: { String(format: "%.2f s", $0) }, reset: 0.5) { d in
-                        transitionNote = (try? x.setTransition(clip.id.uuidString, kind: nil, duration: d))?.note
-                    }
-                }
-                Text(transitionNote ?? (document.project.clipBefore(clip, on: track) == nil ? "No clip ends where this one starts, so a transition would come from black." : "Plays over the end of \(document.project.clipBefore(clip, on: track)!.name), which needs that much media past its out point."))
-                    .font(.caption).foregroundStyle(.secondary)
+                }.labelsHidden().pointer().uiFrame("inspector.transition.kind")
             }
-            Section {
-                LabeledContent("Clip id", value: clip.id.short).font(.caption).foregroundStyle(.secondary)
+            if let tr = clip.transitionIn {
+                slider("Duration", value: tr.duration, range: 0.1...min(3, clip.duration), format: { String(format: "%.2f s", $0) }, reset: 0.5) { d in
+                    transitionNote = (try? x.setTransition(clip.id.uuidString, kind: nil, duration: d))?.note
+                }
             }
         }
-        .formStyle(.grouped)
-        .onAppear { nameDraft = clip.name }
-        .onChange(of: clip.id) { _, _ in nameDraft = clip.name }
     }
 
     private func pickCube(_ x: ToolExecutor, input: Bool = false) {
@@ -485,39 +734,38 @@ struct ClipInspector: View {
         }
         // Stable driver id: the parameter name, or the title in lowerCamel ("Crop left" → cropLeft) for plain values.
         let key = param?.rawValue ?? title.split(separator: " ").enumerated().map { $0.offset == 0 ? $0.element.lowercased() : $0.element.capitalized }.joined()
-        return LabeledContent(title) {
-            HStack(spacing: 8) {
-                if let param {
-                    let onKey = hasKeyframe(param)
-                    Button {
+        return HStack(spacing: 8) {
+            Text(title).inspectorLabel()
+            if let param {
+                let onKey = hasKeyframe(param)
+                Button {
+                    let plain = ToolExecutor(document: document, origin: .user)
+                    if onKey { _ = try? plain.removeKeyframe(clip.id.uuidString, param: param.rawValue, time: player.currentTime, all: false) }
+                    else { _ = try? plain.setKeyframe(clip.id.uuidString, param: param.rawValue, time: player.currentTime, value: shown, ease: nil) }
+                } label: {
+                    Image(systemName: onKey ? "diamond.fill" : "diamond").font(.system(size: 10)).foregroundStyle(animated ? Color.accentColor : Color.secondary)
+                }
+                .buttonStyle(.borderless).focusable(false).pointer().uiFrame("inspector.key.\(param.rawValue)")
+                .help(onKey ? "Remove the keyframe at the playhead" : (animated ? "Add a keyframe at the playhead" : "Animate: add the first keyframe at the playhead"))
+                .contextMenu {
+                    if animated {
                         let plain = ToolExecutor(document: document, origin: .user)
-                        if onKey { _ = try? plain.removeKeyframe(clip.id.uuidString, param: param.rawValue, time: player.currentTime, all: false) }
-                        else { _ = try? plain.setKeyframe(clip.id.uuidString, param: param.rawValue, time: player.currentTime, value: shown, ease: nil) }
-                    } label: {
-                        Image(systemName: onKey ? "diamond.fill" : "diamond").font(.system(size: 10)).foregroundStyle(animated ? Color.accentColor : Color.secondary)
-                    }
-                    .buttonStyle(.borderless).pointer().uiFrame("inspector.key.\(param.rawValue)")
-                    .help(onKey ? "Remove the keyframe at the playhead" : (animated ? "Add a keyframe at the playhead" : "Animate: add the first keyframe at the playhead"))
-                    .contextMenu {
-                        if animated {
-                            let plain = ToolExecutor(document: document, origin: .user)
-                            if onKey, let k = clip.keyframes(param).first(where: { abs($0.time - localTime) < 1.0 / 120 }) {
-                                Picker("Ease to next", selection: Binding(get: { k.ease.rawValue }, set: { e in _ = try? plain.setKeyframe(clip.id.uuidString, param: param.rawValue, time: player.currentTime, value: k.value, ease: e) })) {
-                                    Text("Linear").tag("linear"); Text("Smooth").tag("smooth"); Text("Hold").tag("hold")
-                                }
+                        if onKey, let k = clip.keyframes(param).first(where: { abs($0.time - localTime) < 1.0 / 120 }) {
+                            Picker("Ease to next", selection: Binding(get: { k.ease.rawValue }, set: { e in _ = try? plain.setKeyframe(clip.id.uuidString, param: param.rawValue, time: player.currentTime, value: k.value, ease: e) })) {
+                                Text("Linear").tag("linear"); Text("Smooth").tag("smooth"); Text("Hold").tag("hold")
                             }
-                            Button("Previous keyframe") { jumpKeyframe(param, forward: false) }
-                            Button("Next keyframe") { jumpKeyframe(param, forward: true) }
-                            Divider()
-                            Button("Remove all \(clip.keyframes(param).count) keyframes") { _ = try? plain.removeKeyframe(clip.id.uuidString, param: param.rawValue, time: nil, all: true) }
                         }
+                        Button("Previous keyframe") { jumpKeyframe(param, forward: false) }
+                        Button("Next keyframe") { jumpKeyframe(param, forward: true) }
+                        Divider()
+                        Button("Remove all \(clip.keyframes(param).count) keyframes") { _ = try? plain.removeKeyframe(clip.id.uuidString, param: param.rawValue, time: nil, all: true) }
                     }
                 }
-                Slider(value: .init(get: { shown }, set: apply), in: range).controlSize(.small).pointer().uiFrame("inspector.\(key).slider")
-                Text(format(shown)).font(.caption).monospacedDigit().foregroundStyle(.secondary).frame(width: 44, alignment: .trailing)
-                    .onTapGesture(count: 2) { apply(reset) }.help("Double-click to reset").pointer()
-                    .uiFrame("inspector.\(key).reset").uiTap("inspector.\(key).reset", count: 2) { apply(reset) }
             }
+            Slider(value: .init(get: { shown }, set: apply), in: range).controlSize(.small).pointer().uiFrame("inspector.\(key).slider")
+            Text(format(shown)).inspectorValue()
+                .onTapGesture(count: 2) { apply(reset) }.help("Double-click to reset").pointer()
+                .uiFrame("inspector.\(key).reset").uiTap("inspector.\(key).reset", count: 2) { apply(reset) }
         }
     }
 
@@ -536,60 +784,61 @@ struct TextInspector: View {
     @State private var draft = ""
 
     var body: some View {
-        Form {
-            Section(text.isCaption ? "Caption" : "Title") {
-                TextField("Text", text: $draft, axis: .vertical).lineLimit(1...4)
-                    .onSubmit { commitText() }
-                HStack(spacing: 8) {
-                    Button("Apply text") { commitText() }.pointer().disabled(draft == text.text).uiFrame("inspector.text.apply")
-                    Button("Show", systemImage: "eye") { player.pause(); player.seek(to: text.start + 0.05) }.help("Move the playhead to this text").pointer().uiFrame("inspector.text.show")
-                    Button("Delete", systemImage: "trash", role: .destructive) {
-                        state.selectedTextID = nil
-                        document.apply("Delete text", origin: .user) { p in p.texts.removeAll { $0.id == text.id } }
-                    }.pointer().uiFrame("inspector.text.delete")
-                    Spacer()
-                }
-                .controlSize(.small)
-                if text.isCaption { Text("Part of caption group \(text.group!.short). Style changes apply to this line only.").font(.caption).foregroundStyle(.secondary) }
-            }
-            Section("Look") {
-                Picker("Style", selection: Binding(get: { text.preset ?? "title" }, set: { v in
-                    document.apply("Text style", origin: .user) { p in if let i = p.texts.firstIndex(where: { $0.id == text.id }) { p.texts[i].preset = v } }
-                })) { ForEach(CaptionPresets.all, id: \.name) { Text($0.title).tag($0.name) } }.pointer().uiFrame("inspector.text.style")
-                LabeledContent("Size") {
+        ScrollView {
+            VStack(alignment: .leading, spacing: InspectorStyle.gap) {
+                InspectorCard(text.isCaption ? "Caption" : "Title", footer: text.isCaption ? "Part of caption group \(text.group!.short). Style changes apply to this line only." : nil) {
+                    TextField("Text", text: $draft, axis: .vertical).lineLimit(1...4).textFieldStyle(.roundedBorder)
+                        .onSubmit { commitText() }
                     HStack(spacing: 8) {
+                        Button("Apply text") { commitText() }.pointer().disabled(draft == text.text).uiFrame("inspector.text.apply")
+                        Button("Show", systemImage: "eye") { player.pause(); player.seek(to: text.start + 0.05) }.help("Move the playhead to this text").pointer().uiFrame("inspector.text.show")
+                        Button("Delete", systemImage: "trash", role: .destructive) {
+                            state.selectedTextID = nil
+                            document.apply("Delete text", origin: .user) { p in p.texts.removeAll { $0.id == text.id } }
+                        }.pointer().uiFrame("inspector.text.delete")
+                        Spacer()
+                    }
+                    .controlSize(.small)
+                }
+                InspectorCard("Look") {
+                    InspectorRow("Style") {
+                        Picker("Style", selection: Binding(get: { text.preset ?? "title" }, set: { v in
+                            document.apply("Text style", origin: .user) { p in if let i = p.texts.firstIndex(where: { $0.id == text.id }) { p.texts[i].preset = v } }
+                        })) { ForEach(CaptionPresets.all, id: \.name) { Text($0.title).tag($0.name) } }.labelsHidden().pointer().uiFrame("inspector.text.style")
+                    }
+                    HStack(spacing: 8) {
+                        Text("Size").inspectorLabel()
                         Slider(value: binding(\.fontSize, "Text size"), in: 12...300).controlSize(.small).pointer().uiFrame("inspector.text.size")
-                        Text("\(Int(text.fontSize)) pt").font(.caption).monospacedDigit().foregroundStyle(.secondary).frame(width: 44, alignment: .trailing)
+                        Text("\(Int(text.fontSize)) pt").inspectorValue()
+                    }
+                    InspectorRow("Color") {
+                        ColorPicker("Color", selection: Binding(get: { Color(hex: text.colorHex) }, set: { c in
+                            let hex = c.hexString
+                            guard hex != text.colorHex else { return }
+                            document.apply("Text color", origin: .user, coalesce: true) { p in if let i = p.texts.firstIndex(where: { $0.id == text.id }) { p.texts[i].colorHex = hex } }   // a drag in the wheel is one undo step
+                        }), supportsOpacity: false).labelsHidden().pointer().uiFrame("inspector.text.color")
                     }
                 }
-                ColorPicker("Color", selection: Binding(get: { Color(hex: text.colorHex) }, set: { c in
-                    let hex = c.hexString
-                    guard hex != text.colorHex else { return }
-                    document.apply("Text color", origin: .user, coalesce: true) { p in if let i = p.texts.firstIndex(where: { $0.id == text.id }) { p.texts[i].colorHex = hex } }   // a drag in the wheel is one undo step
-                }), supportsOpacity: false).pointer().uiFrame("inspector.text.color")
-            }
-            Section("Position") {
-                LabeledContent("Horizontal") {
+                InspectorCard("Position", footer: "0% is the top-left of the frame, 100% the bottom-right. Drag the bar on the timeline to move it in time, its edges to change the length.") {
                     HStack(spacing: 8) {
+                        Text("Horizontal").inspectorLabel()
                         Slider(value: binding(\.x, "Text horizontal"), in: 0...1).controlSize(.small).pointer().uiFrame("inspector.text.x")
-                        Text("\(Int(text.x * 100))%").font(.caption).monospacedDigit().foregroundStyle(.secondary).frame(width: 44, alignment: .trailing)
+                        Text("\(Int(text.x * 100))%").inspectorValue()
                     }
-                }
-                LabeledContent("Vertical") {
                     HStack(spacing: 8) {
+                        Text("Vertical").inspectorLabel()
                         Slider(value: binding(\.y, "Text vertical"), in: 0...1).controlSize(.small).pointer().uiFrame("inspector.text.y")
-                        Text("\(Int(text.y * 100))%").font(.caption).monospacedDigit().foregroundStyle(.secondary).frame(width: 44, alignment: .trailing)
+                        Text("\(Int(text.y * 100))%").inspectorValue()
                     }
                 }
-                Text("0% is the top-left of the frame, 100% the bottom-right. Drag the bar on the timeline to move it in time, its edges to change the length.").font(.caption).foregroundStyle(.secondary)
+                InspectorCard("Timing") {
+                    InspectorValueRow("Start", Timecode.string(text.start))
+                    InspectorValueRow("End", Timecode.string(text.end))
+                    InspectorValueRow("Duration", Timecode.string(text.duration))
+                }
             }
-            Section("Timing") {
-                LabeledContent("Start", value: Timecode.string(text.start))
-                LabeledContent("End", value: Timecode.string(text.end))
-                LabeledContent("Duration", value: Timecode.string(text.duration))
-            }
+            .padding(12)
         }
-        .formStyle(.grouped)
         .onAppear { draft = text.text }
         .onChange(of: text.id) { _, _ in draft = text.text }
     }
@@ -657,123 +906,154 @@ struct ProjectInspector: View {
     @State private var templateChoice = ""
     @State private var templateStatus: String?
     @ObservedObject private var proxies = ProxyStore.shared
+
+    private var p: Project { document.project }
+    private var x: ToolExecutor { ToolExecutor(document: document, origin: .user) }
+
     var body: some View {
-        let p = document.project
-        let captionCount = p.texts.filter(\.isCaption).count
-        let x = ToolExecutor(document: document, origin: .user)
-        Form {
-            Section("Project") {
-                LabeledContent("Resolution", value: "\(p.settings.width)×\(p.settings.height)")
-                LabeledContent("Frame rate", value: "\(Int(p.settings.fps)) fps")
-                LabeledContent("Duration", value: Timecode.string(p.duration))
-                LabeledContent("Clips", value: "\(p.allClips.count)")
-                LabeledContent("Project ID", value: document.id.short)
+        ScrollView {
+            VStack(alignment: .leading, spacing: InspectorStyle.gap) {
+                projectCard
+                proxiesCard
+                templatesCard
+                addTextCard
+                if !p.markers.isEmpty || state.inPoint != nil || state.outPoint != nil { markersCard }
+                if p.tracks.count > 1 { duckingCard }
+                cleanupCard
+                captionsCard
+                InspectorFootnote("Click a clip or a text bar on the timeline to edit it. The Agents tab connects Claude Code, Codex or Cursor; the Chat tab talks to them here.").padding(.horizontal, 4)
             }
-            Section("Proxies") {
-                let videos = p.assets.filter { $0.kind == .video }
-                let ready = videos.filter { proxies.ready(for: $0) != nil }.count
-                let building = videos.filter { if case .building = proxies.status[$0.id] { return true }; return false }
-                Toggle("Preview from proxies", isOn: Binding(get: { p.settings.useProxies }, set: { v in try? x.setProjectSettings(width: nil, height: nil, fps: nil, name: nil, useProxies: v) })).pointer().uiFrame("inspector.proxies")
-                HStack {
-                    Button("Make proxies", systemImage: "arrow.down.right.and.arrow.up.left") { _ = x.makeProxies(enable: true) }.pointer().disabled(videos.isEmpty || ready == videos.count).uiFrame("inspector.makeProxies")
-                    Spacer()
-                    Text(videos.isEmpty ? "No video files yet." : building.isEmpty ? "\(ready) of \(videos.count) ready" : "Building \(building.count)…").font(.caption).foregroundStyle(.secondary)
-                }
-                Text("960×540 copies for smooth playback. The export always uses the original files.").font(.caption).foregroundStyle(.secondary)
+            .padding(12)
+        }
+    }
+
+    private var projectCard: some View {
+        InspectorCard("Project") {
+            InspectorValueRow("Resolution", "\(p.settings.width)×\(p.settings.height)")
+            InspectorValueRow("Frame rate", "\(Int(p.settings.fps)) fps")
+            InspectorValueRow("Duration", Timecode.string(p.duration))
+            InspectorValueRow("Clips", "\(p.allClips.count)")
+            InspectorValueRow("Project ID", document.id.short)
+        }
+    }
+
+    private var proxiesCard: some View {
+        let videos = p.assets.filter { $0.kind == .video }
+        let ready = videos.filter { proxies.ready(for: $0) != nil }.count
+        let building = videos.filter { if case .building = proxies.status[$0.id] { return true }; return false }
+        return InspectorCard("Proxies", footer: "960×540 copies for smooth playback. The export always uses the original files.") {
+            InspectorRow("Preview from proxies") {
+                Toggle("Preview from proxies", isOn: Binding(get: { p.settings.useProxies }, set: { v in try? x.setProjectSettings(width: nil, height: nil, fps: nil, name: nil, useProxies: v) }))
+                    .labelsHidden().toggleStyle(.switch).controlSize(.small).pointer().uiFrame("inspector.proxies")
             }
-            Section("Templates") {
-                let all = Templates.list()
-                HStack {
-                    Picker("Template", selection: $templateChoice) {
-                        Text("Choose…").tag("")
-                        ForEach(all) { t in Text(t.builtin ? "\(t.name)  (\(t.width)×\(t.height))" : t.name).tag(t.name) }
-                    }.labelsHidden().pointer().uiFrame("inspector.template")
-                    Button("Apply") {
-                        do { let t = try x.applyTemplate(templateChoice); templateStatus = "Applied \(t.name). Undo with ⌘Z." } catch { templateStatus = error.localizedDescription }
-                    }.pointer().disabled(templateChoice.isEmpty).uiFrame("inspector.template.apply")
-                }
-                HStack {
-                    TextField("Save this project as a template", text: $templateName).textFieldStyle(.roundedBorder).controlSize(.small)
-                    Button("Save") {
-                        do { _ = try x.saveTemplate(templateName); templateStatus = "Saved template '\(templateName)'."; templateName = "" } catch { templateStatus = error.localizedDescription }
-                    }.pointer().disabled(templateName.trimmingCharacters(in: .whitespaces).isEmpty).uiFrame("inspector.template.save")
-                }
-                Text(templateStatus ?? "Built-in templates set the format on an empty timeline; a saved template restores its tracks, clips and titles.").font(.caption).foregroundStyle(.secondary)
-            }
-            Section("Add text") {
-                TextField("Title text", text: $newText, prompt: Text("Type a title and press Return")).onSubmit { addTitle() }
-                HStack {
-                    Button("Add at playhead", systemImage: "plus") { addTitle() }.pointer().disabled(newText.trimmingCharacters(in: .whitespaces).isEmpty).uiFrame("inspector.addTitle")
-                    Spacer()
-                    Text("Starts at \(Timecode.string(player.currentTime)), 3 s long. Drag the bar to adjust.").font(.caption).foregroundStyle(.secondary)
-                }
-            }
-            if !p.markers.isEmpty || state.inPoint != nil || state.outPoint != nil {
-                Section("Markers") {
-                    if let i = state.inPoint, let o = state.outPoint {
-                        HStack {
-                            Text("In \(Timecode.string(i)) → Out \(Timecode.string(o))").font(.caption)
-                            Spacer()
-                            Button("Delete range") { EditorActions(document: document, state: state, player: player).deleteRange() }.controlSize(.small).pointer().uiFrame("inspector.markers.deleteRange")
-                            Button("Clear") { state.inPoint = nil; state.outPoint = nil }.controlSize(.small).pointer().uiFrame("inspector.markers.clear")
-                        }
-                    }
-                    ForEach(p.markers) { m in
-                        HStack(spacing: 8) {
-                            Circle().fill(Color(hex: m.colorHex)).frame(width: 8, height: 8)
-                            TextField("Name", text: Binding(get: { m.name }, set: { v in document.apply("Rename marker", origin: .user, coalesce: true) { p in if let i = p.markers.firstIndex(where: { $0.id == m.id }) { p.markers[i].name = v } } })).textFieldStyle(.plain).font(.caption)
-                            Text(Timecode.string(m.time)).font(.caption).monospacedDigit().foregroundStyle(.secondary)
-                            Button { player.pause(); player.seek(to: m.time) } label: { Image(systemName: "arrow.right.to.line") }.buttonStyle(.borderless).help("Go to marker").pointer().uiFrame("inspector.marker.\(m.id.short).go")
-                            Button { document.apply("Remove marker", origin: .user) { p in p.markers.removeAll { $0.id == m.id } } } label: { Image(systemName: "trash") }.buttonStyle(.borderless).help("Remove marker").pointer().uiFrame("inspector.marker.\(m.id.short).remove")
-                        }
-                    }
-                    Button("Copy YouTube chapters", systemImage: "doc.on.doc") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(Chapters.youtubeText(p), forType: .string) }
-                        .controlSize(.small).help("The markers as \"mm:ss Name\" lines for a YouTube description (File > Export Chapters… saves them as a file)").pointer().disabled(p.markers.isEmpty).uiFrame("markers.copyChapters")
-                }
-            }
-            if p.tracks.count > 1 {
-                Section("Ducking") {
-                    let plain = ToolExecutor(document: document, origin: .user)
-                    ForEach(p.tracks) { t in
-                        HStack {
-                            Text(t.name).frame(width: 36, alignment: .leading)
-                            Picker("under", selection: Binding(get: { t.duck?.sourceTrackID.uuidString ?? "none" }, set: { v in _ = try? plain.setDucking(t.id.uuidString, under: v == "none" ? "none" : v, level: nil, attack: nil, release: nil) })) {
-                                Text("Not ducked").tag("none")
-                                ForEach(p.tracks.filter { $0.id != t.id }) { o in Text("Under \(o.name)").tag(o.id.uuidString) }
-                            }.labelsHidden().pointer().uiFrame("inspector.duck.\(t.name)")
-                            if let d = t.duck {
-                                Slider(value: Binding(get: { d.level }, set: { v in _ = try? ToolExecutor(document: document, origin: .user, coalesce: true).setDucking(t.id.uuidString, under: nil, level: v, attack: nil, release: nil) }), in: 0...1).controlSize(.small).frame(width: 70).pointer().uiFrame("inspector.duck.\(t.name).level")
-                                Text("\(Int(d.level * 100))%").font(.caption).monospacedDigit().foregroundStyle(.secondary).frame(width: 34, alignment: .trailing)
-                            }
-                        }
-                    }
-                    Text("A ducked track drops to the level while clips play on the other track.").font(.caption).foregroundStyle(.secondary)
-                }
-            }
-            Section("Cleanup") {
-                HStack {
-                    Button(cleanupBusy ? "Working…" : "Remove silence") { cleanup(.silence) }.pointer().disabled(cleanupBusy || p.allClips.isEmpty).uiFrame("inspector.removeSilence")
-                    Button("Remove filler words") { cleanup(.fillers) }.pointer().disabled(cleanupBusy || p.allClips.isEmpty).uiFrame("inspector.removeFillers")
-                }
-                Text(cleanupStatus ?? cleanupHint)
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            Section("Captions") {
-                Picker("Style", selection: $captionPreset) { ForEach(CaptionPresets.all, id: \.name) { Text($0.title).tag($0.name) } }.pointer().uiFrame("inspector.captions.style")
-                HStack {
-                    Button(captionBusy ? "Transcribing…" : "Add captions") { addCaptions() }.pointer().disabled(captionBusy || p.allClips.isEmpty).uiFrame("inspector.addCaptions")
-                    if captionCount > 0 {
-                        Button("Remove \(captionCount)") { captionStatus = nil; _ = try? ToolExecutor(document: document, origin: .user).removeCaptions(group: nil) }.pointer().uiFrame("inspector.removeCaptions")
-                    }
-                }
-                Text(captionStatus ?? Transcriber.privacyNote)
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            Section {
-                Text("Click a clip or a text bar on the timeline to edit it. The Agents tab connects Claude Code, Codex or Cursor; the Chat tab talks to them here.").font(.caption).foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                Button("Make proxies", systemImage: "arrow.down.right.and.arrow.up.left") { _ = x.makeProxies(enable: true) }.controlSize(.small).pointer().disabled(videos.isEmpty || ready == videos.count).uiFrame("inspector.makeProxies")
+                Spacer(minLength: 8)
+                Text(videos.isEmpty ? "No video files yet." : building.isEmpty ? "\(ready) of \(videos.count) ready" : "Building \(building.count)…").inspectorSecondary().monospacedDigit()
             }
         }
-        .formStyle(.grouped)
+    }
+
+    private var templatesCard: some View {
+        let all = Templates.list()
+        return InspectorCard("Templates", footer: templateStatus ?? "Built-in templates set the format on an empty timeline; a saved template restores its tracks, clips and titles.") {
+            HStack(spacing: 8) {
+                Picker("Template", selection: $templateChoice) {
+                    Text("Choose…").tag("")
+                    ForEach(all) { t in Text(t.builtin ? "\(t.name)  (\(t.width)×\(t.height))" : t.name).tag(t.name) }
+                }.labelsHidden().pointer().uiFrame("inspector.template")
+                Spacer(minLength: 0)
+                Button("Apply") {
+                    do { let t = try x.applyTemplate(templateChoice); templateStatus = "Applied \(t.name). Undo with ⌘Z." } catch { templateStatus = error.localizedDescription }
+                }.controlSize(.small).pointer().disabled(templateChoice.isEmpty).uiFrame("inspector.template.apply")
+            }
+            HStack(spacing: 8) {
+                TextField("Save this project as a template", text: $templateName).textFieldStyle(.roundedBorder).controlSize(.small)
+                Button("Save") {
+                    do { _ = try x.saveTemplate(templateName); templateStatus = "Saved template '\(templateName)'."; templateName = "" } catch { templateStatus = error.localizedDescription }
+                }.controlSize(.small).pointer().disabled(templateName.trimmingCharacters(in: .whitespaces).isEmpty).uiFrame("inspector.template.save")
+            }
+        }
+    }
+
+    private var addTextCard: some View {
+        InspectorCard("Add text", footer: "Starts at \(Timecode.string(player.currentTime)), 3 s long. Drag the bar to adjust.") {
+            TextField("Title text", text: $newText, prompt: Text("Type a title and press Return")).textFieldStyle(.roundedBorder).onSubmit { addTitle() }
+            HStack(spacing: 8) {
+                Button("Add at playhead", systemImage: "plus") { addTitle() }.controlSize(.small).pointer().disabled(newText.trimmingCharacters(in: .whitespaces).isEmpty).uiFrame("inspector.addTitle")
+                Spacer(minLength: 0)
+            }
+        }
+    }
+
+    private var markersCard: some View {
+        InspectorCard("Markers") {
+            if let i = state.inPoint, let o = state.outPoint {
+                HStack(spacing: 8) {
+                    Text("In \(Timecode.string(i)) → Out \(Timecode.string(o))").font(.system(size: 13)).monospacedDigit()
+                    Spacer(minLength: 8)
+                    Button("Delete range") { EditorActions(document: document, state: state, player: player).deleteRange() }.controlSize(.small).pointer().uiFrame("inspector.markers.deleteRange")
+                    Button("Clear") { state.inPoint = nil; state.outPoint = nil }.controlSize(.small).pointer().uiFrame("inspector.markers.clear")
+                }
+            }
+            ForEach(p.markers) { m in
+                HStack(spacing: 8) {
+                    Circle().fill(Color(hex: m.colorHex)).frame(width: 8, height: 8)
+                    TextField("Name", text: Binding(get: { m.name }, set: { v in document.apply("Rename marker", origin: .user, coalesce: true) { p in if let i = p.markers.firstIndex(where: { $0.id == m.id }) { p.markers[i].name = v } } })).textFieldStyle(.plain).font(.system(size: 13))
+                    Text(Timecode.string(m.time)).inspectorSecondary().monospacedDigit()
+                    Button { player.pause(); player.seek(to: m.time) } label: { Image(systemName: "arrow.right.to.line") }.buttonStyle(.borderless).focusable(false).help("Go to marker").pointer().uiFrame("inspector.marker.\(m.id.short).go")
+                    Button { document.apply("Remove marker", origin: .user) { p in p.markers.removeAll { $0.id == m.id } } } label: { Image(systemName: "trash") }.buttonStyle(.borderless).focusable(false).help("Remove marker").pointer().uiFrame("inspector.marker.\(m.id.short).remove")
+                }
+            }
+            Button("Copy YouTube chapters", systemImage: "doc.on.doc") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(Chapters.youtubeText(p), forType: .string) }
+                .controlSize(.small).help("The markers as \"mm:ss Name\" lines for a YouTube description (File > Export Chapters… saves them as a file)").pointer().disabled(p.markers.isEmpty).uiFrame("markers.copyChapters")
+        }
+    }
+
+    private var duckingCard: some View {
+        let plain = ToolExecutor(document: document, origin: .user)
+        return InspectorCard("Ducking", footer: "A ducked track drops to the level while clips play on the other track.") {
+            ForEach(p.tracks) { t in
+                HStack(spacing: 8) {
+                    Text(t.name).font(.system(size: 13)).lineLimit(1).frame(width: 48, alignment: .leading)
+                    Picker("under", selection: Binding(get: { t.duck?.sourceTrackID.uuidString ?? "none" }, set: { v in _ = try? plain.setDucking(t.id.uuidString, under: v == "none" ? "none" : v, level: nil, attack: nil, release: nil) })) {
+                        Text("Not ducked").tag("none")
+                        ForEach(p.tracks.filter { $0.id != t.id }) { o in Text("Under \(o.name)").tag(o.id.uuidString) }
+                    }.labelsHidden().pointer().uiFrame("inspector.duck.\(t.name)")
+                    Spacer(minLength: 0)
+                    if let d = t.duck {
+                        Slider(value: Binding(get: { d.level }, set: { v in _ = try? ToolExecutor(document: document, origin: .user, coalesce: true).setDucking(t.id.uuidString, under: nil, level: v, attack: nil, release: nil) }), in: 0...1).controlSize(.small).frame(width: 70).pointer().uiFrame("inspector.duck.\(t.name).level")
+                        Text("\(Int(d.level * 100))%").inspectorSecondary().monospacedDigit().frame(width: 34, alignment: .trailing)
+                    }
+                }
+            }
+        }
+    }
+
+    private var cleanupCard: some View {
+        InspectorCard("Cleanup", footer: cleanupStatus ?? cleanupHint) {
+            HStack(spacing: 8) {
+                Button(cleanupBusy ? "Working…" : "Remove silence") { cleanup(.silence) }.controlSize(.small).pointer().disabled(cleanupBusy || p.allClips.isEmpty).uiFrame("inspector.removeSilence")
+                Button("Remove filler words") { cleanup(.fillers) }.controlSize(.small).pointer().disabled(cleanupBusy || p.allClips.isEmpty).uiFrame("inspector.removeFillers")
+                Spacer(minLength: 0)
+            }
+        }
+    }
+
+    private var captionsCard: some View {
+        let captionCount = p.texts.filter(\.isCaption).count
+        return InspectorCard("Captions", footer: captionStatus ?? Transcriber.privacyNote) {
+            InspectorRow("Style") {
+                Picker("Style", selection: $captionPreset) { ForEach(CaptionPresets.all, id: \.name) { Text($0.title).tag($0.name) } }.labelsHidden().pointer().uiFrame("inspector.captions.style")
+            }
+            HStack(spacing: 8) {
+                Button(captionBusy ? "Transcribing…" : "Add captions") { addCaptions() }.controlSize(.small).pointer().disabled(captionBusy || p.allClips.isEmpty).uiFrame("inspector.addCaptions")
+                if captionCount > 0 {
+                    Button("Remove \(captionCount)") { captionStatus = nil; _ = try? ToolExecutor(document: document, origin: .user).removeCaptions(group: nil) }.controlSize(.small).pointer().uiFrame("inspector.removeCaptions")
+                }
+                Spacer(minLength: 0)
+            }
+        }
     }
 
     private func addTitle() {
@@ -807,10 +1087,10 @@ private struct StabilizeRow: View {
                     .uiTap("inspector.stabilize.remove") { remove() }.uiFrame("inspector.stabilize.remove")
             }
             if busy { ProgressView().controlSize(.mini) }
-            Spacer()
-            Text(status).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
+            Spacer(minLength: 8)
+            Text(status).inspectorSecondary().monospacedDigit().lineLimit(1).truncationMode(.tail)
         }
-        .onChange(of: clip.id) { _, _ in cancel() }   // not onDisappear: a lazy Form may tear the row down on scroll
+        .onChange(of: clip.id) { _, _ in cancel() }   // not onDisappear: a lazy container may tear the row down on scroll
     }
 
     private var status: String {

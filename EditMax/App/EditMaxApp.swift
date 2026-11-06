@@ -12,6 +12,14 @@ struct EditMaxApp: App {
         }
         .defaultSize(width: 1380, height: 860)
         .commands {
+            // ⌘N creates a project file in the library (Movies ▸ EditMax Projects), so every project shows on Home and
+            // autosaves; the standard in-memory untitled document would vanish when closed unsaved.
+            CommandGroup(replacing: .newItem) {
+                Button("New Project") { newLibraryProject(Templates.list().first!) }.keyboardShortcut("n", modifiers: [.command])
+                Menu("New Project in Format") {
+                    ForEach(Templates.list().filter(\.builtin)) { t in Button("\(t.name) · \(t.width)×\(t.height)") { newLibraryProject(t) } }
+                }
+            }
             CommandGroup(after: .saveItem) {
                 Button("Export Video…") { NotificationCenter.default.post(name: .editmaxExport, object: nil) }.keyboardShortcut("e", modifiers: [.command])
                 Button("Export Chapters…") { NotificationCenter.default.post(name: .editmaxExportChapters, object: nil) }
@@ -21,6 +29,12 @@ struct EditMaxApp: App {
             EditCommands()
         }
     }
+}
+
+@MainActor
+func newLibraryProject(_ template: Templates.Info) {
+    do { ProjectLibrary.shared.open(try ProjectLibrary.shared.create(template: template)) }
+    catch { DebugLog.error("library-create", error); NSAlert(error: error).runModal() }
 }
 
 struct EditorRootView: View {
@@ -33,15 +47,23 @@ struct EditorRootView: View {
         Group {
             if state.focusMode {
                 HSplitView {
-                    VStack(spacing: 0) {
-                        previewArea
-                        TransportBar(player: player, fps: document.project.settings.fps)
-                    }
-                    .frame(minWidth: 480)
+                    previewArea
+                        .overlay(alignment: .bottom) { TransportBar(player: player, fps: document.project.settings.fps) }   // glass pill over the picture
+                        .frame(minWidth: 480)
                     focusChat.frame(minWidth: 340, idealWidth: 440, maxWidth: 680)
                 }
             } else {
                 editorLayout
+            }
+        }
+        .toolbar {
+            ToolbarItemGroup(placement: .primaryAction) {
+                Button { HomeWindow.shared.show() } label: { Label("Home", systemImage: "house") }.help("Projects (⇧⌘P)")
+                Button { state.focusMode.toggle(); if state.focusMode, state.chat == nil { state.chat = ChatSession(document: document) } } label: {
+                    Label("Focus", systemImage: state.focusMode ? "rectangle.3.group" : "rectangle.split.2x1")
+                }
+                .help(state.focusMode ? "Back to the full editor (⌥⌘F)" : "Focus: just the player and the chat (⌥⌘F)")
+                Button { exportVideo() } label: { Label("Export", systemImage: "square.and.arrow.up") }.help("Export the movie (⌘E)").disabled(noClips || state.isExporting)
             }
         }
         .environmentObject(state)
@@ -87,7 +109,14 @@ struct EditorRootView: View {
         }
         .overlay(alignment: .top) {
             if let s = state.exportStatus {
-                Text(s).font(.caption).padding(8).background(.thinMaterial).cornerRadius(6).padding(8)
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text(s).font(.caption.monospacedDigit()).lineLimit(1)
+                }
+                .padding(.horizontal, 14).padding(.vertical, 8)
+                .liquidGlass()
+                .padding(.top, 10)
+                .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
     }
@@ -108,14 +137,19 @@ struct EditorRootView: View {
     /// Focus: only the player and the chat, for directing the agent while watching the picture (⌥⌘F or the preview button).
     private var focusChat: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                Image(systemName: "sparkles").foregroundStyle(.purple)
-                Text("Chat").font(.headline)
+            HStack(spacing: 10) {
+                Image(systemName: "sparkles").font(.system(size: 13, weight: .semibold)).foregroundStyle(Color.accentColor)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Chat").font(.system(size: 13, weight: .semibold))
+                    Text(document.displayName).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                }
                 Spacer()
                 Button { state.focusMode = false } label: { Label("Back to editor", systemImage: "rectangle.3.group") }
-                    .controlSize(.small).pointer().uiFrame("focus.exit").uiTap("focus.exit") { state.focusMode = false }.help("Back to the full editor (⌥⌘F)")
+                    .controlSize(.small).focusable(false).pointer().uiFrame("focus.exit").uiTap("focus.exit") { state.focusMode = false }.help("Back to the full editor (⌥⌘F)")
             }
-            .padding(.horizontal, 12).padding(.vertical, 8)
+            .frame(height: 44)
+            .padding(.horizontal, 14)
+            .background(Color.primary.opacity(0.03))
             Divider()
             if let chat = state.chat { ChatView(chat: chat) } else { Spacer() }
         }
@@ -145,46 +179,56 @@ struct EditorRootView: View {
                                 .uiTap("preview.versionRestore", key: v.id) { state.viewingVersion = nil; player.view(nil); try? document.restore(version: v, origin: .user) }
                         }
                         .font(.system(size: 12)).foregroundStyle(.white)
-                        .padding(.horizontal, 10).padding(.vertical, 6).background(.orange.opacity(0.85), in: Capsule()).padding(8)
+                        .padding(.horizontal, 12).padding(.vertical, 7)
+                        .liquidGlass(tint: .orange.opacity(0.75))
+                        .padding(10)
                         .uiFrame("preview.versionBanner")
                     }
                 }
                 .overlay(alignment: .topTrailing) {
-                    HStack(spacing: 6) {
-                        Button { player.scopesEnabled.toggle() } label: {
-                            Label("Scopes", systemImage: "waveform.path.ecg").labelStyle(.iconOnly).font(.system(size: 12))
-                                .padding(6).background(.black.opacity(player.scopesEnabled ? 0.6 : 0.35), in: RoundedRectangle(cornerRadius: 6))
-                                .foregroundStyle(player.scopesEnabled ? Color.accentColor : .white)
+                    // The floating control layer over the picture: one glass group, icon-only, tinted when active.
+                    GlassGroup(spacing: 6) {
+                        HStack(spacing: 6) {
+                            overlayButton("waveform.path.ecg", active: player.scopesEnabled,
+                                          help: player.scopesEnabled ? "Hide the scopes" : "Show the scopes (waveform and histogram)") { player.scopesEnabled.toggle() }
+                                .uiFrame("preview.scopes")
+                            overlayButton(player.compareMode == .off ? "rectangle.lefthalf.inset.filled" : player.compareMode == .split ? "rectangle.split.2x1.fill" : "rectangle.fill",
+                                          active: player.compareMode != .off,
+                                          help: !document.project.hasColorGrade ? "Before / after compares the color grade; no clip is graded yet" : player.compareMode == .off ? "Before / after the color grade: split the picture at a divider you can drag, then the whole picture before, then off" : "Next before / after mode") { player.cycleCompare() }
+                                .disabled(!document.project.hasColorGrade)
+                                .uiFrame("preview.compare").uiTap("preview.compare") { if document.project.hasColorGrade { player.cycleCompare() } }
+                            overlayButton("arrow.up.left.and.arrow.down.right", active: false,
+                                          help: noClips ? "Add a clip to the timeline to view it full screen" : "Show the preview full screen (⇧⌘F, or double-click the preview; Esc leaves)") { toggleFullScreen() }
+                                .disabled(noClips)
+                                .uiFrame("preview.fullscreen").uiTap("preview.fullscreen") { toggleFullScreen() }
+                            overlayButton(state.focusMode ? "rectangle.3.group" : "rectangle.split.2x1", active: state.focusMode,
+                                          help: state.focusMode ? "Back to the full editor (⌥⌘F)" : "Focus: just the player and the chat (⌥⌘F)") {
+                                state.focusMode.toggle(); if state.focusMode, state.chat == nil { state.chat = ChatSession(document: document) }
+                            }
+                            .uiFrame("preview.focus").uiTap("preview.focus") { state.focusMode.toggle() }
                         }
-                        .buttonStyle(.plain).focusable(false).help(player.scopesEnabled ? "Hide the scopes" : "Show the scopes (waveform and histogram)").pointer().uiFrame("preview.scopes")
-                        Button { player.cycleCompare() } label: {
-                            Label("Before / after", systemImage: player.compareMode == .off ? "rectangle.lefthalf.inset.filled" : player.compareMode == .split ? "rectangle.split.2x1.fill" : "rectangle.fill")
-                                .labelStyle(.iconOnly).font(.system(size: 12))
-                                .padding(6).background(.black.opacity(player.compareMode != .off ? 0.6 : 0.35), in: RoundedRectangle(cornerRadius: 6))
-                                .foregroundStyle(player.compareMode != .off ? Color.accentColor : .white)
-                        }
-                        .buttonStyle(.plain).focusable(false)
-                        .help(!document.project.hasColorGrade ? "Before / after compares the color grade; no clip is graded yet" : player.compareMode == .off ? "Before / after the color grade: split the picture at a divider you can drag (⌥⌘B)" : player.compareMode == .split ? "Show the whole picture before the grade (⌥⌘B)" : "Back to the graded picture (⌥⌘B)")
-                        .pointer().disabled(!document.project.hasColorGrade).uiFrame("preview.compare").uiTap("preview.compare") { if document.project.hasColorGrade { player.cycleCompare() } }
-                        Button { toggleFullScreen() } label: {
-                            Label("Full screen", systemImage: "arrow.up.left.and.arrow.down.right").labelStyle(.iconOnly).font(.system(size: 12))
-                                .padding(6).background(.black.opacity(0.35), in: RoundedRectangle(cornerRadius: 6)).foregroundStyle(.white)
-                        }
-                        .buttonStyle(.plain).focusable(false).help(noClips ? "Add a clip to the timeline to view it full screen" : "Show the preview full screen (⇧⌘F, or double-click the preview; Esc leaves)")
-                        .pointer().disabled(noClips).uiFrame("preview.fullscreen").uiTap("preview.fullscreen") { toggleFullScreen() }
-                        Button { state.focusMode.toggle(); if state.focusMode, state.chat == nil { state.chat = ChatSession(document: document) } } label: {
-                            Label("Focus", systemImage: state.focusMode ? "rectangle.3.group" : "rectangle.split.2x1").labelStyle(.iconOnly).font(.system(size: 12))
-                                .padding(6).background(.black.opacity(state.focusMode ? 0.6 : 0.35), in: RoundedRectangle(cornerRadius: 6)).foregroundStyle(state.focusMode ? Color.accentColor : .white)
-                        }
-                        .buttonStyle(.plain).focusable(false).help(state.focusMode ? "Back to the full editor (⌥⌘F)" : "Focus: just the player and the chat (⌥⌘F)").pointer().uiFrame("preview.focus")
-                        .uiTap("preview.focus") { state.focusMode.toggle() }
                     }
-                    .padding(8)
+                    .padding(10)
                 }
             .overlay { if player.compareMode != .off { CompareOverlay(player: player, aspect: Double(document.project.settings.width) / Double(max(1, document.project.settings.height))) } }
             if player.scopesEnabled { ScopesView(data: player.scopes) }
             if let e = player.buildError { Text(e).font(.caption).foregroundStyle(.red).padding(4) }
         }
+    }
+
+    /// One floating glass button over the picture. `.pointer()` sits inside `.disabled` at the call site.
+    private func overlayButton(_ symbol: String, active: Bool, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 12, weight: .semibold))
+                .frame(width: 30, height: 26)
+                .foregroundStyle(active ? Color.white : .primary)
+                .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+        .buttonStyle(.plain).focusable(false)
+        .liquidGlass(in: RoundedRectangle(cornerRadius: 8, style: .continuous), tint: active ? Color.glassSelection : nil, interactive: true)
+        .help(help)
+        .pointer()
     }
 
     /// No clips on any track: nothing to show full screen, so every entry point (button, menu, double-click) stays off.
@@ -229,6 +273,9 @@ struct EditorRootView: View {
 /// focused document is not reliably visible to the menu (it goes nil whenever the editor window is not key).
 struct ViewCommands: Commands {
     var body: some Commands {
+        CommandGroup(after: .windowList) {
+            Button("Home") { HomeWindow.shared.show() }.keyboardShortcut("p", modifiers: [.command, .shift])
+        }
         CommandGroup(after: .toolbar) {
             Button("Full Screen Preview") { NotificationCenter.default.post(name: .editmaxFullScreenPreview, object: nil) }.keyboardShortcut("f", modifiers: [.command, .shift])
             Button("Focus on Player and Chat") { NotificationCenter.default.post(name: .editmaxFocusMode, object: nil) }.keyboardShortcut("f", modifiers: [.command, .option])

@@ -12,37 +12,45 @@ struct AssetsSidebar: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 6) {
-                Text("Media").font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
+            // Title row: the panel name with a count badge, and one icon button to import.
+            HStack(spacing: 8) {
+                Text("Media").font(.system(size: 13, weight: .semibold))
                 if !document.project.assets.isEmpty {
-                    Text("\(document.project.assets.count)").font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
-                        .padding(.horizontal, 5).padding(.vertical, 1).background(Color.primary.opacity(0.08), in: Capsule())
+                    Text("\(document.project.assets.count)").font(.system(size: 10, weight: .semibold)).monospacedDigit().foregroundStyle(.secondary)
+                        .padding(.horizontal, 6).frame(height: 16).background(Color.primary.opacity(0.08), in: Capsule())
                 }
                 Spacer()
-                Button { importing = true } label: { Image(systemName: "plus").font(.system(size: 12, weight: .semibold)) }
-                    .buttonStyle(.plain).foregroundStyle(.secondary).focusable(false).help("Import media (or drop files here)").pointer().uiFrame("media.import")
+                Button { importing = true } label: {
+                    Image(systemName: "plus").font(.system(size: 12, weight: .semibold)).imageScale(.medium)
+                        .frame(width: 24, height: 22).contentShape(Rectangle())
+                }
+                .buttonStyle(.borderless).focusable(false).help("Import media (or drop files here)").pointer().uiFrame("media.import")
             }
-            .padding(.horizontal, 12).padding(.vertical, 8)
+            .padding(.leading, 12).padding(.trailing, 6).frame(height: 36)
             Divider()
             // Plain rows, not a List: List owns the mouse-down for selection on macOS and a drag from a row never starts.
             ScrollView {
                 LazyVStack(spacing: 2) {
                     ForEach(document.project.assets) { asset in
+                        // "Selected" is derived, not stored: the asset behind a selected timeline clip. Hover is a 6 % wash.
+                        let selected = selectedAssetIDs.contains(asset.id)
                         HStack(spacing: 10) {
                             tile(asset)
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(asset.name).font(.system(size: 12, weight: .medium)).lineLimit(1).truncationMode(.middle)
-                                HStack(spacing: 4) {
-                                    Text(subtitle(asset)).font(.system(size: 10)).foregroundStyle(.secondary).monospacedDigit()
+                                Text(asset.name).font(.system(size: 13, weight: .medium)).lineLimit(1).truncationMode(.middle)
+                                HStack(spacing: 6) {
+                                    Text(subtitle(asset)).font(.system(size: 11)).foregroundStyle(.secondary).monospacedDigit().lineLimit(1)
                                     if document.project.settings.useProxies, asset.kind == .video, proxies.ready(for: asset) != nil {
-                                        Text("PROXY").font(.system(size: 8, weight: .bold)).padding(.horizontal, 3).padding(.vertical, 1).background(Color.orange.opacity(0.3), in: RoundedRectangle(cornerRadius: 3)).help("Previewing from a 960×540 proxy; the export uses the original")
+                                        Text("PROXY").font(.system(size: 8, weight: .bold)).foregroundStyle(.orange).padding(.horizontal, 4).frame(height: 13).background(Color.orange.opacity(0.18), in: RoundedRectangle(cornerRadius: 3, style: .continuous)).help("Previewing from a 960×540 proxy; the export uses the original")
                                     }
                                 }
                             }
                             Spacer(minLength: 0)
                         }
-                        .padding(.horizontal, 8).padding(.vertical, 5)
-                        .background(RoundedRectangle(cornerRadius: 6).fill(hovered == asset.id ? Color.primary.opacity(0.07) : Color.clear))
+                        .padding(.horizontal, 8).frame(height: 44)
+                        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(selected ? Color.accentColor.opacity(0.18) : hovered == asset.id ? Color.primary.opacity(0.06) : Color.clear))
+                        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(selected ? Color.accentColor : Color.clear, lineWidth: 1.5))
+                        .animation(.snappy, value: selected)
                         .onAppear { thumbnails.request(asset) }
                         .contentShape(Rectangle())
                         .onDrag {
@@ -70,15 +78,16 @@ struct AssetsSidebar: View {
                         }
                     }
                 }
-                .padding(6)
+                .padding(.horizontal, 6).padding(.vertical, 8)
             }
             .overlay {
                 if document.project.assets.isEmpty {
                     VStack(spacing: 8) {
-                        Image(systemName: "square.and.arrow.down.on.square").font(.system(size: 26, weight: .light)).foregroundStyle(.tertiary)
-                        Text("Drop video, audio or images here").font(.system(size: 12)).foregroundStyle(.secondary)
-                        Text("or press + to import").font(.system(size: 11)).foregroundStyle(.tertiary)
+                        Image(systemName: "square.and.arrow.down.on.square").font(.system(size: 40, weight: .light)).foregroundStyle(.tertiary)
+                        Text("Drop video, audio or images here").font(.headline).foregroundStyle(.primary).multilineTextAlignment(.center)
+                        Text("or press + to import").font(.system(size: 13)).foregroundStyle(.secondary)
                     }
+                    .padding(.horizontal, 24)
                     .allowsHitTesting(false)
                 }
             }
@@ -100,10 +109,16 @@ struct AssetsSidebar: View {
         .alert("Import failed", isPresented: .init(get: { error != nil }, set: { if !$0 { error = nil } })) { Button("OK") {} } message: { Text(error ?? "") }
     }
 
-    /// 56×32 tile: the first frame for video, a glyph on a tinted square for audio and images.
+    /// Assets behind the clips selected on the timeline, so the list reflects what the user is working on.
+    private var selectedAssetIDs: Set<UUID> {
+        guard !state.selectedClipIDs.isEmpty else { return [] }
+        return Set(document.project.allClips.filter { state.selectedClipIDs.contains($0.id) }.map(\.assetID))
+    }
+
+    /// 56×36 tile: the first frame for video, a glyph on a tinted square for audio and images.
     @ViewBuilder private func tile(_ a: Asset) -> some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 4).fill(a.kind == .audio ? Color.green.opacity(0.25) : Color.black.opacity(0.35))
+            RoundedRectangle(cornerRadius: 8, style: .continuous).fill(a.kind == .audio ? Color.green.opacity(0.25) : Color.black.opacity(0.35))
             if a.kind == .video || a.kind == .sequence, let frame = thumbnails.strips[a.id]?.frames.first {
                 Image(decorative: frame, scale: 1).resizable().aspectRatio(contentMode: .fill)
             } else if a.kind == .image, let img = NSImage(contentsOfFile: a.path) {
@@ -112,9 +127,9 @@ struct AssetsSidebar: View {
                 Image(systemName: a.kind == .video ? "film" : a.kind == .audio ? "waveform" : a.kind == .sequence ? "film.stack" : "photo").font(.system(size: 13)).foregroundStyle(a.kind == .audio ? Color.green : .secondary)
             }
         }
-        .frame(width: 56, height: 32)
-        .clipShape(RoundedRectangle(cornerRadius: 4))
-        .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.white.opacity(0.08), lineWidth: 0.5))
+        .frame(width: 56, height: 36)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color.white.opacity(0.08), lineWidth: 0.5))
     }
 
     private func subtitle(_ a: Asset) -> String {

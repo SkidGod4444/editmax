@@ -112,7 +112,7 @@ final class ChatSession: ObservableObject {
             do {
                 try self.runner.launch()
                 self.agents = try await self.runner.agents()
-                if self.agentStatus.isEmpty { self.agentStatus = "codemax \(self.runner.version ?? "")" }
+                if self.agentStatus.isEmpty { self.agentStatus = "Agent runtime \(self.runner.version ?? "")" }
                 if !self.agentReady, let first = self.agents.first(where: { $0.installed }) { self.agent = first.id }
             } catch {
                 self.items.append(Item(kind: .error, text: error.localizedDescription))
@@ -149,7 +149,7 @@ final class ChatSession: ObservableObject {
         DebugLog.event("chat-send", ["backend": backend == .agent ? "agent" : "api-key", "characters": text.count])   // never the prompt
         switch backend {
         case .agent:
-            guard CodemaxRunner.bundledBinary != nil else { items.append(Item(kind: .error, text: "codemax is missing from this build of EditMax.")); return }
+            guard CodemaxRunner.bundledBinary != nil else { items.append(Item(kind: .error, text: "The agent runtime is missing from this build of EditMax.")); return }
             input = ""
             items.append(Item(kind: .user, text: text))
             runAgent(prompt: withHandoff(text))
@@ -355,7 +355,7 @@ final class ChatSession: ObservableObject {
                         guard attempt < 3, Self.looksLikeCodemaxFault(msg) else { throw error }
                         let rolled = CodemaxUpdater.shared.noteAgentFailure("configure", detail: msg)
                         self.runner.close(); self.configuredAgent = nil
-                        if rolled { self.items.append(Item(kind: .note, text: "The updated codemax could not start \(info.name) (\(msg)); rolled back to the previous copy and trying again.")) }
+                        if rolled { self.items.append(Item(kind: .note, text: "The updated agent runtime could not start \(info.name) (\(msg)); rolled back to the previous copy and trying again.")) }
                     }
                 }
                 self.currentAssistant = nil

@@ -9,12 +9,12 @@
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>
+			<key>CFBundleTypeIconFile</key>
+			<string>ProjectDoc</string>
 			<key>CFBundleTypeName</key>
 			<string>EditMax Project</string>
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
-			<key>CFBundleTypeIconFile</key>
-			<string>ProjectDoc</string>
 			<key>LSHandlerRank</key>
 			<string>Owner</string>
 			<key>LSItemContentTypes</key>
@@ -61,6 +61,7 @@
 			<dict>
 				<key>public.filename-extension</key>
 				<array>
+					<string>emx</string>
 					<string>editmax</string>
 				</array>
 			</dict>

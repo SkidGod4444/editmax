@@ -143,20 +143,26 @@ struct FullScreenControls: View {
     var body: some View {
         VStack {
             Spacer()
-            HStack(spacing: 14) {
-                Button { controller.togglePlay() } label: { Image(systemName: controller.isPlaying ? "pause.fill" : "play.fill").font(.system(size: 18)).frame(width: 28, height: 28) }
-                    .buttonStyle(.plain).focusable(false).keyboardShortcut(.space, modifiers: []).pointer().uiFrame("fullscreen.play").help(controller.isPlaying ? "Pause (space)" : "Play (space)")
-                Text(tc(scrubbing ?? controller.currentTime)).font(.system(size: 13, design: .monospaced)).frame(width: 70, alignment: .trailing)
-                Slider(value: Binding(get: { scrubbing ?? min(controller.currentTime, duration) }, set: { scrubbing = $0; controller.seek(to: $0) }), in: 0...duration, onEditingChanged: { editing in if !editing { scrubbing = nil } })
-                    .pointer().uiFrame("fullscreen.scrubber")
-                Text(tc(duration)).font(.system(size: 13, design: .monospaced)).frame(width: 70, alignment: .leading)
-                Button { leave() } label: { Label("Leave full screen", systemImage: "arrow.down.right.and.arrow.up.left").labelStyle(.iconOnly).font(.system(size: 16)).frame(width: 28, height: 28) }
-                    .buttonStyle(.plain).focusable(false).pointer().uiFrame("fullscreen.leave").help("Leave full screen (Esc)")
+            // One Liquid Glass pill over the picture: glass buttons beside a glass capsule (scrubber + times), merged by the
+            // container; nothing is glass-on-glass. Sized to content and centred, 12 pt off the bottom edge.
+            GlassGroup(spacing: 8) {
+                HStack(spacing: 8) {
+                    Button { controller.togglePlay() } label: { Image(systemName: controller.isPlaying ? "pause.fill" : "play.fill").font(.system(size: 16, weight: .semibold)).frame(width: 16, height: 16) }
+                        .glassButtonStyle().buttonBorderShape(.circle).focusable(false).keyboardShortcut(.space, modifiers: []).pointer().uiFrame("fullscreen.play").help(controller.isPlaying ? "Pause (space)" : "Play (space)")
+                    HStack(spacing: 10) {
+                        Text(tc(scrubbing ?? controller.currentTime)).font(.system(size: 13, weight: .semibold, design: .monospaced)).monospacedDigit().frame(width: 64, alignment: .trailing)
+                        Slider(value: Binding(get: { scrubbing ?? min(controller.currentTime, duration) }, set: { scrubbing = $0; controller.seek(to: $0) }), in: 0...duration, onEditingChanged: { editing in if !editing { scrubbing = nil } })
+                            .frame(width: 480)
+                            .pointer().uiFrame("fullscreen.scrubber")
+                        Text(tc(duration)).font(.system(size: 13, design: .monospaced)).monospacedDigit().foregroundStyle(.secondary).frame(width: 64, alignment: .leading)
+                    }
+                    .padding(.horizontal, 16).frame(height: 36)
+                    .liquidGlass()
+                    Button { leave() } label: { Label("Leave full screen", systemImage: "arrow.down.right.and.arrow.up.left").labelStyle(.iconOnly).font(.system(size: 14, weight: .semibold)).frame(width: 16, height: 16) }
+                        .glassButtonStyle().buttonBorderShape(.circle).focusable(false).pointer().uiFrame("fullscreen.leave").help("Leave full screen (Esc)")
+                }
             }
-            .foregroundStyle(.white)
-            .padding(.horizontal, 18).padding(.vertical, 12)
-            .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 12))
-            .padding(.horizontal, 60).padding(.bottom, 36)
+            .padding(.horizontal, 12).padding(.bottom, 12)
             .onHover { state.hovering = $0 }
             .opacity(state.visible ? 1 : 0)
             .animation(.easeOut(duration: 0.25), value: state.visible)
@@ -173,20 +179,34 @@ struct TransportBar: View {
     @State private var scrubbing: Double? = nil
     private var duration: Double { max(0.01, player.lastOutput?.duration.seconds ?? 0) }
     private func tc(_ t: Double) -> String { String(format: "%02d:%05.2f", Int(t) / 60, t - Double(Int(t) / 60 * 60)) }
+    /// A single Liquid Glass pill meant to float over the picture: the three transport buttons are glass, the scrubber and
+    /// times sit in one glass capsule, and the container merges them. Place it with `.overlay(alignment: .bottom)` on the
+    /// preview; it keeps 12 pt from the edges on its own.
     var body: some View {
-        HStack(spacing: 10) {
-            Button { player.step(frames: -1, fps: fps) } label: { Image(systemName: "backward.frame.fill") }.help("Back one frame (←)").focusable(false).pointer().uiFrame("focus.stepBack")
-            Button { player.togglePlay() } label: { Image(systemName: player.isPlaying ? "pause.fill" : "play.fill").frame(width: 18) }.help("Play or pause (space)").focusable(false).pointer().uiFrame("focus.play")
-                .uiTap("focus.play") { player.togglePlay() }
-            Button { player.step(frames: 1, fps: fps) } label: { Image(systemName: "forward.frame.fill") }.help("Forward one frame (→)").focusable(false).pointer().uiFrame("focus.stepForward")
-            Text(tc(scrubbing ?? player.currentTime)).font(.system(size: 13, design: .monospaced)).frame(width: 78, alignment: .trailing)
-            Slider(value: Binding(get: { scrubbing ?? min(player.currentTime, duration) }, set: { scrubbing = $0; player.seek(to: $0) }), in: 0...duration, onEditingChanged: { if !$0 { scrubbing = nil } })
-                .pointer().uiFrame("focus.scrubber")
-            Text(tc(duration)).font(.system(size: 13, design: .monospaced)).foregroundStyle(.secondary).frame(width: 78, alignment: .leading)
+        GlassGroup(spacing: 8) {
+            HStack(spacing: 8) {
+                HStack(spacing: 4) {
+                    Button { player.step(frames: -1, fps: fps) } label: { Image(systemName: "backward.frame.fill").font(.system(size: 12, weight: .medium)).frame(width: 14, height: 14) }
+                        .help("Back one frame (←)").focusable(false).pointer().uiFrame("focus.stepBack")
+                    Button { player.togglePlay() } label: { Image(systemName: player.isPlaying ? "pause.fill" : "play.fill").font(.system(size: 14, weight: .semibold)).frame(width: 14, height: 14) }
+                        .help("Play or pause (space)").focusable(false).pointer().uiFrame("focus.play")
+                        .uiTap("focus.play") { player.togglePlay() }
+                    Button { player.step(frames: 1, fps: fps) } label: { Image(systemName: "forward.frame.fill").font(.system(size: 12, weight: .medium)).frame(width: 14, height: 14) }
+                        .help("Forward one frame (→)").focusable(false).pointer().uiFrame("focus.stepForward")
+                }
+                .glassButtonStyle().buttonBorderShape(.circle)
+                HStack(spacing: 10) {
+                    Text(tc(scrubbing ?? player.currentTime)).font(.system(size: 13, weight: .semibold, design: .monospaced)).monospacedDigit().frame(width: 70, alignment: .trailing)
+                    Slider(value: Binding(get: { scrubbing ?? min(player.currentTime, duration) }, set: { scrubbing = $0; player.seek(to: $0) }), in: 0...duration, onEditingChanged: { if !$0 { scrubbing = nil } })
+                        .frame(minWidth: 160, maxWidth: 520)
+                        .pointer().uiFrame("focus.scrubber")
+                    Text(tc(duration)).font(.system(size: 13, design: .monospaced)).monospacedDigit().foregroundStyle(.secondary).frame(width: 70, alignment: .leading)
+                }
+                .padding(.horizontal, 14).frame(height: 32)
+                .liquidGlass()
+            }
         }
-        .buttonStyle(.plain)
-        .padding(.horizontal, 12).padding(.vertical, 8)
-        .background(.bar)
+        .padding(12)
     }
 }
 

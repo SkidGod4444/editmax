@@ -20,7 +20,9 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshot-editor.png" width="920" alt="The EditMax editor: media list, preview with a title, the clip inspector on the Look section, and a timeline with markers and dissolves">
+  <img src="docs/looks.jpg" width="920" alt="One frame of a surf clip in three bands: as shot, with the Teal and Orange look, and in Black and White">
+  <br>
+  <sub>One surf clip graded three ways in EditMax: as shot, Teal &amp; Orange, and Black &amp; White.</sub>
 </p>
 
 EditMax is a real editor first: tracks, trims, keyframes, color, audio, captions, multicam, 10-bit delivery, built on
@@ -32,7 +34,7 @@ no backend, nothing leaves your Mac unless you ask a cloud model.
 <p align="center">
   <img src="docs/demo-frames.jpg" width="920" alt="Three frames of the cut: a title over a city at dusk, apartment towers from above, fields at the edge of town">
   <br>
-  <sub>The cut in the window above: three aerial shots, a Teal &amp; Orange look, two dissolves, fades and a title. An agent makes it in nine tool calls.</sub>
+  <sub>A cut an agent made in EditMax in nine tool calls: three aerial shots, a Teal &amp; Orange look, two dissolves, fades and a title.</sub>
 </p>
 
 ## Why EditMax
@@ -251,17 +253,24 @@ Download button looks up the newest release's DMG through the GitHub API: publis
 
 ### Releases
 
+Releases are built, signed and notarized on a Mac; nothing is built on GitHub.
+
 ```sh
 scripts/release.sh 0.2.0
 ```
 
-stamps the version into `project.yml`, commits, tags `v0.2.0` and pushes. The tag starts
-[the release workflow](.github/workflows/release.yml), which runs `scripts/package.sh` (a Release build with the
-hardened runtime, packaged as a DMG and a zip with `SHA256SUMS`) and publishes them as a GitHub release. Signing and
-notarization switch on once the repository has the `MACOS_CERT_P12`, `MACOS_CERT_PASSWORD`, `APPLE_ID`,
-`APPLE_TEAM_ID` and `APPLE_APP_PASSWORD` secrets; without them the build is signed ad hoc and its release notes say
-how to open it. On a Mac, `SIGN_IDENTITY="Developer ID Application: …" NOTARY_PROFILE=<profile> scripts/package.sh`
-does the same into `build/release/` without publishing.
+runs `scripts/package.sh` (a Release build with the hardened runtime, signed with your Developer ID, notarized and
+stapled by Apple, packaged as a DMG and a zip with `SHA256SUMS`), then stamps the version into `project.yml`, commits,
+tags `v0.2.0`, pushes and publishes the GitHub release. It refuses to publish a build that is not notarized, because
+the website's Download button hands out the latest release. It reads two settings from the environment or from a
+git-ignored `.release.env` in the repo root:
+
+```sh
+SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"
+NOTARY_PROFILE=editmax   # made once with: xcrun notarytool store-credentials editmax
+```
+
+`scripts/package.sh` on its own builds into `build/release/` without publishing, and signs ad hoc without an identity.
 
 The installer window (a timeline with the app and Applications as two clips) is laid out by
 [dmgbuild](https://github.com/dmgbuild/dmgbuild) from `scripts/dmg/settings.py`; its art is `scripts/dmg/src/index.html`.
@@ -290,7 +299,9 @@ glass APIs directly.
 
 EditMax is made by **Saidev Dhal**. The agent runtime is [codemax](https://github.com/SkidGod4444/codemax-cli), the
 MCP server uses the [MCP Swift SDK](https://github.com/modelcontextprotocol/swift-sdk), and the API-key chat uses the
-[Claude Agent SDK](https://docs.claude.com/en/api/agent-sdk) and the [Vercel AI SDK](https://sdk.vercel.ai).
+[Claude Agent SDK](https://docs.claude.com/en/api/agent-sdk) and the [Vercel AI SDK](https://sdk.vercel.ai). The surf
+footage above and on the website is from Pexels, cut and graded in EditMax; sources are in
+[web/public/reel/CREDITS.md](web/public/reel/CREDITS.md).
 
 ## License
 

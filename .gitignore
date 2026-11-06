@@ -8,3 +8,4 @@ build/
 Vendor/
 .claude/worktrees/
 /codemax-cli/
+/.release.env

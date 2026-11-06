@@ -178,11 +178,13 @@ failed agent start, protocol error), is rolled back to the previous or the bundl
 
 ## Releases
 
-`scripts/release.sh 0.2.0` stamps the version into `project.yml`, commits, tags `v0.2.0` and pushes. The tag starts
-`.github/workflows/release.yml`, which checks out the public codemax-cli repo into the workspace (so the bundled
-runtime is the real one, not the test stub), runs `scripts/package.sh` and publishes a GitHub release with
-`EditMax-<version>.dmg`, `EditMax-<version>.zip` and `SHA256SUMS`, with notes generated from the commits. Started by
-hand from the Actions tab, the workflow makes a draft release.
+`scripts/release.sh 0.2.0` cuts a release on a Mac; nothing is built on GitHub. It reads `SIGN_IDENTITY` and
+`NOTARY_PROFILE` from the environment or a git-ignored `.release.env`, requires a clean `main` in sync with
+`origin/main`, runs `scripts/package.sh` with the version and a build number (the commit count), and stops unless
+`build/release/notarized` exists. Then it stamps the version into `project.yml`, commits, tags `v0.2.0`, pushes, and
+publishes a GitHub release with `EditMax-<version>.dmg`, `EditMax-<version>.zip` and `SHA256SUMS`, with notes
+generated from the commits. The website's Download button hands out the latest release, which is why an unnotarized
+build is never published.
 
 `package.sh` builds the Release configuration unsigned, copies `LICENSE`, `COMMERCIAL.md`, `THIRD-PARTY-NOTICES.md`
 and codemax's AGPL text into `Contents/Resources/Licenses`, then signs inside out with the hardened runtime: the two

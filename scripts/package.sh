@@ -9,7 +9,7 @@
 #                   made once with `xcrun notarytool store-credentials <name>`)
 #                   with a real identity, the app and the DMG are notarized by Apple and the tickets stapled,
 #                   so Gatekeeper opens them on any Mac, offline too
-# Run by .github/workflows/release.yml on a tag, and by hand for a local check: scripts/package.sh
+# Run by scripts/release.sh on this Mac (releases are never built on GitHub), and by hand for a local check.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
 VERSION="${VERSION:-$(grep -m1 CFBundleShortVersionString project.yml | sed -E 's/.*"([^"]+)".*/\1/')}"

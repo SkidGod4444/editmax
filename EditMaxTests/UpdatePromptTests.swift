@@ -28,6 +28,7 @@ final class UpdatePromptTests: XCTestCase {
         p.defaults = defaults
         p.askNotificationPermission = {}
         p.notify = { [weak self] in self?.notified.append($0.version) }
+        p.checkAgain = { XCTFail("Sparkle is asked again only when the last quit did not install the update") }
         return p
     }
 
@@ -138,8 +139,11 @@ final class UpdatePromptTests: XCTestCase {
     func testAfterTheUpdateTheNextOpenSaysItIsInstalled() {
         let before = prompt(); before.currentVersion = { "0.1.1" }
         before.offer(version: "0.1.2", notes: URL(string: "https://github.com/SkidGod4444/editmax/releases/tag/v0.1.2")) {}
+        var askedAgain = 0
+        before.checkAgain = { askedAgain += 1 }
         before.showInstalledNoteIfUpdated()
         XCTAssertNotEqual(before.showing?.name, "installed", "still on 0.1.1: nothing installed yet")
+        XCTAssertEqual(askedAgain, 1)
         before.later()
 
         let after = prompt(); after.currentVersion = { "0.1.2" }; after.installedNoteFor = 0.2
@@ -151,6 +155,31 @@ final class UpdatePromptTests: XCTestCase {
         let again = prompt(); again.currentVersion = { "0.1.2" }
         again.showInstalledNoteIfUpdated()
         XCTAssertFalse(again.isShowing, "only once")
+    }
+
+    /// Reopened still on the old version (the quit did not install it): Sparkle is asked again at once, and the popup
+    /// comes back when it hands the update over. Reopened past it (0.1.10 after a 0.1.9 offer): the record just goes.
+    func testReopenedOnTheOldVersionTheUpdateIsOfferedAgain() {
+        let before = prompt(); before.currentVersion = { "0.1.1" }
+        before.offer(version: "0.1.2", notes: nil) {}
+        before.later()
+
+        let reopened = prompt(); reopened.currentVersion = { "0.1.1" }
+        var asked = 0
+        reopened.checkAgain = { asked += 1 }
+        reopened.showInstalledNoteIfUpdated()
+        XCTAssertEqual(asked, 1, "Sparkle is asked again right after the splash")
+        XCTAssertFalse(reopened.isShowing, "no installed card: it is not installed")
+        reopened.offer(version: "0.1.2", notes: nil) {}   // what Sparkle's hand-off does
+        XCTAssertTrue(reopened.isShowing, "the popup is back")
+        reopened.later()
+
+        let past = prompt(); past.currentVersion = { "0.1.10" }
+        past.offer(version: "0.1.9", notes: nil) {}
+        past.later()
+        past.showInstalledNoteIfUpdated()
+        XCTAssertFalse(past.isShowing)
+        XCTAssertNil(defaults.data(forKey: UpdatePrompt.offeredKey), "an offer older than this version is dropped")
     }
 
     /// The side agent's catch: the popup took the keyboard and Return meant Install Now, so a Return typed into a title

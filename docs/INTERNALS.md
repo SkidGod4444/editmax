@@ -298,7 +298,9 @@ waits while `BusyWork` counts an export or an agent reply, even after Install No
 relaunch) and Remind Me Later: a 60 s tick shows the popup again once 2 h have passed while EditMax is active, or posts
 a `UNUserNotification` (category with an Install Now action; `UpdateNotifications`, permission asked at the first Later)
 once 6 h have passed while it is not; install on quit still stands. The offered version is kept in `EditMaxUpdateOffered`;
-the first activation on that version shows an "installed" card after the splash. `SparkleInstallTests` (opt-in,
+the first activation on that version shows an "installed" card after the splash; an activation still on an older
+version (the quit did not install it) calls `checkForUpdatesInBackground()` so Sparkle resumes the download and the
+popup returns. `SparkleInstallTests` (opt-in,
 `TEST_RUNNER_EDITMAX_SPARKLE_TEST=1`, run from a derived-data folder outside `~/Desktop`: TCC blocks launchd's
 `Autoupdate` there) installs a signed 2.0 of a stand-in app from a local feed through the real Sparkle and Install Now. Debug builds show it with
 `-EditMaxUpdatePromptDemo YES`. The updater does not start in Debug builds (they

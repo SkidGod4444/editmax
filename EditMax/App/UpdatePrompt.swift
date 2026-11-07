@@ -46,6 +46,8 @@ final class UpdatePrompt: ObservableObject {
     var askNotificationPermission: () -> Void = { UpdateNotifications.requestPermission() }
     var defaults: UserDefaults = .standard
     var currentVersion: () -> String = { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "" }
+    /// Asks Sparkle again (when the last quit did not install the offered version).
+    var checkAgain: () -> Void = { AppUpdater.shared.checkQuietly() }
     var offscreen = false
     var window: NSPanel? { panel }
 
@@ -123,10 +125,22 @@ final class UpdatePrompt: ObservableObject {
         }
     }
 
-    /// After a relaunch onto the version that was offered: "EditMax x.y is installed", once. Called after the splash.
+    /// Called after the splash, when an update was offered before the last quit. On that version now: "EditMax x.y
+    /// is installed", once. Still on the older one (the quit did not install it: the installer failed, or EditMax
+    /// closed before Sparkle had it ready): Sparkle is asked again, picks the downloaded update back up and the popup
+    /// returns. Already past it: the record goes.
     func showInstalledNoteIfUpdated() {
-        guard let data = defaults.data(forKey: Self.offeredKey), let o = try? JSONDecoder().decode(Offer.self, from: data),
-              o.version == currentVersion() else { return }
+        guard let data = defaults.data(forKey: Self.offeredKey), let o = try? JSONDecoder().decode(Offer.self, from: data) else { return }
+        switch o.version.compare(currentVersion(), options: .numeric) {
+        case .orderedDescending:
+            DebugLog.event("app-update-not-installed", ["offered": o.version, "running": currentVersion()])
+            checkAgain()
+            return
+        case .orderedAscending:
+            defaults.removeObject(forKey: Self.offeredKey)
+            return
+        case .orderedSame: break
+        }
         defaults.removeObject(forKey: Self.offeredKey)
         DebugLog.event("app-update-installed", ["version": o.version])
         show(.installed(o))

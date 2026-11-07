@@ -64,4 +64,12 @@ final class AppUpdater: ObservableObject {
         DebugLog.event("app-update-check", ["by": "user"])
         controller.checkForUpdates(nil)
     }
+
+    /// A quiet check now, off schedule: Sparkle picks up an update it already downloaded (or downloads it again) and
+    /// hands it to the popup.
+    func checkQuietly() {
+        guard Self.isEnabled else { return }
+        DebugLog.event("app-update-check", ["by": "launch"])
+        controller.updater.checkForUpdatesInBackground()
+    }
 }

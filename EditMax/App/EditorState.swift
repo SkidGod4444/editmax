@@ -40,6 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// test run never looks like a second EditMax.
     func applicationWillFinishLaunching(_ notification: Notification) {
         if Self.isTesting { NSApp.setActivationPolicy(.accessory) }
+        OverlayScrollers.install()   // slim scroll bars that show only while scrolling, before any window exists
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {

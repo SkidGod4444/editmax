@@ -199,13 +199,14 @@ enum TrackDrag {
 }
 
 enum Timecode {
-    /// mm:ss.ff of the nearest frame. Rounded, not truncated: 19.2 s is frame 576 at 30 fps (00:19.06), and truncating
-    /// 19.2 × 30 = 575.99… showed the frame before it.
+    /// mm:ss.ff of the nearest frame; h:mm:ss.ff from an hour on (17:55:00.00, not 1075:00.00). Rounded, not truncated:
+    /// 19.2 s is frame 576 at 30 fps (00:19.06), and truncating 19.2 × 30 = 575.99… showed the frame before it.
     static func string(_ seconds: Double, fps: Double = 30) -> String {
         let rate = max(1, fps)
         let frame = Int((max(0, seconds) * rate).rounded())
         let whole = Int((Double(frame) / rate + 1e-9).rounded(.down))     // the second that frame falls in
         let f = frame - Int((Double(whole) * rate - 1e-9).rounded(.up))    // frames since that second began (29.97 fps too)
-        return String(format: "%02d:%02d.%02d", whole / 60, whole % 60, f)
+        let h = whole / 3600, m = whole / 60 % 60, sec = whole % 60
+        return h > 0 ? String(format: "%d:%02d:%02d.%02d", h, m, sec, f) : String(format: "%02d:%02d.%02d", m, sec, f)
     }
 }

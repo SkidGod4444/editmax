@@ -275,6 +275,13 @@ final class AuditFixesTests: XCTestCase {
         XCTAssertEqual(Timecode.string(65.5, fps: 24), "01:05.12")
     }
 
+    func testTimecodeShowsHoursFromAnHourOn() {
+        XCTAssertEqual(Timecode.string(3599), "59:59.00")
+        XCTAssertEqual(Timecode.string(3599.99), "1:00:00.00", "rounds to the frame at one hour")
+        XCTAssertEqual(Timecode.string(64_500), "17:55:00.00")
+        XCTAssertEqual(Timecode.string(64_800 - 1.0 / 30), "17:59:59.29")
+    }
+
     func testFrameStepsStayOnTheFrameGrid() {
         let player = PlayerController()
         player.seek(to: 1.0)

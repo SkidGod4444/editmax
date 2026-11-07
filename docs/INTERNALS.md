@@ -42,7 +42,7 @@ within 1.5 s (a slider drag) into one undo step and one version. Analysis caches
 - `rippleDelete` removes a range from every track (splitting or trimming clips), drops text inside it and shifts
   later text and markers, so a separate voice track stays in sync.
 - Transcripts are stored per asset and mapped through each clip's source offset and speed, so they stay valid after
-  any ripple. `get_transcript` returns 2000 words a page (up to 10 000 with `max_words`): `firstWord` and `nextWord`
+  any ripple. `get_transcript` pages end at `max_words` (at most 10 000) or about 80 000 characters of compact JSON, whichever comes first (some 1 600 words): Claude Code, which runs the in-app chat, cuts a tool reply at 25 000 tokens (about 100 000 characters) and drops the rest, and the reply used to be indented JSON at 86 characters a word, so a 2000-word page lost its last 850 words while still pointing past them. `firstWord` and `nextWord`
   are indices into all of the clip's or asset's words, the same ones `cut_transcript` takes, and `from`/`to` pick a
   stretch of time. An 18-hour talk is about 160 000 words, far more than one reply can hold.
 - Texts never cover each other. `TextLayout` measures a text's box in the frame with the rasterizer's font and

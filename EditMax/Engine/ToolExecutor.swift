@@ -224,8 +224,18 @@ struct ToolExecutor {
         var note: String?
     }
 
-    /// Words per get_transcript page by default, and at most: an 18-hour talk is about 160 000 words (some 7 MB).
-    static let transcriptPage = 2000, transcriptPageMax = 10_000
+    /// A get_transcript page holds at most `transcriptPageMax` words (`max_words` asks for fewer) and at most
+    /// `transcriptPageBytes` of the compact JSON it is sent as. Claude Code, which runs the in-app chat, cuts a tool's
+    /// reply at 25 000 tokens (about 100 000 characters) and drops the rest, so a page past that would lose the words
+    /// after the cut while still pointing at the next page. A page is about 1 600 words, 10 to 12 minutes of talk; an
+    /// 18-hour talk is about 160 000 words.
+    static let transcriptPageMax = 10_000, transcriptPageBytes = 80_000
+    /// What one word adds to a page: its entry in `words` and its share of `text` (UTF-8 bytes, so never under the
+    /// characters counted).
+    static func transcriptCost(_ w: TranscriptWord) -> Int {
+        let r = { (x: Double) in (x * 1000).rounded() / 1000 }
+        return 31 + 2 * w.text.utf8.count + "\(r(w.start))".utf8.count + "\(r(w.end))".utf8.count
+    }
 
     /// The asset's transcript, made on first use (on-device, blocks for a while on long files) and cached on the project.
     func ensureTranscript(assetID: UUID, language: String?) async throws -> Transcript {
@@ -285,14 +295,18 @@ struct ToolExecutor {
         // A page: from the later of first_word and the first word starting at `from`, up to max_words words that start
         // before `to`.
         let lo = max(firstWord ?? 0, from.map { f in all.firstIndex { $0.start >= f } ?? all.count } ?? 0)
-        let cap = maxWords ?? Self.transcriptPage, until = to ?? .infinity
-        var hi = min(lo, all.count)
-        while hi < all.count, all[hi].start < until, hi - lo < cap { hi += 1 }
+        let cap = maxWords ?? Self.transcriptPageMax, until = to ?? .infinity
+        var hi = min(lo, all.count), bytes = 0
+        while hi < all.count, all[hi].start < until, hi - lo < cap {
+            let c = Self.transcriptCost(all[hi])
+            if hi > lo, bytes + c > Self.transcriptPageBytes { break }
+            bytes += c; hi += 1
+        }
         let more = hi < all.count && all[hi].start < until
         let words = lo < hi ? Array(all[lo..<hi]) : []
         var note: String? = nil
         if more {
-            note = "Words \(lo)–\(hi - 1) of \(all.count), \(cap) at a time. Next page: first_word \(hi)\(to.map { ", to \(r($0))" } ?? ""). search_transcript finds a phrase anywhere without paging."
+            note = "Words \(lo)–\(hi - 1) of \(all.count): a page ends at max_words or about \(Self.transcriptPageBytes / 1000) 000 characters. Next page: first_word \(hi)\(to.map { ", to \(r($0))" } ?? ""). search_transcript finds a phrase anywhere without paging."
         } else if words.isEmpty, !all.isEmpty {
             note = "No words in that range: there are \(all.count), from \(r(all[0].start)) s to \(r(all[all.count - 1].end)) s."
         }

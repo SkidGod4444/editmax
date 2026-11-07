@@ -139,25 +139,34 @@ final class LongAudioTests: XCTestCase {
         XCTAssertEqual(Double(whole.count) / 2 / 48_000, 720, accuracy: 0.05)
     }
 
-    func testALongTranscriptComesInPagesWithIndicesThatCutTranscriptTakes() async throws {
+    func testALongTranscriptComesInPagesThatEachFitOneReplyAndLoseNoWord() async throws {
         let tone = S.sine(1000, seconds: 2, dbfs: -20)
         _ = try await x.importMedia(paths: [try S.writeWAV([tone, tone], to: S.scratch.appendingPathComponent("talk.wav")).path])
         let id = doc.project.assets[0].id
-        // 30 minutes of talk: 4500 words, one every 0.4 s.
+        // 30 minutes of talk: 4500 words, one every 0.4 s, with millisecond times like real ones.
         doc.project.transcripts = [id.uuidString: Transcript(locale: "en", words: (0..<4500).map {
-            TranscriptWord(text: "w\($0)", start: Double($0) * 0.4, end: Double($0) * 0.4 + 0.3)
+            TranscriptWord(text: "word\($0)", start: Double($0) * 0.4 + 0.123, end: Double($0) * 0.4 + 0.391)
         })]
-        let p1 = try await x.getTranscript(asset: "talk.wav", clip: nil, language: nil)
-        XCTAssertEqual([p1.totalWords, p1.firstWord, p1.wordCount, p1.nextWord], [4500, 0, 2000, 2000])
-        XCTAssertEqual(p1.words.first?.text, "w0"); XCTAssertEqual(p1.words.last?.text, "w1999")
-        XCTAssertNotNil(p1.note)
-        XCTAssertLessThan(try JSONEncoder().encode(p1).count, 150_000, "a page fits an agent's context")
-        let p2 = try await x.getTranscript(asset: "talk.wav", clip: nil, language: nil, firstWord: p1.nextWord)
-        XCTAssertEqual([p2.firstWord, p2.wordCount, p2.nextWord], [2000, 2000, 4000])
-        XCTAssertEqual(p2.words.first?.text, "w2000")
-        let p3 = try await x.getTranscript(asset: "talk.wav", clip: nil, language: nil, firstWord: p2.nextWord)
-        XCTAssertEqual([p3.firstWord, p3.wordCount], [4000, 500])
-        XCTAssertNil(p3.nextWord); XCTAssertNil(p3.note)
+        // Every page, in order: together they are every word once.
+        var pages: [ToolExecutor.TranscriptInfo] = [], next: Int? = 0
+        while let n = next {
+            let p = try await x.getTranscript(asset: "talk.wav", clip: nil, language: nil, firstWord: n == 0 ? nil : n)
+            XCTAssertEqual(p.firstWord, n); XCTAssertEqual(p.totalWords, 4500)
+            let sent = try EditMaxTools.transcriptText(p)
+            XCTAssertLessThanOrEqual(sent.utf8.count, ToolExecutor.transcriptPageBytes, "page at \(n)")
+            XCTAssertLessThan(sent.count, 100_000, "under Claude Code's cut of a tool reply")
+            if p.nextWord != nil { XCTAssertGreaterThan(sent.utf8.count, 70_000, "pages are not much smaller than they need be"); XCTAssertNotNil(p.note) }
+            else { XCTAssertNil(p.note) }
+            pages.append(p); next = p.nextWord
+            XCTAssertLessThan(pages.count, 10)
+        }
+        print("LONG-AUDIO transcript pages: \(pages.map(\.wordCount)) words")
+        XCTAssertEqual(pages.flatMap { $0.words.map(\.text) }, (0..<4500).map { "word\($0)" })
+        XCTAssertGreaterThan(pages.count, 1)
+        XCTAssertEqual(pages[1].firstWord, pages[0].nextWord)
+        // The note sorts before the words, so even a reply cut short would still say where the next page starts.
+        let first = try EditMaxTools.transcriptText(pages[0])
+        XCTAssertLessThan(try XCTUnwrap(first.range(of: "\"nextWord\"")).lowerBound, try XCTUnwrap(first.range(of: "\"words\"")).lowerBound)
         // A stretch of time: 10:00 to 10:40 is words 1500 to 1599.
         let span = try await x.getTranscript(asset: "talk.wav", clip: nil, language: nil, from: 600, to: 640)
         XCTAssertEqual([span.firstWord, span.wordCount], [1500, 100])

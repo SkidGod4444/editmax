@@ -53,12 +53,12 @@ enum EditMaxTools {
                                   "font": str("Font family (any case) or PostScript name, from list_fonts; a Google font not on this Mac is downloaded first. Default: the preset's font"),
                                   "font_size": num("Points at project resolution (default from the preset)"), "color": str("Hex color like #FFFFFF"),
                                   "x": num("Horizontal center 0-1 (default 0.5)"), "y": num("Vertical center 0-1, 0 = top (default from the preset)"), "project": projectArg], required: ["text", "start", "duration"])),
-        Tool(name: "get_transcript", description: "Speech in an asset or clip as timed words (on-device recognition, cached per asset; the first call on a long file takes a while). Clip times are timeline seconds, asset times are source seconds. Long speech comes in pages of 2000 words: the result gives totalWords, firstWord (the index of its first word, as cut_transcript's from_word counts) and nextWord to pass as first_word for the next page. from/to pick a stretch of time.",
+        Tool(name: "get_transcript", description: "Speech in an asset or clip as timed words (on-device recognition, cached per asset; the first call on a long file takes a while). Clip times are timeline seconds, asset times are source seconds. Long speech comes in pages that each fit one reply (about 80 000 characters: some 1600 words, 10 to 12 minutes of talk): the result gives totalWords, firstWord (the index of its first word, as cut_transcript's from_word counts) and nextWord to pass as first_word for the next page; ask until nextWord is absent to read it all. from/to pick a stretch of time; search_transcript finds a phrase anywhere.",
              inputSchema: schema(["clip": str("Clip id prefix (timeline times)"), "asset": str("Asset id prefix or file name (source times)"),
                                   "language": str("Language tag such as en, en-IN, hi (default: the Mac's language)"),
                                   "from": num("Seconds: start at the first word starting here"), "to": num("Seconds: stop before the first word starting here"),
                                   "first_word": int("0-based index of the first word (nextWord of the previous page)"),
-                                  "max_words": int("Words in this page, 1 to 10000 (default 2000)"), "project": projectArg])),
+                                  "max_words": int("At most this many words in the page, 1 to 10000 (a page also ends at about 80000 characters)"), "project": projectArg])),
         Tool(name: "add_captions", description: "Transcribe the speech in a clip (or every clip with audio) and add timed caption lines as text overlays in one edit. Returns the caption group id.",
              inputSchema: schema(["clip": str("Clip id prefix (default: all clips with audio)"), "preset": str("Look: subtitle (default), boxed, bold, outline, minimal, title"),
                                   "max_words": int("Words per line (default from the preset)"), "language": str("Language tag (default: the Mac's language)"), "project": projectArg])),
@@ -432,6 +432,12 @@ enum EditMaxTools {
     private static let encoder: JSONEncoder = { let e = JSONEncoder(); e.outputFormatting = [.prettyPrinted, .sortedKeys]; e.dateEncodingStrategy = .iso8601; return e }()
     private static func encodeText<T: Encodable>(_ v: T) throws -> String { String(decoding: try encoder.encode(v), as: UTF8.self) }
     private static func payload<T: Codable>(_ v: T) throws -> Payload { Payload(text: try encodeText(v), value: try? Value(v)) }
+    /// A transcript page as sent: compact JSON (indented, a word takes 86 characters instead of 49), keys sorted so
+    /// nextWord and note come before the words. Sized by `ToolExecutor.transcriptPageBytes` to stay whole.
+    static func transcriptText(_ page: ToolExecutor.TranscriptInfo) throws -> String {
+        let e = JSONEncoder(); e.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        return String(decoding: try e.encode(page), as: UTF8.self)
+    }
     private static func message(_ s: String) -> Payload { Payload(text: s, value: .object(["message": .string(s)])) }
 
     /// The argument names a tool declares, from its schema; nil for a tool that is not in the catalog.
@@ -576,8 +582,9 @@ enum EditMaxTools {
             if let f = s("font") { font = try await FontLibrary.shared.resolve(f) }
             return try payload(try x.setTextStyle(try req("text"), font: font, fontSize: d("font_size"), color: s("color")))
         case "get_transcript":
-            return try payload(try await x.getTranscript(asset: s("asset"), clip: s("clip"), language: s("language"), from: d("from"), to: d("to"),
-                                                         firstWord: i("first_word"), maxWords: i("max_words")))
+            let page = try await x.getTranscript(asset: s("asset"), clip: s("clip"), language: s("language"), from: d("from"), to: d("to"),
+                                                 firstWord: i("first_word"), maxWords: i("max_words"))
+            return Payload(text: try transcriptText(page), value: try? Value(page))
         case "add_captions":
             return try payload(try await x.addCaptions(clip: s("clip"), preset: s("preset"), maxWords: i("max_words"), language: s("language")))
         case "detect_silence":

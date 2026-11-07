@@ -20,7 +20,10 @@ enum ShotMatch {
 
     /// Pixels as (r, g, b) in 0…1 from RGBA8.
     static func samples(_ px: [UInt8]) -> [(Double, Double, Double)] {
-        stride(from: 0, to: px.count - 3, by: 4).map { (Double(px[$0]) / 255, Double(px[$0 + 1]) / 255, Double(px[$0 + 2]) / 255) }
+        stride(from: 0, to: px.count - 3, by: 4).map { (i: Int) -> (Double, Double, Double) in
+            let r: Double = Double(px[i]) / 255, g: Double = Double(px[i + 1]) / 255, b: Double = Double(px[i + 2]) / 255
+            return (r, g, b)
+        }
     }
 
     static func measure(_ s: [(Double, Double, Double)]) -> Stats {

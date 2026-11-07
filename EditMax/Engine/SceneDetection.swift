@@ -108,7 +108,9 @@ enum SceneDetector {
                     let r0 = min(2, Int(fr)), g0 = min(2, Int(fg)), b0 = min(2, Int(fb))
                     let wr = fr - Double(r0), wg = fg - Double(g0), wb = fb - Double(b0)
                     for dr in 0...1 { for dg in 0...1 { for db in 0...1 {
-                        let wt = (dr == 0 ? 1 - wr : wr) * (dg == 0 ? 1 - wg : wg) * (db == 0 ? 1 - wb : wb)
+                        // Split up: CI's compiler gave up type-checking the one-line product.
+                        let tr: Double = dr == 0 ? 1 - wr : wr, tg: Double = dg == 0 ? 1 - wg : wg, tb: Double = db == 0 ? 1 - wb : wb
+                        let wt: Double = tr * tg * tb
                         hist[(r0 + dr) * 16 + (g0 + dg) * 4 + (b0 + db)] += wt
                     } } }
                     let cell = min(3, y * 4 / h) * 4 + min(3, x * 4 / w)

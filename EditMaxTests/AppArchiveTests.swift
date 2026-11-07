@@ -1,4 +1,5 @@
 import XCTest
+import SwiftUI
 @testable import EditMax
 
 /// EditMax's Archive: deleted files wait there for the period set in Settings, then are erased for good.
@@ -91,6 +92,24 @@ final class AppArchiveTests: XCTestCase {
             h.close()
         }
         XCTAssertEqual(AppArchive.shared.entries.first { $0.name == "Inter" }?.bytes, 300, "a folder counts what is in it")
+    }
+
+    /// Home's sidebar ends with an Archive row (with the count), above the footnote.
+    func testHomeSidebarHasTheArchiveAtTheBottom() throws {
+        try AppArchive.shared.archive(try file("Old cut.emx"), kind: .project, name: "Old cut")
+        for dark in [true, false] {
+            let h = OffscreenHost(HomeView(part: .sidebar, model: HomeModel()).background(Color(nsColor: .windowBackgroundColor)).environment(\.colorScheme, dark ? .dark : .light),
+                                  size: CGSize(width: 260, height: 640), dark: dark)
+            let row = try XCTUnwrap(h.frame("home.archive"))
+            let settings = try XCTUnwrap(h.frame("home.settings"))
+            XCTAssertGreaterThan(row.minY, settings.maxY + 40, "at the foot, not with the other links")
+            XCTAssertGreaterThanOrEqual(row.height, 28)
+            h.close()
+            // The row on its own, for the eye (the whole sidebar's glass does not draw offscreen).
+            let r = OffscreenHost(HomeArchiveRow().padding(12).frame(width: 236).background(Color(nsColor: .windowBackgroundColor)), size: CGSize(width: 236, height: 52), dark: dark)
+            r.save("home-sidebar-archive-row-\(dark ? "dark" : "light")")
+            r.close()
+        }
     }
 
     func testPeriodsOnOffer() {

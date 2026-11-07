@@ -217,6 +217,7 @@ struct HomeView: View {
             .font(.system(size: 13))
 
             Spacer()
+            HomeArchiveRow()
             Text("Projects live in Movies ▸ EditMax Projects. A draft is a project you have not named yet.\nEditMax by Saidev Dhal.")
                 .font(.caption2).foregroundStyle(.tertiary).fixedSize(horizontal: false, vertical: true)
         }
@@ -296,6 +297,27 @@ final class HomeModel: ObservableObject {
     @Published var assetSearch = ""
     @Published var removing: LibraryItem?
     @Published var assetMessage: String?
+}
+
+/// Home's sidebar foot: the Archive (deleted files, with Restore), with how many items wait there. Opens its window.
+struct HomeArchiveRow: View {
+    @ObservedObject private var archive = AppArchive.shared
+
+    var body: some View {
+        Button { ArchiveWindow.shared.show() } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "archivebox").font(.system(size: 13, weight: .medium)).foregroundStyle(.secondary).frame(width: 20)
+                Text("Archive").font(.system(size: 13))
+                Spacer()
+                if !archive.entries.isEmpty { Text("\(archive.entries.count)").font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary) }
+            }
+            .padding(.horizontal, 8).frame(height: 28)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).focusable(false).pointer()
+        .help(archive.entries.isEmpty ? "Deleted files wait here for \(archive.periodText) so you can restore them" : "\(archive.entries.count) deleted file\(archive.entries.count == 1 ? "" : "s") you can restore")
+        .uiFrame("home.archive").uiTap("home.archive") { ArchiveWindow.shared.show() }
+    }
 }
 
 /// One place in Home's sidebar (Projects, Assets): a row like the Finder's sidebar, highlighted when chosen.

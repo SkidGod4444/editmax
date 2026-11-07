@@ -106,7 +106,10 @@ final class AppArchiveTests: XCTestCase {
             let archive = try XCTUnwrap(h.frame("home.place.archive"))
             let settings = try XCTUnwrap(h.frame("home.settings"))
             XCTAssertGreaterThan(archive.minY, settings.maxY + 40, "at the foot, not with the other links")
-            XCTAssertLessThan(archive.maxY, 660 - 22 - 12, "with only the one-line version under it")
+            XCTAssertLessThan(archive.maxY, 660 - 22 - 12, "with only the one-line footer under it")
+            let byline = try XCTUnwrap(h.frame("home.byline"), "the maker's link")
+            XCTAssertGreaterThan(byline.minY, archive.maxY)
+            XCTAssertEqual(byline.minX, archive.minX + 8, accuracy: 0.5, "lined up with the rows' text inset")
             let rows = try ["home.place.projects", "home.place.assets", "home.open", "home.finder", "home.settings", "home.place.archive"].map { try XCTUnwrap(h.frame($0), $0) }
             for r in rows {
                 XCTAssertEqual(r.minX, rows[0].minX, accuracy: 0.5, "same inset")
@@ -117,11 +120,70 @@ final class AppArchiveTests: XCTestCase {
             h.close()
             let foot = OffscreenHost(VStack(alignment: .leading, spacing: 18) {
                 HomePlaceRow(place: .archive, title: "Archive", symbol: "archivebox", count: 1, model: model)
-                HomeVersionLine(showsUpdates: true)
+                HomeFooter()
             }.padding(22), size: CGSize(width: 250, height: 110), dark: dark)
             foot.save("home-sidebar-foot-\(dark ? "dark" : "light")")
             foot.close()
         }
+    }
+
+    /// Select mode: Select All, Restore and Erase act on the picked rows; each row shows a check instead of its buttons.
+    func testSelectModeRestoresAndErasesSeveral() throws {
+        GlassCompat.forceFallback = true
+        defer { GlassCompat.forceFallback = false }
+        let a = try file("A.mp4"), b = try file("B.mp4"), c = try file("C.mp4")
+        for u in [a, b, c] { try AppArchive.shared.archive(u, kind: .asset) }
+        let ids = AppArchive.shared.entries.map(\.id)
+        for dark in [true, false] {
+            let model = HomeModel()
+            model.selectingArchive = true
+            model.pickedArchive = [ids[0], ids[1]]
+            let h = OffscreenHost(ArchivePane(model: model), size: CGSize(width: 760, height: 360), dark: dark)
+            for id in ["archive.selectAll", "archive.restorePicked", "archive.erasePicked", "archive.done"] { XCTAssertNotNil(h.frame(id), id) }
+            XCTAssertNil(h.frame("archive.reveal"), "the select bar replaces the usual buttons")
+            for e in AppArchive.shared.entries {
+                XCTAssertNotNil(h.frame("archive.\(e.id.short).check"), e.name)
+                XCTAssertNil(h.frame("archive.\(e.id.short).restore"), "no row buttons while selecting")
+            }
+            h.save("archive-select-\(dark ? "dark" : "light")")
+            h.close()
+            model.selectingArchive = false
+            XCTAssertTrue(model.pickedArchive.isEmpty, "Done clears the picks")
+        }
+        let r = AppArchive.shared.restore([ids[0], ids[1]])
+        XCTAssertEqual(r.restored, 2); XCTAssertTrue(r.failures.isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: a.path)); XCTAssertTrue(FileManager.default.fileExists(atPath: b.path))
+        XCTAssertEqual(AppArchive.shared.erase(Set([ids[2]])), 1)
+        XCTAssertTrue(AppArchive.shared.entries.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: c.path))
+    }
+
+    /// A file on another drive (an export replaced on an external disk) stays on that drive, in a hidden folder at its
+    /// root, so it is never copied onto the Mac's disk; Restore and the period work as for the rest.
+    func testAFileOnAnotherDriveStaysOnThatDrive() throws {
+        let drive = dir.appendingPathComponent("Drive", isDirectory: true)
+        let renders = drive.appendingPathComponent("Renders", isDirectory: true)
+        try FileManager.default.createDirectory(at: renders, withIntermediateDirectories: true)
+        let real = AppArchive.volumeRoot
+        AppArchive.volumeRoot = { $0.path.hasPrefix(drive.path) ? drive : URL(fileURLWithPath: "/") }
+        defer { AppArchive.volumeRoot = real }
+        XCTAssertEqual(AppArchive.folder(for: try file("Here.mp4")), AppArchive.directory, "same drive: the Archive folder")
+        let cut = renders.appendingPathComponent("Final.mov")
+        try Data(repeating: 3, count: 500).write(to: cut)
+        XCTAssertEqual(AppArchive.shared.keepBeforeReplacing(cut).map { _ in true }, true)
+        let e = try XCTUnwrap(AppArchive.shared.entries.last)
+        XCTAssertEqual(e.path, drive.appendingPathComponent(".EditMax Archive/Final.mov").path, "kept on its own drive")
+        XCTAssertEqual(AppArchive.driveName(of: e), "Drive")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: AppArchive.directory.appendingPathComponent("Final.mov").path), "not copied to the Mac's disk")
+        try AppArchive.shared.restore(e.id)
+        XCTAssertEqual(try Data(contentsOf: cut).count, 500, "back where it was")
+        AppArchive.shared.keepBeforeReplacing(cut)
+        XCTAssertEqual(AppArchive.shared.purge(now: Date().addingTimeInterval(86_400 * 400)), 1, "erased when its time is up")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: drive.appendingPathComponent(".EditMax Archive/Final.mov").path))
+        // An unplugged drive: the item stays listed (not forgotten, not erased) until the drive is back.
+        let offline = AppArchive.Entry(kind: .export, name: "Gone.mov", original: "/Volumes/Unplugged 9c1e/Renders/Gone.mov", path: "/Volumes/Unplugged 9c1e/.EditMax Archive/Gone.mov", archivedAt: .distantPast, bytes: 1)
+        XCTAssertTrue(AppArchive.shared.isOffline(offline))
+        XCTAssertEqual(AppArchive.driveName(of: offline), "Unplugged 9c1e")
     }
 
     /// Home in a real titled window (full-size content, see-through title bar): where the window buttons end and where

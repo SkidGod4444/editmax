@@ -189,6 +189,8 @@ struct LibraryAssetsPane: View {
     @State private var targeted = false
 
     private var shown: [LibraryItem] { library.items(kind: model.assetFilter.kind, search: model.assetSearch) }
+    /// The picked items still on the page (a search or kind change can hide some; only what is shown is acted on).
+    private var picked: [LibraryItem] { shown.filter { model.pickedAssets.contains($0.id) } }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -199,7 +201,16 @@ struct LibraryAssetsPane: View {
                         .padding(.horizontal, 7).padding(.vertical, 2).background(Color.primary.opacity(0.08), in: Capsule())
                 }
                 Spacer()
-                if model.assetFilter != .fonts {   // the font browser has its own search and Add Fonts
+                if model.selectingAssets {
+                    HomeSelectionBar(id: "home.assets", picked: picked.count, total: shown.count,
+                                     setAll: { model.pickedAssets = $0 ? Set(shown.map(\.id)) : [] },
+                                     done: { model.selectingAssets = false }) {
+                        Button(role: .destructive) { model.deletingPicked = true } label: { Label("Delete…", systemImage: "trash") }
+                            .disabled(picked.isEmpty).help("Delete the selected items from Assets")
+                            .pointer().uiFrame("home.assets.deletePicked").uiTap("home.assets.deletePicked") { if !picked.isEmpty { model.deletingPicked = true } }
+                    }
+                } else if model.assetFilter != .fonts {   // the font browser has its own search and Add Fonts
+                    HomeSelectButton(id: "home.assets", selecting: $model.selectingAssets, disabled: shown.isEmpty)
                     Button { chooseFiles() } label: { Label("Add Files…", systemImage: "plus") }
                         .pointer().uiFrame("home.assets.add").uiTap("home.assets.add") { chooseFiles() }
                     NativeSearchField(placeholder: "Search Assets", text: $model.assetSearch).frame(width: 220).uiFrame("home.assets.search")
@@ -240,7 +251,9 @@ struct LibraryAssetsPane: View {
                 ScrollView {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 170, maximum: 240), spacing: 16)], spacing: 18) {
                         ForEach(shown) { item in
-                            LibraryCard(item: item, onRemove: { model.removing = item })
+                            LibraryCard(item: item, onRemove: { model.removing = item },
+                                        selecting: model.selectingAssets, selected: model.pickedAssets.contains(item.id),
+                                        onToggle: { model.pickedAssets.formSymmetricDifference([item.id]) })
                         }
                     }
                     .padding(.horizontal, 26).padding(.bottom, 26)
@@ -248,6 +261,7 @@ struct LibraryAssetsPane: View {
             }
         }
         .onAppear { library.pruneMissing() }   // files deleted in the Finder leave the list
+        .onChange(of: model.assetFilter) { _, f in if f == .fonts { model.selectingAssets = false } }   // fonts have their own page
         .overlay {
             if targeted {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -274,15 +288,19 @@ struct LibraryAssetsPane: View {
         .uiFrame("home.assets")
         .confirmationDialog("Delete “\(model.removing?.name ?? "")” from Assets?", isPresented: Binding(get: { model.removing != nil }, set: { if !$0 { model.removing = nil } }), titleVisibility: .visible) {
             Button("Delete", role: .destructive) {
-                if let it = model.removing {
-                    // An installed font leaves the font library too, so it is out of the Font picker at once.
-                    if it.kind == .font, let f = FontLibrary.shared.installedFamily(ofFile: it.path) { FontLibrary.shared.remove(family: f.family, source: f.source) }
-                    else { library.remove([it.id]) }
-                }
+                if let it = model.removing { LibraryActions.deleteFromAssets([it]) }
                 model.removing = nil
             }
             Button("Cancel", role: .cancel) { model.removing = nil }
         } message: { Text(model.removing.map(removeNote) ?? "") }
+        .confirmationDialog("Delete \(picked.count) Item\(picked.count == 1 ? "" : "s") from Assets?", isPresented: $model.deletingPicked, titleVisibility: .visible) {
+            Button("Delete \(picked.count) Item\(picked.count == 1 ? "" : "s")", role: .destructive) {
+                let n = LibraryActions.deleteFromAssets(picked)
+                model.selectingAssets = false
+                show("Deleted \(n) item\(n == 1 ? "" : "s") from Assets")
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text(LibraryActions.deleteNote(picked)) }
     }
 
     private func removeNote(_ item: LibraryItem) -> String {
@@ -318,6 +336,10 @@ struct LibraryAssetsPane: View {
 struct LibraryCard: View {
     let item: LibraryItem
     let onRemove: () -> Void
+    /// Home ▸ Assets' select mode: a click picks the card (a check at its corner) instead of the hover buttons.
+    var selecting = false
+    var selected = false
+    var onToggle: () -> Void = {}
     @State private var hover = false
     @ObservedObject private var thumbs = LibraryThumbnails.shared
     private var id: String { "home.asset.\(item.name)" }
@@ -332,8 +354,11 @@ struct LibraryCard: View {
                             .background(.black.opacity(0.6), in: Capsule()).foregroundStyle(.white).padding(7)
                     }
                 }
+                .overlay(alignment: .topLeading) {
+                    if selecting { HomeSelectCheck(selected: selected, onImage: true).padding(8).uiFrame("\(id).check") }
+                }
                 .overlay(alignment: .topTrailing) {
-                    if hover {
+                    if hover && !selecting {
                         HStack(spacing: 4) {
                             Button { reveal() } label: { Image(systemName: "folder").padding(6).background(.black.opacity(0.6), in: Circle()).foregroundStyle(.white) }
                                 .buttonStyle(.plain).focusable(false).help("Reveal in Finder").pointer().disabled(!item.exists).uiFrame("\(id).reveal")
@@ -343,7 +368,8 @@ struct LibraryCard: View {
                         .padding(6)
                     }
                 }
-                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(hover ? Color.accentColor.opacity(0.9) : Color.clear, lineWidth: 1.5))
+                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(selected ? Color.accentColor : hover ? Color.accentColor.opacity(0.9) : Color.clear, lineWidth: selected ? 2.5 : 1.5))
                 .shadow(color: .black.opacity(hover ? 0.3 : 0.15), radius: hover ? 10 : 5, y: hover ? 6 : 2)
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.name).font(.system(size: 13, weight: .semibold)).lineLimit(1).truncationMode(.middle)
@@ -354,17 +380,21 @@ struct LibraryCard: View {
             }
         }
         .contentShape(Rectangle())
+        .onTapGesture { if selecting { onToggle() } }
         .onHover { hover = $0 }
         .animation(.snappy(duration: 0.18), value: hover)
+        .animation(.snappy(duration: 0.15), value: selected)
         .modifier(LibraryDragSource(item: item))
         .pointer()
+        .accessibilityAddTraits(selected ? .isSelected : [])
         .contextMenu {
             Button("Reveal in Finder", systemImage: "folder") { reveal() }.disabled(!item.exists)
             Divider()
             Button("Delete from Assets…", systemImage: "trash", role: .destructive) { onRemove() }
         }
         .uiFrame(id)
-        .help(item.exists ? "Drag into a project or to the Finder" : "The file is not at \(item.path)")
+        .uiTap(id) { if selecting { onToggle() } }
+        .help(selecting ? (selected ? "Click to deselect" : "Click to select") : item.exists ? "Drag into a project or to the Finder" : "The file is not at \(item.path)")
     }
 
     private func reveal() { if item.exists { NSWorkspace.shared.activateFileViewerSelecting([item.url]) } }
@@ -588,6 +618,37 @@ enum LibraryActions {
     }
 
     /// What Delete does to this item, for the confirmation. `document` is the open project, if any (nil from Home).
+    /// Deletes items from Assets with no project open (Home ▸ Assets): an installed font is uninstalled (its family
+    /// once, however many of its files are picked), so it leaves the Font picker too; the rest as `AssetLibrary.remove`
+    /// does (EditMax's copies to the Archive). Returns how many items were picked.
+    @discardableResult
+    static func deleteFromAssets(_ items: [LibraryItem]) -> Int {
+        var families = Set<String>(), ids = Set<UUID>()
+        for it in items {
+            if it.kind == .font, let f = FontLibrary.shared.installedFamily(ofFile: it.path) {
+                if families.insert("\(f.source)|\(f.family)").inserted { FontLibrary.shared.remove(family: f.family, source: f.source) }
+            } else { ids.insert(it.id) }
+        }
+        if !ids.isEmpty { AssetLibrary.shared.remove(ids) }
+        return items.count
+    }
+
+    /// What deleting several items does, for the confirmation in Home ▸ Assets' select mode.
+    static func deleteNote(_ items: [LibraryItem]) -> String {
+        let fonts = items.filter { $0.kind == .font && FontLibrary.shared.installedFamily(ofFile: $0.path) != nil }
+        let copies = items.filter { AssetLibrary.shared.isCopy($0) && !fonts.contains($0) }
+        let inPlace = items.count - copies.count - fonts.count
+        let used = copies.filter { !$0.usedIn.isEmpty }.count
+        var lines: [String] = []
+        if !copies.isEmpty {
+            lines.append((copies.count == 1 ? "1 is EditMax's own copy and goes" : "\(copies.count) are EditMax's own copies and go") + " to the Archive: restore from Home ▸ Archive within \(AppArchive.shared.periodText).")
+        }
+        if used > 0 { lines.append("Projects that use \(used == 1 ? "that copy" : "those copies") will show \(used == 1 ? "it" : "them") as missing.") }
+        if !fonts.isEmpty { lines.append("Fonts are uninstalled from EditMax (their files go to the Archive); titles that use them switch to their preset font.") }
+        if inPlace > 0 { lines.append(inPlace == 1 ? "1 file stays where it is on your Mac." : "\(inPlace) files stay where they are on your Mac.") }
+        return lines.joined(separator: " ")
+    }
+
     static func deleteNote(_ item: LibraryItem, from document: EditMaxDocument?) -> String {
         var lines: [String] = []
         if let document, asset(item, in: document) != nil {

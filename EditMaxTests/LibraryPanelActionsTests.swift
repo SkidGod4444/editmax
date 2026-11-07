@@ -113,6 +113,32 @@ final class LibraryPanelActionsTests: LibraryTestCase {
         }
     }
 
+    /// Home ▸ Assets' select mode: Select All and Delete act on the picked cards, each card showing a check.
+    func testHomeAssetsSelectModeDeletesSeveral() async throws {
+        GlassCompat.forceFallback = true
+        defer { GlassCompat.forceFallback = false }
+        let names = ["One.mp4", "Two.mp4", "Three.mp4"]
+        let urls = try names.map { try LibraryFixtures.video(dir, $0) }
+        _ = await AssetLibrary.shared.add(urls: urls, source: .drawer, copy: false)
+        let items = try names.map { n in try XCTUnwrap(AssetLibrary.shared.all.first { $0.name == n }) }
+        for dark in [true, false] {
+            let model = HomeModel(); model.place = .assets
+            model.selectingAssets = true
+            model.pickedAssets = [items[0].id, items[1].id]
+            let h = OffscreenHost(LibraryAssetsPane(model: model), size: CGSize(width: 760, height: 420), dark: dark)
+            for id in ["home.assets.selectAll", "home.assets.deletePicked", "home.assets.done"] { XCTAssertNotNil(h.frame(id), id) }
+            XCTAssertNil(h.frame("home.assets.add"), "the select bar replaces the usual buttons")
+            for n in names { XCTAssertNotNil(h.frame("home.asset.\(n).check"), n) }
+            h.save("home-assets-select-\(dark ? "dark" : "light")")
+            h.close()
+        }
+        let picked = [items[0], items[1]]
+        XCTAssertTrue(LibraryActions.deleteNote(picked).contains("2 files stay where they are on your Mac"), LibraryActions.deleteNote(picked))
+        XCTAssertEqual(LibraryActions.deleteFromAssets(picked), 2)
+        XCTAssertEqual(AssetLibrary.shared.all.map(\.name).filter(names.contains), ["Three.mp4"])
+        XCTAssertTrue(urls.allSatisfy { FileManager.default.fileExists(atPath: $0.path) }, "files referenced in place stay")
+    }
+
     func testANotchDropShowsTheLibrary() async throws {
         let (doc, item) = try await setUpItem(clips: 0)
         let h = OffscreenHost(AssetsSidebar(document: doc).environmentObject(EditorState()), size: CGSize(width: 280, height: 220), dark: true)

@@ -229,7 +229,7 @@ struct HomeView: View {
 
             Spacer()
             place(.archive, "Archive", "archivebox", count: archive.entries.count)
-            HomeVersionLine()
+            HomeFooter()
         }
         .padding(.horizontal, 22).padding(.bottom, 18)
         .frame(maxHeight: .infinity, alignment: .top)
@@ -307,29 +307,101 @@ final class HomeModel: ObservableObject {
     @Published var assetSearch = ""
     @Published var removing: LibraryItem?
     @Published var assetMessage: String?
+    /// Select mode: cards pick instead of drag; Delete acts on the picked ones. Leaving it clears the picks.
+    @Published var selectingAssets = false { didSet { if !selectingAssets { pickedAssets = [] } } }
+    @Published var pickedAssets: Set<UUID> = []
+    @Published var deletingPicked = false
     // Archive (ArchiveView.swift)
     @Published var archiveFilter: ArchivePane.Filter = .all
+    @Published var selectingArchive = false { didSet { if !selectingArchive { pickedArchive = [] } } }
+    @Published var pickedArchive: Set<UUID> = []
 }
 
-/// The sidebar's last line: the version, and one action, Check for Updates (only where updates are on).
-struct HomeVersionLine: View {
-    @ObservedObject private var updates = AppUpdater.shared
-    /// Release builds; a test turns it on to see the link.
-    var showsUpdates = AppUpdater.isEnabled
+/// The sidebar's last line: the maker's byline, a link to his page, and the version. (Check for Updates is in the
+/// EditMax menu and the menu bar menu.)
+struct HomeFooter: View {
+    static let makerURL = URL(string: "https://ref.saidev.codes/x")!
+    @State private var hover = false
     private var version: String { Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "" }
 
     var body: some View {
         HStack(spacing: 6) {
-            Text(verbatim: "EditMax \(version)").foregroundStyle(.tertiary).help("EditMax by Saidev Dhal")
-            Spacer(minLength: 4)
-            if showsUpdates {
-                Button("Check for Updates") { updates.checkForUpdates() }
-                    .buttonStyle(.link)
-                    .pointer().uiFrame("home.updates").uiTap("home.updates") { if updates.canCheck { updates.checkForUpdates() } }
+            Button { NSWorkspace.shared.open(Self.makerURL) } label: {
+                HStack(spacing: 3) {
+                    Text("EditMax By Saidev Dhal")
+                    Image(systemName: "arrow.up.right").font(.system(size: 8, weight: .bold))
+                }
+                .foregroundStyle(hover ? Color.accentColor : Color.secondary)
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain).focusable(false)
+            .onHover { hover = $0 }
+            .help(Self.makerURL.absoluteString)
+            .pointer().uiFrame("home.byline").uiTap("home.byline") { NSWorkspace.shared.open(Self.makerURL) }
+            Spacer(minLength: 4)
+            Text(verbatim: "v\(version)").foregroundStyle(.tertiary).monospacedDigit()
         }
         .font(.caption)
         .padding(.horizontal, 8)   // the rows' inset, so it lines up with them
+        .animation(.snappy(duration: 0.15), value: hover)
+    }
+}
+
+/// Select in a Home page's header (Assets, Archive): turns on select mode, where a click picks a card or row.
+struct HomeSelectButton: View {
+    let id: String
+    @Binding var selecting: Bool
+    var disabled = false
+
+    var body: some View {
+        Button { selecting = true } label: { Label("Select", systemImage: "checkmark.circle") }
+            .disabled(disabled)
+            .help("Pick several items to act on at once")
+            .pointer().uiFrame("\(id).select").uiTap("\(id).select") { if !disabled { selecting = true } }
+    }
+}
+
+/// The header in select mode, in place of the page's usual buttons: how many are picked, Select All (Deselect All
+/// once all are), the page's actions on them, and Done (Esc too), which leaves select mode.
+struct HomeSelectionBar<Actions: View>: View {
+    let id: String
+    let picked: Int
+    let total: Int
+    let setAll: (Bool) -> Void
+    let done: () -> Void
+    @ViewBuilder var actions: () -> Actions
+
+    var body: some View {
+        let all = total > 0 && picked == total
+        HStack(spacing: 8) {
+            Text(picked == 0 ? "Click items to select them" : "\(picked) selected")
+                .font(.callout).foregroundStyle(.secondary).monospacedDigit().padding(.trailing, 4)
+            Button(all ? "Deselect All" : "Select All") { setAll(!all) }
+                .disabled(total == 0)
+                .pointer().uiFrame("\(id).selectAll").uiTap("\(id).selectAll") { setAll(!all) }
+            actions()
+            Button("Done") { done() }
+                .buttonStyle(.borderedProminent).keyboardShortcut(.cancelAction)
+                .pointer().uiFrame("\(id).done").uiTap("\(id).done") { done() }
+        }
+    }
+}
+
+/// The round check a card or row shows in select mode: filled with the accent color when picked.
+struct HomeSelectCheck: View {
+    let selected: Bool
+    /// Over a thumbnail: a dark fill and white ring, so the empty circle reads on any picture.
+    var onImage = false
+
+    var body: some View {
+        ZStack {
+            Circle().fill(selected ? Color.accentColor : onImage ? Color.black.opacity(0.35) : Color.clear)
+            Circle().strokeBorder(selected ? Color.accentColor : onImage ? Color.white.opacity(0.9) : Color.secondary.opacity(0.7), lineWidth: 1.5)
+            if selected { Image(systemName: "checkmark").font(.system(size: 10, weight: .bold)).foregroundStyle(.white) }
+        }
+        .frame(width: 20, height: 20)
+        .shadow(color: .black.opacity(onImage ? 0.3 : 0), radius: 2, y: 1)
+        .accessibilityLabel(selected ? "Selected" : "Not selected")
     }
 }
 

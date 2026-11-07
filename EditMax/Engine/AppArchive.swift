@@ -5,6 +5,8 @@ import AppKit
 /// Home ▸ Archive (also Window ▸ Archive) until they are erased for good, once they have been here longer than the period
 /// set in Settings ▸ General (30 days unless changed). That check runs at launch, about every hour in the background,
 /// and whenever the period changes. Timeline items (clips, text, markers) are not files: ⌘Z and History bring them back.
+/// A file on another drive (an export replaced on an external disk) is kept on that drive, in a hidden ".EditMax Archive"
+/// folder at its root as the Mac's Trash does, so a large render is never copied onto the Mac's own disk.
 @MainActor
 final class AppArchive: ObservableObject {
     static let shared = AppArchive()
@@ -45,6 +47,32 @@ final class AppArchive: ObservableObject {
         return ProjectLibrary.directory.appendingPathComponent("Archive", isDirectory: true)
     }
     private static var manifestURL: URL { directory.appendingPathComponent(".archive.json") }
+    /// The folder at the root of another drive that keeps that drive's archived files.
+    static let driveFolderName = ".EditMax Archive"
+    /// The drive (volume) a path is on; tests stand in a folder for a drive.
+    static var volumeRoot: (URL) -> URL? = { url in
+        var u = url
+        while !FileManager.default.fileExists(atPath: u.path), u.pathComponents.count > 1 { u.deleteLastPathComponent() }
+        return (try? u.resourceValues(forKeys: [.volumeURLKey]))?.volume?.standardizedFileURL
+    }
+
+    /// Where a file is kept: the Archive folder when it is on the same drive (a rename, instant), otherwise the hidden
+    /// folder at the root of its own drive (also a rename), never a copy across drives.
+    static func folder(for url: URL) -> URL {
+        let main = directory
+        guard let here = volumeRoot(url), let home = volumeRoot(main), here != home else { return main }
+        return here.appendingPathComponent(driveFolderName, isDirectory: true)
+    }
+
+    /// "Archive Drive" for a file kept on another drive, nil for one in the Archive folder.
+    static func driveName(of e: Entry) -> String? {
+        guard !e.path.hasPrefix(directory.path + "/") else { return nil }
+        let c = URL(fileURLWithPath: e.path).pathComponents
+        return c.count > 2 && c[1] == "Volumes" ? c[2] : URL(fileURLWithPath: e.path).deletingLastPathComponent().deletingLastPathComponent().lastPathComponent
+    }
+
+    /// The file is on a drive that is not plugged in now: kept in the list (and not erased) until it is.
+    func isOffline(_ e: Entry) -> Bool { !FileManager.default.fileExists(atPath: e.path) && AssetLibrary.onDisconnectedDrive(e.path) }
 
     private var scheduler: NSBackgroundActivityScheduler?
     private static let encoder: JSONEncoder = { let e = JSONEncoder(); e.dateEncodingStrategy = .iso8601; e.outputFormatting = .prettyPrinted; return e }()
@@ -72,11 +100,13 @@ final class AppArchive: ObservableObject {
     func archive(_ url: URL, kind: Entry.Kind = .file, name: String? = nil, item: LibraryItem? = nil, items: [LibraryItem]? = nil, now: Date = Date()) throws -> URL {
         let fm = FileManager.default
         try fm.createDirectory(at: Self.directory, withIntermediateDirectories: true)
+        let folder = Self.folder(for: url)
+        try fm.createDirectory(at: folder, withIntermediateDirectories: true)
         let base = url.deletingPathExtension().lastPathComponent, ext = url.pathExtension
-        var dest = Self.directory.appendingPathComponent(url.lastPathComponent)
+        var dest = folder.appendingPathComponent(url.lastPathComponent)
         var n = 2
         while fm.fileExists(atPath: dest.path) {
-            dest = Self.directory.appendingPathComponent("\(base) \(n)" + (ext.isEmpty ? "" : ".\(ext)")); n += 1
+            dest = folder.appendingPathComponent("\(base) \(n)" + (ext.isEmpty ? "" : ".\(ext)")); n += 1
         }
         try fm.moveItem(at: url, to: dest)
         entries.append(Entry(kind: kind, name: name ?? url.lastPathComponent, original: url.path, path: dest.path, archivedAt: now, bytes: Self.size(of: dest), item: item, items: items))
@@ -96,7 +126,7 @@ final class AppArchive: ObservableObject {
     /// How many items a period of `days` would erase at once (Settings asks before a shorter period erases anything).
     func wouldErase(days: Int, now: Date = Date()) -> Int {
         let cutoff = now.addingTimeInterval(-Double(max(1, days)) * 86_400)
-        return entries.filter { $0.archivedAt <= cutoff && FileManager.default.fileExists(atPath: $0.path) }.count
+        return entries.filter { $0.archivedAt <= cutoff && (FileManager.default.fileExists(atPath: $0.path) || isOffline($0)) }.count
     }
 
     /// Before an export writes over a file that is already there (the save panel's Replace, or an agent's path): the
@@ -116,6 +146,21 @@ final class AppArchive: ObservableObject {
     /// Erases one item for good now.
     func erase(_ id: UUID) { _ = erase { $0.id == id } }
 
+    /// Erases several items for good now (Home ▸ Archive's select mode). Returns how many.
+    @discardableResult
+    func erase(_ ids: Set<UUID>) -> Int { erase { ids.contains($0.id) } }
+
+    /// Restores several items (Home ▸ Archive's select mode), each as `restore(_:)` does. Returns how many came back,
+    /// and a line for each one that could not.
+    func restore(_ ids: [UUID]) -> (restored: Int, failures: [String]) {
+        var n = 0, failures: [String] = []
+        for id in ids {
+            let name = entries.first { $0.id == id }?.name ?? id.short
+            do { try restore(id); n += 1 } catch { failures.append("\(name): \(error.localizedDescription)") }
+        }
+        return (n, failures)
+    }
+
     /// Days until an item is erased for good (0 = at the next check).
     func daysLeft(_ e: Entry, now: Date = Date()) -> Int {
         max(0, Int((e.archivedAt.addingTimeInterval(Double(retentionDays) * 86_400).timeIntervalSince(now) / 86_400).rounded(.up)))
@@ -127,6 +172,7 @@ final class AppArchive: ObservableObject {
     func restore(_ id: UUID) throws -> URL {
         guard let e = entries.first(where: { $0.id == id }) else { throw EditError.notFound("archived item \(id.short)") }
         let fm = FileManager.default
+        if isOffline(e) { throw EditError.invalid("\(e.name) is on \(Self.driveName(of: e) ?? "a drive") that is not connected; connect it to restore") }
         guard fm.fileExists(atPath: e.path) else {
             entries.removeAll { $0.id == id }; save()
             throw EditError.invalid("\(e.name) is no longer in the Archive folder (it was removed in the Finder)")
@@ -174,6 +220,7 @@ final class AppArchive: ObservableObject {
         var erased = 0
         let before = entries.count
         entries.removeAll { e in
+            if isOffline(e) { return false }   // erased when its drive is back
             guard fm.fileExists(atPath: e.path) else { return true }
             guard due(e) else { return false }
             do { try fm.removeItem(atPath: e.path); erased += 1; return true }

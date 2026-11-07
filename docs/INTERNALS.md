@@ -183,7 +183,10 @@ listened to but the ripple still cuts them; the tool result names them.
 
 `Transcriber` runs Apple's on-device SpeechAnalyzer on macOS 26+ (the first run per language downloads its model) and
 falls back to `SFSpeechRecognizer` on macOS 15–25 (on-device when the Mac has the model, otherwise Apple's servers one
-minute at a time; the inspector says which). Words with timings are cached per asset on the project. `Captioner`
+minute at a time; the inspector says which). Words with timings are cached per asset on the project. `ensureTranscript`
+registers the job with `Transcribing` (main actor, per asset): SpeechAnalyzer reports the end of the last word heard
+over the file's length, the fallback each finished minute, and the inspector's Transcript, Captions and Cleanup footers
+show the percentage and, once a twentieth is done, the time left. `Captioner`
 groups words into lines (per-preset word and character limits, pauses, sentence ends) and adds them as text overlays
 with a shared group id. One renderer draws preview, export and `capture_frame`.
 

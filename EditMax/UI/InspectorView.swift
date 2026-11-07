@@ -1119,6 +1119,12 @@ extension ProjectInspector {
         }
     }
 
+    /// "Transcribing talk.m4a: 40%, about 2 min left" while a long file is heard, then the step after it.
+    static func transcribing(_ job: Transcribing.Job?) -> String {
+        guard let job else { return "Transcribing…" }
+        return "Transcribing \(job.name): \(job.detail())"
+    }
+
     private func addCaptions() {
         captionBusy = true; captionStatus = "Transcribing…"
         Task { @MainActor in
@@ -1145,6 +1151,7 @@ struct ProjectInspector: View {
     @State private var templateChoice = ""
     @State private var templateStatus: String?
     @ObservedObject private var proxies = ProxyStore.shared
+    @ObservedObject private var jobs = Transcribing.shared
 
     private var p: Project { document.project }
     private var x: ToolExecutor { ToolExecutor(document: document, origin: .user) }
@@ -1270,7 +1277,7 @@ struct ProjectInspector: View {
     }
 
     private var cleanupCard: some View {
-        InspectorCard("Cleanup", footer: cleanupStatus ?? cleanupHint) {
+        InspectorCard("Cleanup", footer: cleanupBusy && jobs.first != nil ? Self.transcribing(jobs.first) : cleanupStatus ?? cleanupHint) {
             HStack(spacing: 8) {
                 Button(cleanupBusy ? "Working…" : "Remove silence") { cleanup(.silence) }.controlSize(.small).pointer().disabled(cleanupBusy || p.allClips.isEmpty).uiFrame("inspector.removeSilence")
                 Button("Remove filler words") { cleanup(.fillers) }.controlSize(.small).pointer().disabled(cleanupBusy || p.allClips.isEmpty).uiFrame("inspector.removeFillers")
@@ -1281,7 +1288,7 @@ struct ProjectInspector: View {
 
     private var captionsCard: some View {
         let captionCount = p.texts.filter(\.isCaption).count
-        return InspectorCard("Captions", footer: captionStatus ?? Transcriber.privacyNote) {
+        return InspectorCard("Captions", footer: captionBusy ? Self.transcribing(jobs.first) : captionStatus ?? Transcriber.privacyNote) {
             InspectorRow("Style") {
                 Picker("Style", selection: $captionPreset) { ForEach(CaptionPresets.all, id: \.name) { Text($0.title).tag($0.name) } }.labelsHidden().pointer().uiFrame("inspector.captions.style")
             }

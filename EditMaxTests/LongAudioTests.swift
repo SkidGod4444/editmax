@@ -105,6 +105,45 @@ final class LongAudioTests: XCTestCase {
         XCTAssertEqual(r.integrated, -41.4, accuracy: 0.2, "what ffmpeg's ebur128 filter measures on the file")
     }
 
+    /// Times transcribing a long file and how much memory it takes: set TEST_RUNNER_EDITMAX_SPEECH_FILE to its path.
+    func testTimeTranscribingALongFile() async throws {
+        guard let path = ProcessInfo.processInfo.environment["EDITMAX_SPEECH_FILE"] else { throw XCTSkip("no speech file given") }
+        let url = URL(fileURLWithPath: path)
+        let seconds = try await AVURLAsset(url: url).load(.duration).seconds
+        let seen = Seen<Double>()
+        var words = 0
+        let t = Date()
+        let grew = try await Self.peakGrowthMB { words = try await Transcriber.transcribe(url: url, language: "en-US", progress: { seen.add($0) }).words.count }
+        let took = Date().timeIntervalSince(t)
+        print(String(format: "LONG-AUDIO transcribe: %.0f min of speech in %.1f s (%.0fx real time, 18 h ≈ %.0f min), %d words, peak +%.0f MB, %d progress reports",
+                     seconds / 60, took, seconds / took, 18 * 3600 / (seconds / took) / 60, words, grew, seen.values.count))
+        XCTAssertGreaterThan(words, Int(seconds / 60 * 100), "about 200 words a minute of speech")
+        XCTAssertEqual(seen.values, seen.values.sorted(), "progress only moves forward")
+        XCTAssertGreaterThan(seen.values.last ?? 0, 0.95)
+    }
+
+    func testTranscribingSaysHowFarAndAboutHowLongIsLeft() {
+        let t0 = Date(timeIntervalSince1970: 1000)
+        var j = Transcribing.Job(name: "talk.m4a", started: t0)
+        XCTAssertEqual(j.detail(now: t0.addingTimeInterval(2)), "0%")
+        j.fraction = 0.4
+        XCTAssertEqual(j.detail(now: t0.addingTimeInterval(60)), "40%, about 2 min left")   // 90 s to go
+        j.fraction = 0.9
+        XCTAssertEqual(j.detail(now: t0.addingTimeInterval(90)), "90%, about 10 s left")
+        XCTAssertEqual(ProjectInspector.transcribing(j), "Transcribing talk.m4a: " + j.detail())
+    }
+
+    func testTranscribingProgressOnlyMovesForwardAndEnds() {
+        let t = Transcribing.shared, id = UUID()
+        t.begin(id, name: "a.m4a")
+        t.report(id, 0.3); t.report(id, 0.2); t.report(id, 0.301)
+        XCTAssertEqual(t.jobs[id]?.fraction, 0.3)
+        t.report(id, 1)
+        XCTAssertEqual(t.jobs[id]?.fraction, 1)
+        t.end(id)
+        XCTAssertNil(t.jobs[id])
+    }
+
     func testReadingTheMixSaysHowFarItHasGot() async throws {
         let (_, all) = try await twelveMinutes()
         let seen = Seen<Double>()

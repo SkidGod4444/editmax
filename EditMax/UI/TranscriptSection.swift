@@ -7,6 +7,7 @@ struct TranscriptSection: View {
     let clip: Clip
     @State private var busy = false
     @State private var status: String?
+    @ObservedObject private var jobs = Transcribing.shared
     @State private var anchor: Int?                  // the first click of a span, until the second click closes it
     @State private var selection: ClosedRange<Int>?
 
@@ -47,11 +48,15 @@ struct TranscriptSection: View {
                     Spacer()
                 }.controlSize(.small)
             }
+            if busy, !hasTranscript, let job = jobs.jobs[clip.assetID] {
+                MixerJobLine(title: "Transcribing", started: job.started, detail: job.detail())
+            } else {
             InspectorFootnote(status ?? (hasTranscript ? "Click a word, then another, to select what to cut. The cut ripples every track." : Transcriber.privacyNote))
                 // On this row, not the card: the card keeps its state when the inspector moves to another clip, so a
                 // selection made on one clip must not cut words of the next.
                 .onChange(of: clip.id) { _, _ in anchor = nil; selection = nil; status = nil }
                 .onChange(of: words.count) { _, _ in anchor = nil; selection = nil }
+            }
         }
     }
 
@@ -63,7 +68,7 @@ struct TranscriptSection: View {
     }
 
     private func transcribe(_ x: ToolExecutor) {
-        busy = true; status = "Transcribing…"
+        busy = true; status = nil
         Task { @MainActor in
             defer { busy = false }
             do { _ = try await x.ensureTranscript(assetID: clip.assetID, language: nil); status = nil } catch { status = InspectorMessage.text(error, scope: .clip) }

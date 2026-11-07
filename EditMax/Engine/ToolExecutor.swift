@@ -243,7 +243,9 @@ struct ToolExecutor {
         guard asset.kind != .image else { throw EditError.invalid("'\(asset.name)' is an image; there is nothing to transcribe") }
         let wantsLanguage = language.map { $0.lowercased() != "auto" && !$0.isEmpty } ?? false
         if let t = project.transcript(for: assetID), !wantsLanguage || t.locale.lowercased().hasPrefix(language!.lowercased().replacingOccurrences(of: "-", with: "_").prefix(2)) { return t }
-        let t = try await Transcriber.transcribe(url: asset.url, language: language)
+        Transcribing.shared.begin(assetID, name: asset.name)
+        defer { Transcribing.shared.end(assetID) }
+        let t = try await Transcriber.transcribe(url: asset.url, language: language) { f in Task { @MainActor in Transcribing.shared.report(assetID, f) } }
         document.apply("Transcribe \(asset.name)", origin: .system) { p in
             var all = p.transcripts ?? [:]; all[assetID.uuidString] = t; p.transcripts = all
         }

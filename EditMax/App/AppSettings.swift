@@ -21,6 +21,7 @@ final class AppSettings: ObservableObject {
         static let chatBackend = "chatBackend", chatAgent = "chatAgent", chatProvider = "chatProvider", chatModel = "chatModel"
         static let followAgent = "followAgent"
         static let notchDrawer = "notchDrawer", watchDownloads = "watchDownloads"
+        static let archiveDays = "archiveDays"
     }
 
     /// A Bool default with a default: UserDefaults reads an unset key as false.
@@ -42,6 +43,9 @@ final class AppSettings: ObservableObject {
     /// The notch drawer (NotchDrawer.swift) and its Downloads watcher. Both off under XCTest.
     @Published var notchDrawer: Bool { didSet { d.set(notchDrawer, forKey: Key.notchDrawer); NotchDrawer.shared.applySettings() } }
     @Published var watchDownloads: Bool { didSet { d.set(watchDownloads, forKey: Key.watchDownloads); NotchDrawer.shared.applySettings() } }
+    /// How long deleted files wait in EditMax's Archive before they are erased for good (a shorter period erases at once
+    /// what is now past it).
+    @Published var archiveDays: Int { didSet { d.set(archiveDays, forKey: Key.archiveDays); if !AppDelegate.isTesting { AppArchive.shared.purge() } } }
 
     @Published var chatBackend: String { didSet { d.set(chatBackend, forKey: Key.chatBackend); broadcast() } }
     @Published var chatAgent: String { didSet { d.set(chatAgent, forKey: Key.chatAgent); broadcast() } }
@@ -58,6 +62,7 @@ final class AppSettings: ObservableObject {
         followAgent = Self.bool(Key.followAgent, default: true)
         notchDrawer = !AppDelegate.isTesting && Self.bool(Key.notchDrawer, default: true)
         watchDownloads = !AppDelegate.isTesting && Self.bool(Key.watchDownloads, default: true)
+        archiveDays = d.integer(forKey: Key.archiveDays).nonZero ?? AppArchive.defaultDays
         chatBackend = d.string(forKey: Key.chatBackend) ?? "Agent"
         chatAgent = d.string(forKey: Key.chatAgent) ?? "claude"
         chatProvider = d.string(forKey: Key.chatProvider) ?? "claude-agent"

@@ -33,6 +33,8 @@ struct SettingsView: View {
 struct GeneralSettings: View {
     @ObservedObject private var s = AppSettings.shared
     @ObservedObject private var updates = AppUpdater.shared
+    @ObservedObject private var archive = AppArchive.shared
+    @State private var confirmEmpty = false
     @AppStorage("showMenuBarIcon") private var showMenuBarIcon = true
 
     var body: some View {
@@ -81,6 +83,29 @@ struct GeneralSettings: View {
             } footer: {
                 Text("New video, audio, images and fonts in Downloads show up in the drawer. macOS asks once to let EditMax see the folder.")
             }
+            Section {
+                Picker("Keep deleted files for", selection: $s.archiveDays) {
+                    ForEach(AppArchive.periods, id: \.self) { d in Text(d == 1 ? "1 day" : "\(d) days").tag(d) }
+                }
+                .pointer().uiFrame("settings.general.archiveDays")
+                LabeledContent("Archive") {
+                    HStack(spacing: 8) {
+                        Text(archive.entries.isEmpty ? "Empty" : "\(archive.entries.count) item\(archive.entries.count == 1 ? "" : "s"), \(ByteCountFormatter.string(fromByteCount: archive.totalBytes, countStyle: .file))")
+                            .foregroundStyle(.secondary).monospacedDigit()
+                        Button("Show Archive…") { ArchiveWindow.shared.show() }.controlSize(.small).pointer().uiFrame("settings.general.archive.show")
+                        Button("Empty Now…") { confirmEmpty = true }.controlSize(.small).disabled(archive.entries.isEmpty)
+                            .pointer().uiFrame("settings.general.archive.empty")
+                    }
+                }
+            } header: {
+                Text("Deleted files")
+            } footer: {
+                Text("Files you delete in EditMax (Assets items, projects, fonts, templates) wait in the Archive for this long, so you can restore them from Window ▸ Archive; then they are erased for good. EditMax checks at launch and about every hour.")
+            }
+            .confirmationDialog("Erase everything in the Archive now?", isPresented: $confirmEmpty, titleVisibility: .visible) {
+                Button("Erase \(archive.entries.count) Item\(archive.entries.count == 1 ? "" : "s")", role: .destructive) { archive.emptyNow() }
+                Button("Cancel", role: .cancel) {}
+            } message: { Text("This can't be undone.") }
             Section {
                 Toggle("Check for updates automatically", isOn: $updates.checksAutomatically)
                     .disabled(!AppUpdater.isEnabled).pointer().uiFrame("settings.general.updates.check")

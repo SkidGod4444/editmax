@@ -246,6 +246,7 @@ struct ViewCommands: Commands {
     var body: some Commands {
         CommandGroup(after: .windowList) {
             Button("Home") { HomeWindow.shared.show() }.keyboardShortcut("p", modifiers: [.command, .shift])
+            Button("Archive") { ArchiveWindow.shared.show() }   // deleted files, with Restore
         }
         CommandGroup(after: .toolbar) {
             Button("Full Screen Preview") { NotificationCenter.default.post(name: .editmaxFullScreenPreview, object: nil) }.keyboardShortcut("f", modifiers: [.command, .shift])
@@ -305,6 +306,8 @@ struct WindowFocusObserver: NSViewRepresentable {
 }
 
 extension Notification.Name {
+    /// Files just went into Assets from the notch drawer (userInfo "paths"): the media panel shows its Library.
+    static let editmaxShowInLibrary = Notification.Name("io.openhorizon.editmax.showInLibrary")
     static let editmaxExport = Notification.Name("io.openhorizon.editmax.export")
     static let editmaxFullScreenPreview = Notification.Name("io.openhorizon.editmax.fullScreenPreview")
     static let editmaxFocusMode = Notification.Name("io.openhorizon.editmax.focusMode")

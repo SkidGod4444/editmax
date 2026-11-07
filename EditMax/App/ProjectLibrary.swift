@@ -101,8 +101,9 @@ final class ProjectLibrary: ObservableObject {
         }
     }
 
+    /// To EditMax's Archive, erased for good after the period in Settings ▸ General.
     func trash(_ entry: Entry) throws {
-        try FileManager.default.trashItem(at: entry.url, resultingItemURL: nil)
+        try AppArchive.shared.archive(entry.url, kind: .project, name: entry.name)
         AssetLibrary.shared.forgetProject(AssetLibrary.projectID(for: entry.url))   // Assets no longer says "Used in" it
         DebugLog.event("library-trash", ["name": entry.name])
         refresh()

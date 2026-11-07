@@ -13,6 +13,8 @@ final class LibraryHookTests: XCTestCase {
     override func setUp() async throws {
         dir = FileManager.default.temporaryDirectory.appendingPathComponent("libhooks-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        // The files the tests name: a project only lists media that is on disk.
+        for f in ["a.png", "b.wav"] { try Data().write(to: dir.appendingPathComponent(f)) }
         savedIndex = AssetLibrary.indexURL; savedStore = AssetLibrary.storeOverride
         AssetLibrary.indexURL = dir.appendingPathComponent("library.json")
         AssetLibrary.storeOverride = dir.appendingPathComponent("Store", isDirectory: true)

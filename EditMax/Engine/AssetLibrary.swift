@@ -85,6 +85,7 @@ final class AssetLibrary: ObservableObject {
     @discardableResult
     func add(urls: [URL], source: LibraryItem.Source, copy: Bool) async -> (items: [LibraryItem], failures: [String]) {
         var out: [LibraryItem] = [], failures: [String] = []
+        for u in urls { deleted.remove(u.standardizedFileURL.path) }   // added again on purpose: no longer deleted
         for src in urls {
             guard let kind = Self.kind(of: src) else { failures.append("\(src.lastPathComponent): not a video, audio, image or font file"); continue }
             let from = src.standardizedFileURL
@@ -132,15 +133,18 @@ final class AssetLibrary: ObservableObject {
     }
 
     /// Records that a project uses these assets (adds any the library does not have yet, referenced in place).
-    func noteUsed(_ assets: [Asset], projectID: UUID, projectName: String) {
+    /// `explicit` for an import the user just made: a file deleted from Assets earlier comes back. An open or a save
+    /// (`syncUse`) never brings back a deleted file.
+    func noteUsed(_ assets: [Asset], projectID: UUID, projectName: String, explicit: Bool = false) {
         var changed = false
         let now = Date()
-        for a in assets where a.kind != .sequence {
+        if explicit { for a in assets where deleted.remove(a.path) != nil { changed = true } }
+        for a in assets where a.kind != .sequence && !deleted.contains(a.path) {
             let kind: LibraryItem.Kind = a.kind == .video ? .video : a.kind == .audio ? .audio : .image
             if let i = all.firstIndex(where: { $0.path == a.path }) {
                 if all[i].usedIn[projectID.uuidString] != projectName { all[i].usedIn[projectID.uuidString] = projectName; changed = true }
                 if all[i].lastUsed.map({ now.timeIntervalSince($0) > 60 }) ?? true { all[i].lastUsed = now; changed = true }
-            } else {
+            } else if Self.isThere(a.path) {   // a project never lists a file that is gone
                 all.insert(LibraryItem(name: a.name, path: a.path, bookmark: a.bookmark, kind: kind,
                                        duration: a.kind == .image ? nil : a.duration, width: a.width, height: a.height,
                                        source: .project, usedIn: [projectID.uuidString: projectName], lastUsed: now), at: 0)
@@ -154,7 +158,8 @@ final class AssetLibrary: ObservableObject {
     /// into a project that has no file yet.
     func register(_ assets: [Asset]) {
         var changed = false
-        for a in assets where a.kind != .sequence && !all.contains(where: { $0.path == a.path }) {
+        for a in assets where deleted.remove(a.path) != nil { changed = true }   // only called for an import
+        for a in assets where a.kind != .sequence && !all.contains(where: { $0.path == a.path }) && Self.isThere(a.path) {
             let kind: LibraryItem.Kind = a.kind == .video ? .video : a.kind == .audio ? .audio : .image
             all.insert(LibraryItem(name: a.name, path: a.path, bookmark: a.bookmark, kind: kind, duration: a.kind == .image ? nil : a.duration,
                                    width: a.width, height: a.height, source: .project), at: 0)
@@ -191,15 +196,57 @@ final class AssetLibrary: ObservableObject {
         return all.filter { (kind == nil || $0.kind == kind) && (q.isEmpty || $0.name.lowercased().contains(q)) }
     }
 
-    /// Removes items from the library. A copy in `storeDirectory` goes to the Trash unless a project still uses it (the
-    /// project would lose its media); a referenced file is left alone.
+    /// Deletes items from Assets for good (the user's choice: "delete it anyway, projects lose that media"). EditMax's
+    /// own copy goes to EditMax's Archive even when a project still uses it (that project shows the file as missing); a
+    /// file referenced where the user keeps it stays there. Either way no project puts the item back by opening or
+    /// saving; adding or importing the file again does.
     func remove(_ ids: Set<UUID>) {
-        for item in all where ids.contains(item.id) && isCopy(item) && item.usedIn.isEmpty {
-            try? FileManager.default.trashItem(at: item.url, resultingItemURL: nil)
+        for item in all where ids.contains(item.id) {
+            if isCopy(item), FileManager.default.fileExists(atPath: item.path) {
+                do { try AppArchive.shared.archive(item.url, kind: .asset, item: item) }
+                catch { DebugLog.event("library-archive-failed", ["name": item.name, "error": error.localizedDescription]) }
+            }
+            deleted.insert(item.path)
         }
         all.removeAll { ids.contains($0.id) }
         save()
     }
+
+    /// An item put back from the Archive, at the path it went back to: listed again (with its source and the projects
+    /// that used it) and no longer counted as deleted.
+    func restore(_ item: LibraryItem, from original: String) {
+        deleted.remove(original); deleted.remove(item.path)
+        if !all.contains(where: { $0.path == item.path }) { all.insert(item, at: 0) }
+        save()
+    }
+
+    /// Takes items whose file is gone (deleted in the Finder, or deleted before) off the list. A file on a drive that is
+    /// not connected stays, shown as missing, since it comes back when the drive does. Run at launch and whenever an
+    /// Assets list appears. Returns how many went.
+    @discardableResult
+    func pruneMissing() -> Int {
+        let gone = all.filter { !$0.exists && !Self.onDisconnectedDrive($0.path) }
+        guard !gone.isEmpty else { return 0 }
+        let ids = Set(gone.map(\.id))
+        all.removeAll { ids.contains($0.id) }
+        save()
+        DebugLog.event("library-prune-missing", ["count": gone.count])
+        return gone.count
+    }
+
+    /// On disk, or on a drive that is not connected now (it comes back with the drive).
+    nonisolated static func isThere(_ path: String) -> Bool { FileManager.default.fileExists(atPath: path) || onDisconnectedDrive(path) }
+
+    /// A path on an external drive (/Volumes/<name>/…) that is not mounted now.
+    nonisolated static func onDisconnectedDrive(_ path: String) -> Bool {
+        let parts = URL(fileURLWithPath: path).standardizedFileURL.pathComponents   // ["/", "Volumes", "<name>", …]
+        guard parts.count > 3, parts[1] == "Volumes" else { return false }
+        return !FileManager.default.fileExists(atPath: "/Volumes/" + parts[2])
+    }
+
+    /// Paths deleted from Assets: an open or a save of a project that still uses one does not bring it back.
+    private(set) var deleted: Set<String> = []
+    private static var deletedURL: URL { indexURL.deletingPathExtension().appendingPathExtension("deleted.json") }
 
     /// True for a file EditMax copied into its Assets folder (as opposed to one referenced where the user keeps it).
     func isCopy(_ item: LibraryItem) -> Bool { item.path.hasPrefix(Self.storeDirectory.standardizedFileURL.path + "/") }
@@ -228,15 +275,18 @@ final class AssetLibrary: ObservableObject {
     }
 
     func load() {
+        deleted = (try? Data(contentsOf: Self.deletedURL)).flatMap { try? JSONDecoder().decode(Set<String>.self, from: $0) } ?? []
         guard let data = try? Data(contentsOf: Self.indexURL),
               let items = try? JSONDecoder.iso.decode([LibraryItem].self, from: data) else { all = []; return }
         all = items
+        pruneMissing()
     }
 
     private func save() {
         do {
             try FileManager.default.createDirectory(at: Self.indexURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             try JSONEncoder.iso.encode(all).write(to: Self.indexURL, options: .atomic)
+            try JSONEncoder().encode(deleted).write(to: Self.deletedURL, options: .atomic)
         } catch { DebugLog.event("library-save-failed", ["error": error.localizedDescription]) }
     }
 }

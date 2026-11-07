@@ -156,10 +156,10 @@ struct HomeView: View {
                 .background(BehindWindowMaterial(material: .underWindowBackground).ignoresSafeArea())
             }
         }
-        .confirmationDialog("Move “\(model.trashing?.name ?? "")” to the Trash?", isPresented: Binding(get: { model.trashing != nil }, set: { if !$0 { model.trashing = nil } }), titleVisibility: .visible) {
-            Button("Move to Trash", role: .destructive) { if let e = model.trashing { do { try library.trash(e) } catch { model.problem = error.localizedDescription } }; model.trashing = nil }
+        .confirmationDialog("Delete “\(model.trashing?.name ?? "")”?", isPresented: Binding(get: { model.trashing != nil }, set: { if !$0 { model.trashing = nil } }), titleVisibility: .visible) {
+            Button("Delete", role: .destructive) { if let e = model.trashing { do { try library.trash(e) } catch { model.problem = error.localizedDescription } }; model.trashing = nil }
             Button("Cancel", role: .cancel) { model.trashing = nil }
-        } message: { Text("The project file is moved to the Trash; its media stays where it is.") }
+        } message: { Text("The project goes to the Archive: restore it from Window ▸ Archive within \(AppArchive.shared.periodText). Its media stays where it is.") }
         .alert("EditMax", isPresented: Binding(get: { model.problem != nil }, set: { if !$0 { model.problem = nil } })) { Button("OK") { model.problem = nil } } message: { Text(model.problem ?? "") }
         .onAppear { library.refresh() }
     }
@@ -360,7 +360,7 @@ private struct ProjectCard: View {
             .overlay(alignment: .topTrailing) {
                 if hover {
                     Button { onTrash() } label: { Image(systemName: "trash").padding(6).background(.black.opacity(0.6), in: Circle()).foregroundStyle(.white) }
-                        .buttonStyle(.plain).focusable(false).help("Move to Trash").pointer().uiFrame("\(id).trash").padding(6)
+                        .buttonStyle(.plain).focusable(false).help("Delete").pointer().uiFrame("\(id).trash").padding(6)
                 }
             }
             .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(hover ? Color.accentColor.opacity(0.9) : Color.white.opacity(0.08), lineWidth: hover ? 1.5 : 1))
@@ -380,7 +380,7 @@ private struct ProjectCard: View {
             Button("Open") { onOpen() }
             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([entry.url]) }
             Divider()
-            Button("Move to Trash", role: .destructive) { onTrash() }
+            Button("Delete…", role: .destructive) { onTrash() }
         }
         .uiFrame(id).uiTap(id) { onOpen() }
         .help("Double-click to open")

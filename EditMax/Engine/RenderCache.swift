@@ -118,10 +118,10 @@ enum Templates {
         return url
     }
 
-    static func delete(_ name: String) throws {
+    @MainActor static func delete(_ name: String) throws {
         let url = directory.appendingPathComponent(name + ".emx")
         guard FileManager.default.fileExists(atPath: url.path) else { throw EditError.notFound("saved template '\(name)'") }
-        try FileManager.default.removeItem(at: url)
+        try AppArchive.shared.archive(url, kind: .template, name: name)   // restorable from the Archive
     }
 }
 

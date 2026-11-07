@@ -150,6 +150,10 @@ enum EditMaxTools {
              inputSchema: schema(["clip": str("Multicam clip id or name"), "project": projectArg], required: ["clip"])),
         Tool(name: "make_proxies", description: "Build low-resolution proxy files (960×540) for the project's video assets and switch the preview to them for smooth playback; the export always uses the originals. Returns each asset's proxy status; call again to poll progress.",
              inputSchema: schema(["project": projectArg])),
+        Tool(name: "list_archive", description: "Files deleted in EditMax that can still be restored: EditMax's copies of Assets items, projects deleted from Home, fonts, templates. Each has an id, kind, name, where it was, when it was deleted and the days left before it is erased for good (Settings ▸ General sets the period).",
+             inputSchema: schema([:]), annotations: .init(readOnlyHint: true)),
+        Tool(name: "restore_from_archive", description: "Put a deleted file back where it was (\"name 2\" beside it if the name was taken since) and back where it is used: an Assets item in Assets, a project on Home, a font in the Font picker. Then import_media or open it as usual.",
+             inputSchema: schema(["item": str("Archive id (prefix) from list_archive, or the item's name")], required: ["item"])),
         Tool(name: "list_templates", description: "Project templates: built-in formats (YouTube 16:9, Shorts 9:16, Square, 4K, Cinema, 4:5) and templates saved from projects.",
              inputSchema: schema(["project": projectArg]), annotations: .init(readOnlyHint: true)),
         Tool(name: "apply_template", description: "Apply a template (undoable). A built-in (YouTube 16:9, Shorts / Reels 9:16, Square 1:1…) only sets the frame size and fps: clips, titles and markers stay (then auto_reframe each clip for the new aspect); on an empty timeline it starts a fresh project at that size. A saved template replaces the project with its tracks, clips and titles.",
@@ -519,6 +523,16 @@ enum EditMaxTools {
             let r = await FontLibrary.shared.addFontFiles(paths.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) })
             if r.files.isEmpty { throw EditError.invalid(r.failures.joined(separator: "; ")) }
             return try payload(r)
+        case "list_archive":
+            struct Item: Codable { var id, kind, name, was, deleted: String; var days_left: Int; var bytes: Int64 }
+            let ar = AppArchive.shared
+            return try payload(ar.entries.sorted { $0.archivedAt > $1.archivedAt }.map {
+                Item(id: $0.id.short, kind: ($0.kind ?? .file).rawValue, name: $0.name, was: $0.original, deleted: ISO8601DateFormatter().string(from: $0.archivedAt), days_left: ar.daysLeft($0), bytes: $0.bytes)
+            })
+        case "restore_from_archive":
+            let e = try AppArchive.shared.entry(matching: try req("item"))
+            let url = try AppArchive.shared.restore(e.id)
+            return message("Restored \(e.name) to \(url.path)")
         default: break
         }
         guard let doc = DocumentRegistry.shared.document(for: s("project")) else {

@@ -529,8 +529,9 @@ final class FontLibrary: ObservableObject {
         return AddResult(families: Array(Set(faces.map(\.family))).sorted(), faces: faces.map(\.postScript), files: copies.map(\.path), failures: failures)
     }
 
-    /// Removes a family the user added, or a downloaded Google family: its files go to the Trash and leave the Assets
-    /// library. Texts using it draw in their preset's font (the Title card says the font is missing).
+    /// Removes a family the user added, or a downloaded Google family: its files go to EditMax's Archive (a Google
+    /// family as one folder, so it comes back in one Restore) and leave the Assets library. Texts using it draw in their
+    /// preset's font (the Title card says the font is missing).
     func remove(family: String, source: Source) {
         var files: [URL] = []
         switch source {
@@ -539,8 +540,9 @@ final class FontLibrary: ObservableObject {
         case .system: return
         }
         guard !files.isEmpty else { return }
-        for f in files { Self.unregister(f); Self.discard(f) }
-        if source == .google, let dir = files.first?.deletingLastPathComponent(), Self.fontFiles(in: dir).isEmpty { Self.discard(dir) }
+        for f in files { Self.unregister(f) }
+        if source == .google, let dir = files.first?.deletingLastPathComponent() { Self.discard(dir, family: family) }
+        else { for f in files { Self.discard(f, family: family) } }
         let paths = Set(files.map(\.standardizedFileURL.path))
         AssetLibrary.shared.remove(Set(AssetLibrary.shared.items(kind: .font).filter { paths.contains(URL(fileURLWithPath: $0.path).standardizedFileURL.path) }.map(\.id)))
         recent.removeAll { $0.caseInsensitiveCompare(family) == .orderedSame }
@@ -556,9 +558,10 @@ final class FontLibrary: ObservableObject {
         return nil
     }
 
-    /// To the Trash (the user can put a font back); tests delete their temporary copies instead.
-    private static func discard(_ url: URL) {
-        if AppDelegate.isTesting { try? FileManager.default.removeItem(at: url) } else { try? FileManager.default.trashItem(at: url, resultingItemURL: nil) }
+    /// To EditMax's Archive (erased for good after the period in Settings); tests delete their temporary copies instead.
+    private static func discard(_ url: URL, family: String) {
+        if AppDelegate.isTesting && AppArchive.directoryOverride == nil { try? FileManager.default.removeItem(at: url); return }
+        _ = try? AppArchive.shared.archive(url, kind: .font, name: family)
     }
 
     // MARK: Lists

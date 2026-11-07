@@ -76,6 +76,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // The notch drawer comes up once the splash has gone. The splash starts within 2 s of launch or not at all
         // (applicationDidBecomeActive), so by then either it is up and the drawer waits for it, or it never comes.
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { SplashScreen.shared.afterDismiss { NotchDrawer.shared.start() } }
+        // Deleted files older than the Settings period are erased now, then about every hour in the background.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { AppArchive.shared.startWatching() }
     }
     /// Launch (and Dock reopen) with nothing to restore: Home, never an untitled document and never AppKit's Open panel.
     /// AppKit asks this first (`-[NSApplication _doOpenUntitled]`); when a document-based app does not answer, it may put

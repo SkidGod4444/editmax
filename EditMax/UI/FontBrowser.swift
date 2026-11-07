@@ -73,7 +73,7 @@ struct FontBrowser: View {
             Button("Remove", role: .destructive) { if let f = removing { lib.remove(family: f.name, source: f.source); note = "Removed \(f.name). Its files are in the Trash." } }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Its files go to the Trash. Titles that use it show their style's font until it is back.")
+            Text("Its files go to the Archive: restore them from Window ▸ Archive within \(AppArchive.shared.periodText). Titles that use it show their style's font until it is back.")
         }
     }
 

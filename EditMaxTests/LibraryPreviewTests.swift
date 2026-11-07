@@ -34,7 +34,8 @@ final class LibraryPreviewTests: LibraryTestCase {
         try XCTUnwrap(rep.representation(using: .png, properties: [:])).write(to: dir.appendingPathComponent("\(name)-\(dark ? "dark" : "light").png"))
     }
 
-    /// A library like a user's: a video, two pictures, a sound, a font, one item whose file has gone, used in projects.
+    /// A library like a user's: a video, two pictures, a sound, a font, one item on a drive that is not connected, used
+    /// in projects. (A file that is simply gone leaves the list.)
     private func populate() async throws {
         let lib = AssetLibrary.shared
         let video = try LibraryFixtures.video(dir, "Beach day.mp4")
@@ -50,7 +51,7 @@ final class LibraryPreviewTests: LibraryTestCase {
         lib.noteUsed([Asset(name: "Beach day.mp4", path: video.path, kind: .video, duration: 2, width: 1920, height: 1080)], projectID: trip, projectName: "Goa trip")
         lib.noteUsed([Asset(name: "Beach day.mp4", path: video.path, kind: .video, duration: 2, width: 1920, height: 1080),
                       Asset(name: "Theme music.wav", path: tone.path, kind: .audio, duration: 2)], projectID: demo, projectName: "Launch video")
-        lib.noteUsed([Asset(name: "Old interview.mov", path: dir.appendingPathComponent("gone/Old interview.mov").path, kind: .video, duration: 95, width: 3840, height: 2160)], projectID: demo, projectName: "Launch video")
+        lib.noteUsed([Asset(name: "Old interview.mov", path: "/Volumes/Archive Drive \(UUID().uuidString.prefix(6))/Old interview.mov", kind: .video, duration: 95, width: 3840, height: 2160)], projectID: demo, projectName: "Launch video")
         // Thumbnails as the Assets grid would make them (deterministic here).
         for it in lib.all {
             switch it.name {

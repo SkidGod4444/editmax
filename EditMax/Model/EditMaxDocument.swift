@@ -53,7 +53,7 @@ final class EditMaxDocument: ReferenceFileDocument, ObservableObject {
     /// longer has. A project without a file only registers what it imports. Nested-sequence renders are not library items.
     func noteLibraryUse(_ assets: [Asset]? = nil) {
         guard let pid = libraryProjectID else { if let assets { AssetLibrary.shared.register(assets) }; return }
-        if let assets { AssetLibrary.shared.noteUsed(assets, projectID: pid, projectName: displayName) }
+        if let assets { AssetLibrary.shared.noteUsed(assets, projectID: pid, projectName: displayName, explicit: true) }   // an import
         else { AssetLibrary.shared.syncUse(project.assets, projectID: pid, projectName: displayName) }
     }
 

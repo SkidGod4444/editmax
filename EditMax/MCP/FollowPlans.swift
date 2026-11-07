@@ -116,6 +116,7 @@ enum FollowPlans {
     /// works the window), background jobs, and `set_playhead`, which moves the playhead on its own.
     static let none: Set<String> = [
         "list_projects", "inspect_timeline", "list_assets", "list_history", "list_templates", "inspect_sequence", "inspect_mix",
+        "list_archive", "restore_from_archive",
         "get_transcript", "search_transcript", "detect_silence", "measure_loudness", "frame_stats",
         "capture_frame", "capture_scopes", "capture_matte", "key_matte",
         "export_video", "export_batch", "export_chapters", "export_timeline", "save_template",

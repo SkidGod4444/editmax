@@ -315,6 +315,7 @@ final class NotchDrawer: ObservableObject {
         dragging = false
         let r = await AssetLibrary.shared.addFiles(urls, source: .drawer, copy: true)
         show(r.message)
+        Self.showInLibrary(r)
         DebugLog.event("drawer-drop", ["files": urls.count, "added": r.added.count, "failed": r.failures.count])
         scheduleCollapse(after: 2.2)
         return r
@@ -325,8 +326,17 @@ final class NotchDrawer: ObservableObject {
     func addDownload(_ url: URL) async -> LibraryAddResult {
         let r = await AssetLibrary.shared.addFiles([url], source: .download, copy: true)
         show(r.added.isEmpty && r.failures.isEmpty ? "Already in Assets" : r.message)
+        Self.showInLibrary(r)
         if mode == .peek { scheduleCollapse(after: 1.8) }
         return r
+    }
+
+    /// Open editor windows switch their media panel to Library and point at what just went in (the user asked for this:
+    /// a drop on the notch should show where it landed). Only that panel changes, never the layout or the inspector.
+    static func showInLibrary(_ r: LibraryAddResult) {
+        let paths = (r.added + r.existing).map(\.path)
+        guard !paths.isEmpty else { return }
+        NotificationCenter.default.post(name: .editmaxShowInLibrary, object: nil, userInfo: ["paths": paths])
     }
 
     /// True when the library already holds this file (as a copy of it, or the file itself).

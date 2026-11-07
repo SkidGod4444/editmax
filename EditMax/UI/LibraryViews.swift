@@ -247,6 +247,7 @@ struct LibraryAssetsPane: View {
                 }
             }
         }
+        .onAppear { library.pruneMissing() }   // files deleted in the Finder leave the list
         .overlay {
             if targeted {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -271,8 +272,8 @@ struct LibraryAssetsPane: View {
             return true
         }
         .uiFrame("home.assets")
-        .confirmationDialog("Remove “\(model.removing?.name ?? "")” from Assets?", isPresented: Binding(get: { model.removing != nil }, set: { if !$0 { model.removing = nil } }), titleVisibility: .visible) {
-            Button("Remove", role: .destructive) {
+        .confirmationDialog("Delete “\(model.removing?.name ?? "")” from Assets?", isPresented: Binding(get: { model.removing != nil }, set: { if !$0 { model.removing = nil } }), titleVisibility: .visible) {
+            Button("Delete", role: .destructive) {
                 if let it = model.removing {
                     // An installed font leaves the font library too, so it is out of the Font picker at once.
                     if it.kind == .font, let f = FontLibrary.shared.installedFamily(ofFile: it.path) { FontLibrary.shared.remove(family: f.family, source: f.source) }
@@ -286,13 +287,9 @@ struct LibraryAssetsPane: View {
 
     private func removeNote(_ item: LibraryItem) -> String {
         if item.kind == .font, let f = FontLibrary.shared.installedFamily(ofFile: item.path) {
-            return "\(f.family) is uninstalled from EditMax and its files go to the Trash. Titles that use it switch to their preset font."
+            return "\(f.family) is uninstalled from EditMax and its files go to the Archive (restore within \(AppArchive.shared.periodText) from Window ▸ Archive). Titles that use it switch to their preset font."
         }
-        if !item.usedIn.isEmpty {
-            let names = item.usedIn.values.sorted().joined(separator: ", ")
-            return "\(names) still use\(item.usedIn.count == 1 ? "s" : "") it, so the file stays on disk. It comes back here the next time \(item.usedIn.count == 1 ? "that project opens" : "one of them opens")."
-        }
-        return library.isCopy(item) ? "EditMax's copy of the file is moved to the Trash." : "The file stays where it is."
+        return LibraryActions.deleteNote(item, from: nil)
     }
 
     private func add(_ urls: [URL]) {
@@ -341,7 +338,7 @@ struct LibraryCard: View {
                             Button { reveal() } label: { Image(systemName: "folder").padding(6).background(.black.opacity(0.6), in: Circle()).foregroundStyle(.white) }
                                 .buttonStyle(.plain).focusable(false).help("Reveal in Finder").pointer().disabled(!item.exists).uiFrame("\(id).reveal")
                             Button { onRemove() } label: { Image(systemName: "trash").padding(6).background(.black.opacity(0.6), in: Circle()).foregroundStyle(.white) }
-                                .buttonStyle(.plain).focusable(false).help("Remove from Assets").pointer().uiFrame("\(id).remove")
+                                .buttonStyle(.plain).focusable(false).help("Delete from Assets").pointer().uiFrame("\(id).remove")
                         }
                         .padding(6)
                     }
@@ -351,7 +348,7 @@ struct LibraryCard: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.name).font(.system(size: 13, weight: .semibold)).lineLimit(1).truncationMode(.middle)
                     .foregroundStyle(item.exists ? Color.primary : Color.secondary)
-                Text(item.exists ? LibraryText.detail(item, size: thumbs.sizes[item.id]) : "Missing: not at \(abbreviated(item.path))")
+                Text(item.exists ? LibraryText.detail(item, size: thumbs.sizes[item.id]) : "On a drive that is not connected")
                     .font(.caption).foregroundStyle(item.exists ? Color.secondary : Color.orange).lineLimit(1).truncationMode(.middle)
                 Text(LibraryText.usedIn(item)).font(.caption).foregroundStyle(.tertiary).lineLimit(1)
             }
@@ -364,7 +361,7 @@ struct LibraryCard: View {
         .contextMenu {
             Button("Reveal in Finder", systemImage: "folder") { reveal() }.disabled(!item.exists)
             Divider()
-            Button("Remove from Assets…", systemImage: "trash", role: .destructive) { onRemove() }
+            Button("Delete from Assets…", systemImage: "trash", role: .destructive) { onRemove() }
         }
         .uiFrame(id)
         .help(item.exists ? "Drag into a project or to the Finder" : "The file is not at \(item.path)")
@@ -395,12 +392,18 @@ private func abbreviated(_ path: String) -> String { path.replacingOccurrences(o
 struct LibraryPanelList: View {
     @ObservedObject var document: EditMaxDocument
     let onError: (String) -> Void
+    /// Paths just added from the notch drawer: those rows are tinted for a moment and scrolled into view.
+    var highlight: Set<String> = []
+    /// Clears the timeline selection when a removal takes clips with it.
+    var clearSelection: () -> Void = {}
     @ObservedObject private var library = AssetLibrary.shared
     @ObservedObject private var thumbs = LibraryThumbnails.shared
     @State private var search = ""
     @State private var hovered: UUID?
     /// A line shown on a row for a moment after a double-click that adds nothing, saying why.
     @State private var notice: (item: UUID, text: String)?
+    @State private var confirmRemove: LibraryItem?
+    @State private var confirmDelete: LibraryItem?
 
     private var shown: [LibraryItem] { library.items(search: search).filter { $0.kind != .font } }
 
@@ -408,11 +411,20 @@ struct LibraryPanelList: View {
         VStack(spacing: 0) {
             NativeSearchField(placeholder: "Search Assets", text: $search).controlSize(.small)
                 .padding(.horizontal, 10).padding(.top, 8).padding(.bottom, 4).uiFrame("media.library.search")
-            ScrollView {
-                LazyVStack(spacing: 2) {
-                    ForEach(shown) { item in row(item) }
+            ScrollViewReader { reader in
+                ScrollView {
+                    LazyVStack(spacing: 2) {
+                        ForEach(shown) { item in row(item).id(item.id) }
+                    }
+                    .padding(.horizontal, 6).padding(.vertical, 6)
                 }
-                .padding(.horizontal, 6).padding(.vertical, 6)
+                .onAppear { library.pruneMissing() }   // files deleted in the Finder leave the list
+                // On appear too: a drop while the panel showed Project creates this list with the paths already set.
+                .task(id: highlight) {
+                    guard !highlight.isEmpty else { return }
+                    search = ""   // a search could hide what was just added
+                    if let first = library.all.first(where: { highlight.contains($0.path) }) { withAnimation(.snappy) { reader.scrollTo(first.id, anchor: .top) } }
+                }
             }
             .overlay {
                 if shown.isEmpty {
@@ -426,6 +438,31 @@ struct LibraryPanelList: View {
                 }
             }
         }
+        .confirmationDialog("Remove “\(confirmRemove?.name ?? "")” from this project?", isPresented: Binding(get: { confirmRemove != nil }, set: { if !$0 { confirmRemove = nil } }), titleVisibility: .visible) {
+            Button("Remove", role: .destructive) { if let it = confirmRemove { removeFromProject(it) }; confirmRemove = nil }
+            Button("Cancel", role: .cancel) { confirmRemove = nil }
+        } message: { Text(confirmRemove.map { LibraryActions.removeNote($0, from: document) } ?? "") }
+        .confirmationDialog("Delete “\(confirmDelete?.name ?? "")” from Assets?", isPresented: Binding(get: { confirmDelete != nil }, set: { if !$0 { confirmDelete = nil } }), titleVisibility: .visible) {
+            Button("Delete", role: .destructive) {
+                if let it = confirmDelete {
+                    if LibraryActions.clipCount(it, in: document) > 0 { clearSelection() }
+                    LibraryActions.deleteFromAssets(it, document: document)
+                }
+                confirmDelete = nil
+            }
+            Button("Cancel", role: .cancel) { confirmDelete = nil }
+        } message: { Text(confirmDelete.map { LibraryActions.deleteNote($0, from: document) } ?? "") }
+    }
+
+    /// No clips use it: removed at once (⌘Z brings it back). Clips use it: asked first, since they go too.
+    private func askRemove(_ item: LibraryItem) {
+        if LibraryActions.clipCount(item, in: document) == 0 { removeFromProject(item) } else { confirmRemove = item }
+    }
+
+    private func removeFromProject(_ item: LibraryItem) {
+        if LibraryActions.clipCount(item, in: document) > 0 { clearSelection() }
+        LibraryActions.removeFromProject(item, document: document)
+        show("Removed from this project", on: item)
     }
 
     private func row(_ item: LibraryItem) -> some View {
@@ -438,7 +475,7 @@ struct LibraryPanelList: View {
                 if let notice, notice.item == item.id {
                     Text(notice.text).font(.system(size: 11, weight: .medium)).foregroundStyle(item.exists ? Color.accentColor : Color.orange).lineLimit(1)
                 } else {
-                    Text(item.exists ? subtitle(item) : "Missing").font(.system(size: 11)).foregroundStyle(item.exists ? Color.secondary : Color.orange)
+                    Text(item.exists ? subtitle(item) : "Drive not connected").font(.system(size: 11)).foregroundStyle(item.exists ? Color.secondary : Color.orange)
                         .monospacedDigit().lineLimit(1).truncationMode(.tail)
                 }
             }
@@ -446,9 +483,26 @@ struct LibraryPanelList: View {
             if inProject {
                 Image(systemName: "checkmark.circle.fill").font(.system(size: 12)).foregroundStyle(Color.accentColor).help("In this project")
             }
+            // Always shown: remove from this project (dimmed when it is not in it), and delete from Assets altogether.
+            HStack(spacing: 0) {
+                Button { askRemove(item) } label: {
+                    Image(systemName: "minus.circle").font(.system(size: 13)).frame(width: 24, height: 24).contentShape(Rectangle())
+                }
+                .buttonStyle(.borderless).focusable(false).disabled(!inProject)
+                .help(inProject ? "Remove from this project" : "Not in this project").pointer()
+                .uiFrame("media.library.\(item.name).remove")
+                Button { confirmDelete = item } label: {
+                    Image(systemName: "trash").font(.system(size: 12)).frame(width: 24, height: 24).contentShape(Rectangle())
+                }
+                .buttonStyle(.borderless).focusable(false)
+                .help("Delete from Assets").pointer()
+                .uiFrame("media.library.\(item.name).delete")
+            }
+            .foregroundStyle(.secondary)
         }
-        .padding(.horizontal, 8).frame(height: 44)
-        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(hovered == item.id ? Color.primary.opacity(0.06) : Color.clear))
+        .padding(.leading, 8).padding(.trailing, 2).frame(height: 44)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(
+            highlight.contains(item.path) ? Color.accentColor.opacity(0.18) : hovered == item.id ? Color.primary.opacity(0.06) : Color.clear))
         .contentShape(Rectangle())
         .modifier(LibraryDragSource(item: item))
         .onTapGesture(count: 2) { doubleClicked(item) }
@@ -460,6 +514,9 @@ struct LibraryPanelList: View {
         .contextMenu {
             Button("Add to project", systemImage: "plus") { addToProject(item) }.disabled(!item.exists || inProject)
             Button("Reveal in Finder", systemImage: "folder") { NSWorkspace.shared.activateFileViewerSelecting([item.url]) }.disabled(!item.exists)
+            Divider()
+            Button("Remove from project", systemImage: "minus.circle") { askRemove(item) }.disabled(!inProject)
+            Button("Delete from Assets…", systemImage: "trash", role: .destructive) { confirmDelete = item }
         }
     }
 
@@ -496,5 +553,55 @@ struct LibraryPanelList: View {
             do { try await ToolExecutor(document: document, origin: .user).importMedia(paths: [item.path]) }
             catch { onError(InspectorMessage.text(error)) }
         }
+    }
+}
+
+/// What the media panel's Library rows do, as plain functions (tests call them with real files).
+@MainActor
+enum LibraryActions {
+    /// This project's asset for a library item (they match by file path).
+    static func asset(_ item: LibraryItem, in document: EditMaxDocument) -> Asset? {
+        document.project.assets.first { $0.path == item.path }
+    }
+    static func clipCount(_ item: LibraryItem, in document: EditMaxDocument) -> Int {
+        guard let a = asset(item, in: document) else { return 0 }
+        return document.project.allClips.filter { $0.assetID == a.id }.count
+    }
+
+    /// Out of this project, with any clips that use it (one undo step). It stays in Assets.
+    static func removeFromProject(_ item: LibraryItem, document: EditMaxDocument) {
+        guard let a = asset(item, in: document) else { return }
+        document.apply("Remove \(a.name)", origin: .user) { p in _ = p.removeAsset(a.id) }
+        document.noteLibraryUse()   // this project no longer counts as using it
+    }
+
+    /// Out of Assets for good. Taken out of this project first (with its clips); EditMax's copy goes to the Archive even
+    /// when another project uses it (that project shows it as missing), and no project brings it back by opening.
+    static func deleteFromAssets(_ item: LibraryItem, document: EditMaxDocument) {
+        removeFromProject(item, document: document)
+        AssetLibrary.shared.remove([item.id])
+    }
+
+    static func removeNote(_ item: LibraryItem, from document: EditMaxDocument) -> String {
+        let n = clipCount(item, in: document)
+        return "\(n) clip\(n == 1 ? "" : "s") on the timeline use\(n == 1 ? "s" : "") it and \(n == 1 ? "is" : "are") removed too. It stays in Assets. ⌘Z undoes this."
+    }
+
+    /// What Delete does to this item, for the confirmation. `document` is the open project, if any (nil from Home).
+    static func deleteNote(_ item: LibraryItem, from document: EditMaxDocument?) -> String {
+        var lines: [String] = []
+        if let document, asset(item, in: document) != nil {
+            let n = clipCount(item, in: document)
+            lines.append("It is removed from this project too" + (n > 0 ? ", with the \(n) clip\(n == 1 ? "" : "s") that use\(n == 1 ? "s" : "") it." : "."))
+        }
+        let mine = document?.libraryProjectID?.uuidString
+        let others = item.usedIn.filter { $0.key != mine }.values.sorted()
+        if AssetLibrary.shared.isCopy(item) {
+            lines.append("EditMax's copy goes to the Archive: restore it from Window ▸ Archive within \(AppArchive.shared.periodText).")
+            if !others.isEmpty { lines.append("\(others.joined(separator: ", ")) use\(others.count == 1 ? "s" : "") it too and will show it as missing.") }
+        } else {
+            lines.append("The file itself stays where it is on your Mac" + (others.isEmpty ? "." : "; \(others.joined(separator: ", ")) keep\(others.count == 1 ? "s" : "") using it."))
+        }
+        return lines.joined(separator: " ")
     }
 }

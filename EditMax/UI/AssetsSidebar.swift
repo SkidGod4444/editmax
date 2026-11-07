@@ -9,9 +9,12 @@ struct AssetsSidebar: View {
     @State private var hovered: UUID?
     @ObservedObject private var thumbnails = ThumbnailStore.shared
     @ObservedObject private var proxies = ProxyStore.shared
-    /// Project: this project's media. Library: everything in Assets, across projects (LibraryViews.swift).
-    enum Mode: String { case project = "Project", library = "Library" }
+    /// Project: this project's media. Assets: everything in Assets, across projects, the same list as Home ▸ Assets
+    /// (LibraryViews.swift). The case keeps its old name; the tab says Assets.
+    enum Mode: String { case project = "Project", library = "Assets" }
     @State private var mode: Mode
+    /// Rows to point at after a drop on the notch drawer (cleared after a few seconds).
+    @State private var justAdded: Set<String> = []
 
     init(document: EditMaxDocument, mode: Mode = .project) {
         self.document = document
@@ -48,12 +51,21 @@ struct AssetsSidebar: View {
             .padding(.leading, 10).padding(.trailing, 6).frame(height: 36)
             Divider()
             if mode == .library {
-                LibraryPanelList(document: document) { error = $0 }
+                LibraryPanelList(document: document, onError: { error = $0 }, highlight: justAdded, clearSelection: { state.selectedClipIDs = [] })
             } else {
                 projectList
             }
         }
         .background(Color(nsColor: .controlBackgroundColor))
+        .onReceive(NotificationCenter.default.publisher(for: .editmaxShowInLibrary)) { n in
+            let paths = Set(n.userInfo?["paths"] as? [String] ?? [])
+            withAnimation(.snappy) { mode = .library }
+            justAdded = paths   // the list tints these rows and scrolls to them; cleared so the tint fades
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(3))
+                if justAdded == paths { withAnimation(.easeOut(duration: 0.4)) { justAdded = [] } }
+            }
+        }
         .fileImporter(isPresented: $importing, allowedContentTypes: [.movie, .audio, .image, .mpeg4Movie, .quickTimeMovie, .mp3, .wav, .png, .jpeg], allowsMultipleSelection: true) { result in
             if case .success(let urls) = result { importURLs(urls) }
         }

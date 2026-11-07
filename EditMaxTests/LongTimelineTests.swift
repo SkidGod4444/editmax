@@ -52,13 +52,14 @@ final class LongTimelineTests: XCTestCase {
                 let (a, b) = (Self.rgb(whole.colorAt(x: x, y: y)), Self.rgb(slice.colorAt(x: x, y: y)))
                 let d = max(abs(a.0 - b.0), abs(a.1 - b.1), abs(a.2 - b.2))
                 worst = max(worst, d)
-                if d > 8.0 / 255 { differ.append("\(x),\(y):\(Int(d * 255))") }
+                if d > 16.0 / 255 { differ.append("\(x),\(y):\(Int(d * 255))") }
             }
         }
-        // The same columns and tiles; the waveform's edge antialiasing may differ by a few levels (seen: 5/255) because
-        // the slice is a shorter path. A slice off by even one column differs by far more.
+        // The same columns and tiles; the waveform's edge antialiasing may differ by a few levels because the slice is a
+        // shorter path (seen: 5/255 here; 11/255 on the top and bottom rows on GitHub's virtual Macs). A slice off by even
+        // one column differs by far more: the tile edge at x = 600 turns red into green.
         XCTAssertGreaterThan(compared, 10_000)
-        XCTAssertEqual(differ.count, 0, "pixels that differ by more than 8/255 (worst \(Int(worst * 255))): \(differ.prefix(8))")
+        XCTAssertEqual(differ.count, 0, "pixels that differ by more than 16/255 (worst \(Int(worst * 255))): \(differ.prefix(8))")
         // And outside the slice nothing is drawn (the black ground shows).
         XCTAssertEqual(slice.colorAt(x: Int(1000 * scale), y: Int(50 * scale))?.usingColorSpace(.deviceRGB)?.brightnessComponent ?? 1, 0, accuracy: 0.02)
     }

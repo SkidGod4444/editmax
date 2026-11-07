@@ -144,6 +144,25 @@ final class AppArchiveTests: XCTestCase {
         XCTAssertEqual(AppArchive.shared.entries.count, 1)
     }
 
+    /// Exporting over an earlier render keeps the earlier one in the Archive (the side agent's catch: it was erased).
+    func testExportingOverAFileKeepsTheOldOneInTheArchive() async throws {
+        let src = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "base", withExtension: "mp4"))
+        let doc = EditMaxDocument()
+        let x = ToolExecutor(document: doc, origin: .user)
+        try await x.importMedia(paths: [src.path])
+        _ = try x.insertClip(asset: "base.mp4")
+        let out = dir.appendingPathComponent("Final cut.mp4")
+        try Data("earlier render".utf8).write(to: out)
+        _ = try await x.exportVideo(to: out.path, preset: .low)
+        let kept = try XCTUnwrap(AppArchive.shared.entries.first { $0.kind == .export })
+        XCTAssertEqual(kept.original, out.path)
+        XCTAssertEqual(try String(contentsOfFile: kept.path, encoding: .utf8), "earlier render", "the earlier file, unchanged")
+        XCTAssertGreaterThan((try FileManager.default.attributesOfItem(atPath: out.path)[.size] as? Int) ?? 0, 1000, "the new export is in its place")
+        // A new name replaces nothing, so nothing is archived.
+        _ = try await x.exportVideo(to: dir.appendingPathComponent("Other.mp4").path, preset: .low)
+        XCTAssertEqual(AppArchive.shared.entries.filter { $0.kind == .export }.count, 1)
+    }
+
     func testPeriodsOnOffer() {
         XCTAssertEqual(AppArchive.periods, [1, 7, 14, 30, 60, 90])
         XCTAssertTrue(AppArchive.periods.contains(AppArchive.defaultDays))

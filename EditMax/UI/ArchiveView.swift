@@ -18,7 +18,7 @@ struct ArchivePane: View {
         func matches(_ e: AppArchive.Entry) -> Bool {
             switch self {
             case .all: true
-            case .media: [.asset, .file].contains(e.kind ?? .file)
+            case .media: [.asset, .export, .file].contains(e.kind ?? .file)
             case .projects: e.kind == .project
             case .fonts: e.kind == .font
             case .templates: e.kind == .template
@@ -65,7 +65,7 @@ struct ArchivePane: View {
                     Image(systemName: "archivebox").font(.system(size: 44)).foregroundStyle(.tertiary)
                     Text(archive.entries.isEmpty ? "Nothing in the Archive" : "No \(model.archiveFilter.rawValue.lowercased()) in the Archive").font(.headline)
                     if archive.entries.isEmpty {
-                        Text("Files you delete in EditMax (media, projects, fonts, templates) wait here\nfor \(archive.periodText), so you can restore them.")
+                        Text("Files you delete in EditMax (media, projects, fonts, templates, exports you replace)\nwait here for \(archive.periodText), so you can restore them.")
                             .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
                     }
                 }
@@ -119,7 +119,7 @@ struct ArchivePane: View {
         case .project: "Projects"
         case .font: "your fonts"
         case .template: "templates"
-        case .file: URL(fileURLWithPath: e.original).deletingLastPathComponent().lastPathComponent
+        case .export, .file: URL(fileURLWithPath: e.original).deletingLastPathComponent().lastPathComponent
         }
     }
 }

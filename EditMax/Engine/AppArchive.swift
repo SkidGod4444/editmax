@@ -10,9 +10,9 @@ final class AppArchive: ObservableObject {
     static let shared = AppArchive()
 
     struct Entry: Codable, Identifiable, Equatable {
-        enum Kind: String, Codable { case asset, project, font, template, file
-            var label: String { switch self { case .asset: "Assets"; case .project: "Project"; case .font: "Font"; case .template: "Template"; case .file: "File" } }
-            var symbol: String { switch self { case .asset: "photo.on.rectangle"; case .project: "film"; case .font: "textformat"; case .template: "doc.on.doc"; case .file: "doc" } }
+        enum Kind: String, Codable { case asset, project, font, template, export, file
+            var label: String { switch self { case .asset: "Assets"; case .project: "Project"; case .font: "Font"; case .template: "Template"; case .export: "Replaced export"; case .file: "File" } }
+            var symbol: String { switch self { case .asset: "photo.on.rectangle"; case .project: "film"; case .font: "textformat"; case .template: "doc.on.doc"; case .export: "square.and.arrow.up"; case .file: "doc" } }
         }
         var id = UUID()
         var kind: Kind? = .file
@@ -99,6 +99,16 @@ final class AppArchive: ObservableObject {
         return entries.filter { $0.archivedAt <= cutoff && FileManager.default.fileExists(atPath: $0.path) }.count
     }
 
+    /// Before an export writes over a file that is already there (the save panel's Replace, or an agent's path): the
+    /// old file goes to the Archive instead of being erased, so an earlier render can be restored. Returns its entry.
+    /// Under XCTest only when a test points the Archive at its own folder.
+    @discardableResult
+    func keepBeforeReplacing(_ url: URL) -> UUID? {
+        guard FileManager.default.fileExists(atPath: url.path), !AppDelegate.isTesting || Self.directoryOverride != nil else { return nil }
+        do { try archive(url, kind: .export); return entries.last?.id }
+        catch { DebugLog.event("archive-replaced-failed", ["name": url.lastPathComponent, "error": error.localizedDescription]); return nil }
+    }
+
     /// Erases everything now (Empty Archive).
     @discardableResult
     func emptyNow() -> Int { erase { _ in true } }
@@ -144,7 +154,7 @@ final class AppArchive: ObservableObject {
                 if was.hasPrefix(e.original) { it.path = dest.path + was.dropFirst(e.original.count) }
                 AssetLibrary.shared.restore(it, from: was)
             }
-        case .template, .file: break
+        case .template, .export, .file: break
         }
         DebugLog.event("archive-restore", ["name": e.fileName, "kind": (e.kind ?? .file).rawValue])
         return dest

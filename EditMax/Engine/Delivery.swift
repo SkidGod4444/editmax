@@ -143,6 +143,7 @@ enum BatchExport {
                 reframed = n
             }
             let started = Date()
+            await AppArchive.shared.keepBeforeReplacing(url)   // a render of that name from an earlier batch goes to the Archive
             let r = try await ExportService.export(copy, to: url, preset: preset) { p in progress?(label, p) }
             let took = (Date().timeIntervalSince(started) * 100).rounded() / 100
             DebugLog.event("batch-export", ["template": t.name, "path": url.lastPathComponent, "bytes": r.bytes, "seconds": took])

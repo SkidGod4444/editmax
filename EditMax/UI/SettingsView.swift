@@ -110,7 +110,7 @@ struct GeneralSettings: View {
             } header: {
                 Text("Deleted files")
             } footer: {
-                Text("Files you delete in EditMax (Assets items, projects, fonts, templates) wait in the Archive for this long, so you can restore them from Home ▸ Archive; then they are erased for good. EditMax checks at launch and about every hour.")
+                Text("Files you delete in EditMax (Assets items, projects, fonts, templates, and exports you replace) wait in the Archive for this long, so you can restore them from Home ▸ Archive; then they are erased for good. EditMax checks at launch and about every hour.")
             }
             .confirmationDialog(pendingTitle, isPresented: Binding(get: { pendingDays != nil }, set: { if !$0 { pendingDays = nil } }), titleVisibility: .visible) {
                 Button("Erase and Keep \(pendingDays.map(Self.daysText) ?? "")", role: .destructive) { if let d = pendingDays { s.archiveDays = d }; pendingDays = nil }

@@ -440,8 +440,12 @@ struct ToolExecutor {
             if ["mp4", "mov", "m4v"].contains(url.pathExtension.lowercased()) { url.deletePathExtension() }
             url.appendPathExtension(preset.fileExtension)
         }
+        AppArchive.shared.keepBeforeReplacing(url)   // an earlier render of that name goes to the Archive, not away
         var r = try await ExportService.export(project, to: url, preset: preset, progress: progress)
-        if chapters, !project.markers.isEmpty { r.chapters = try? Chapters.write(project, nextTo: url).path }
+        if chapters, !project.markers.isEmpty {
+            AppArchive.shared.keepBeforeReplacing(Chapters.sidecarURL(nextTo: url))
+            r.chapters = try? Chapters.write(project, nextTo: url).path
+        }
         return r
     }
 

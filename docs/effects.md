@@ -36,12 +36,12 @@ default and decodes with a default, so projects saved before these features rend
 
 ## HDR
 
-**For users.** **Project → Colour** sets the timeline to SDR (Rec.709, the default), HDR HLG or HDR PQ (Rec.2020). In an HDR project, iPhone HLG footage keeps its highlights. SDR clips, stills and titles sit at HDR reference white (203 nits), and the HEVC 10-bit and ProRes masters are written as Rec.2020 HLG or PQ (PQ also carries mastering-display and light-level metadata in HEVC). H.264 exports and frame captures of an HDR project stay SDR: the HDR footage is tone-mapped into them. SDR projects are unchanged.
+**For users.** **Project → Colour** sets the timeline to SDR (Rec.709, the default), HDR HLG or HDR PQ (Rec.2020). In an HDR project, iPhone HLG footage keeps its highlights. SDR clips, stills and titles sit at HDR reference white (203 nits), and the HEVC 10-bit and ProRes masters are written as Rec.2020 HLG or PQ (PQ also carries mastering-display and light-level metadata in HEVC). The preview, H.264 exports and frame captures of an HDR project stay SDR: the HDR footage is tone-mapped into them. (The preview was HDR once, but macOS showed a paused HDR frame differently from the same video playing, so picking HLG or PQ changed the paused picture until you pressed play.) Colour is SDR or HDR, not quality: normal footage looks the same at best in HDR. SDR projects are unchanged.
 
 **Internals.** `ColorManagement.configure` runs after `CompositionBuilder` and does nothing for SDR projects. For HDR projects:
 
-- The preview and 10-bit compositors are swapped for HDR subclasses that accept HDR source frames. Their output is HLG or PQ with Rec.2020 colour properties.
-- Every other compositor becomes `EditMaxCompositorToneMapped`, with Rec.709 colour properties set explicitly. Without them AVFoundation read its output as HDR and tone-mapped it again.
+- The 10-bit compositor is swapped for an HDR subclass that accepts HDR source frames. Its output is HLG or PQ with Rec.2020 colour properties.
+- The preview's composition is left as in an SDR project (no HDR compositor, no colour properties), so the Colour setting never changes it. An HDR-capable compositor gets SDR sources already converted toward its colour tags, which shifted normal footage. Every other compositor becomes `EditMaxCompositorToneMapped`, with Rec.709 colour properties set explicitly. Without them AVFoundation read its output as HDR and tone-mapped it again.
 - HLG and PQ source buffers are tagged with their colour space, so Core Image keeps values above 1.0. They are rendered by a second `CIContext` (extended sRGB working space, half float) into a tagged buffer.
 - SDR frames stay untagged and are treated as working-space values.
 - The tone-mapped path applies `CIToneMapHeadroom` (1000/203 to 1) in linear light.

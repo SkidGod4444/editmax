@@ -817,14 +817,43 @@ final class EffectsTests: XCTestCase {
         XCTAssertTrue(vc.customVideoCompositorClass == EditMaxCompositor.self); XCTAssertNil(vc.colorPrimaries)
         ColorManagement.configure(vc, compositor: EditMaxCompositor10.self, color: .hlg)
         XCTAssertTrue(vc.customVideoCompositorClass == EditMaxCompositorHDR.self); XCTAssertEqual(vc.colorTransferFunction, AVVideoTransferFunction_ITU_R_2100_HLG)
-        let pvc = AVMutableVideoComposition()
+        let pvc = AVMutableVideoComposition(); pvc.customVideoCompositorClass = EditMaxPreviewCompositor.self
         ColorManagement.configure(pvc, compositor: EditMaxPreviewCompositor.self, color: .pq)
-        XCTAssertTrue(pvc.customVideoCompositorClass == EditMaxPreviewCompositorHDR.self)
+        XCTAssertTrue(pvc.customVideoCompositorClass == EditMaxPreviewCompositor.self, "the preview of an HDR project is drawn as in SDR")
+        XCTAssertNil(pvc.colorTransferFunction)
         let svc = AVMutableVideoComposition()
         ColorManagement.configure(svc, compositor: EditMaxCompositor.self, color: .pq)
         XCTAssertTrue(svc.customVideoCompositorClass == EditMaxCompositorToneMapped.self); XCTAssertEqual(svc.colorPrimaries, AVVideoColorPrimaries_ITU_R_709_2, "SDR outputs of an HDR project say Rec.709")
         XCTAssertEqual(ColorManagement.masteringDisplay.count, 24); XCTAssertEqual(ColorManagement.contentLightLevel.count, 4)
         XCTAssertEqual(ProjectColor.parse("HDR10"), .pq); XCTAssertEqual(ProjectColor.parse("Rec.709"), .sdr); XCTAssertNil(ProjectColor.parse("rec2020"))
+    }
+
+    /// The user's report: picking HLG or PQ changed the paused preview frame, and playing put it back. The preview of an
+    /// HDR project is now drawn in SDR, so normal footage looks exactly as in an SDR project, paused or playing.
+    func testPickingHDRDoesNotChangeThePreviewOfNormalFootage() async throws {
+        let fixture = Bundle(for: Self.self).url(forResource: "base", withExtension: "mp4")!
+        func previewFrame(_ color: ProjectColor) async throws -> [UInt8] {
+            let doc = EditMaxDocument(), x = ToolExecutor(document: doc, origin: .agent)
+            _ = try await x.importMedia(paths: [fixture.path])
+            _ = try x.insertClip(asset: "base.mp4")
+            _ = try x.setProjectColor(color.rawValue)
+            let out = try await CompositionBuilder.build(doc.project, forPreview: true, compositor: EditMaxPreviewCompositor.self)
+            let gen = AVAssetImageGenerator(asset: out.composition)
+            gen.videoComposition = out.videoComposition
+            gen.requestedTimeToleranceBefore = .zero; gen.requestedTimeToleranceAfter = .zero
+            gen.maximumSize = CGSize(width: 160, height: 90)
+            let img = try await gen.image(at: CMTime(seconds: 1, preferredTimescale: 600)).image
+            var px = [UInt8](repeating: 0, count: 160 * 90 * 4)
+            let ctx = CGContext(data: &px, width: 160, height: 90, bitsPerComponent: 8, bytesPerRow: 160 * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+            ctx.draw(img, in: CGRect(x: 0, y: 0, width: 160, height: 90))
+            return px
+        }
+        let sdr = try await previewFrame(.sdr)
+        for c in [ProjectColor.hlg, .pq] {
+            let hdr = try await previewFrame(c)
+            let worst = zip(sdr, hdr).map { abs(Int($0) - Int($1)) }.max() ?? 255
+            XCTAssertEqual(worst, 0, "\(c.rawValue): the preview of SDR footage is the SDR project's, pixel for pixel")
+        }
     }
 
     // MARK: - Inspector sections

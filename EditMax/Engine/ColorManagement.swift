@@ -12,16 +12,20 @@ import VideoToolbox
 ///   past 1.0 allowed). SDR sources and stills stay untagged, so their values pass into it unchanged, exactly as in SDR;
 ///   HDR sources (frames whose transfer function is HLG or PQ) are tagged as such and converted, so an iPhone HLG
 ///   highlight arrives above 1.0 instead of clipped (HLG 1.0 ≈ 1.99, HLG 0.75 = SDR white = 1.0).
-/// - the preview and the masters (HEVC 10-bit, ProRes) write Rec.2020 HLG or PQ: SDR white lands at 203 nits (HLG 0.75,
-///   PQ 0.58, as BT.2408 has it) and the frames carry the colour tags (and, for PQ, mastering-display and light-level metadata).
+/// - the masters (HEVC 10-bit, ProRes) write Rec.2020 HLG or PQ: SDR white lands at 203 nits (HLG 0.75, PQ 0.58, as
+///   BT.2408 has it) and the frames carry the colour tags (and, for PQ, mastering-display and light-level metadata).
 /// - everything else that reads the composition (H.264 exports, `capture_frame`, frame stats, thumbnails) gets SDR:
 ///   HDR sources are tone-mapped into SDR range (`CIToneMapHeadroom`) and SDR sources pass unchanged.
+/// - the preview is drawn exactly as an SDR project's (`configure` leaves its composition alone). It was HDR once, but
+///   macOS shows a paused HDR frame (a still) differently from the same frames playing, so picking HLG or PQ changed
+///   the paused picture and playing put it back; and an HDR-capable compositor is handed SDR sources already converted
+///   toward its colour tags (a 709 blue came in as 30,78,203 instead of 28,68,196). Now the setting never changes it.
 enum ColorManagement {
     /// How a composition's frames leave the compositor.
     enum Output: Equatable {
         case passthrough            // SDR project: as always
         case hdr(ProjectColor)      // HDR frames in Rec.2020 HLG or PQ
-        case toneMapped             // an HDR project read for an SDR use
+        case toneMapped             // an HDR project read for an SDR use (exports, captures)
 
         var isPassthrough: Bool { self == .passthrough }
     }
@@ -41,12 +45,11 @@ enum ColorManagement {
 
     /// Sets an HDR project's composition up after the builder made it: swaps in the HDR compositor that matches the one
     /// asked for, sets the Rec.2020 colour properties where the output is HDR, and tells every instruction and source
-    /// how to treat colour. SDR projects: returns at once, nothing changed.
+    /// how to treat colour. SDR projects and the preview (drawn as in SDR, see the note at the top): returns at once.
     static func configure(_ vc: AVMutableVideoComposition, compositor: AVVideoCompositing.Type, color: ProjectColor) {
-        guard color.isHDR else { return }
+        guard color.isHDR, !(compositor is EditMaxPreviewCompositor.Type) else { return }
         let output: Output
-        if compositor is EditMaxPreviewCompositor.Type { vc.customVideoCompositorClass = EditMaxPreviewCompositorHDR.self; output = .hdr(color) }
-        else if compositor is EditMaxCompositor10.Type { vc.customVideoCompositorClass = EditMaxCompositorHDR.self; output = .hdr(color) }
+        if compositor is EditMaxCompositor10.Type { vc.customVideoCompositorClass = EditMaxCompositorHDR.self; output = .hdr(color) }
         else { vc.customVideoCompositorClass = EditMaxCompositorToneMapped.self; output = .toneMapped }
         if case .hdr = output {
             vc.colorPrimaries = AVVideoColorPrimaries_ITU_R_2020
@@ -163,14 +166,6 @@ enum ColorManagement {
 final class EditMaxCompositorHDR: EditMaxCompositor10 {
     @objc var supportsHDRSourceFrames: Bool { true }
     @objc var supportsWideColorSourceFrames: Bool { true }
-}
-
-/// The player of an HDR project: the preview's drawing (with before/after), HDR frames out at 16 bits.
-final class EditMaxPreviewCompositorHDR: EditMaxPreviewCompositor {
-    @objc var supportsHDRSourceFrames: Bool { true }
-    @objc var supportsWideColorSourceFrames: Bool { true }
-    private static let attrsHDR: [String: Any] = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_64RGBAHalf, kCVPixelBufferMetalCompatibilityKey as String: true]
-    override var requiredPixelBufferAttributesForRenderContext: [String: Any] { Self.attrsHDR }
 }
 
 /// Everything else an HDR project feeds (H.264 exports, frame captures): HDR sources tone-mapped, SDR frames out.

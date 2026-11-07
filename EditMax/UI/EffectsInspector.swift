@@ -309,7 +309,7 @@ struct ProjectColorRow: View {
             Picker("Color", selection: Binding(get: { document.project.settings.color }, set: { v in _ = try? ToolExecutor(document: document, origin: .user).setProjectColor(v.rawValue) })) {
                 ForEach(ProjectColor.allCases, id: \.self) { Text($0.title).tag($0) }
             }.labelsHidden().fixedSize().pointer().uiFrame("inspector.effects.projectColor")
-            .help("SDR Rec.709 passes every frame through as it is. HDR makes the preview and the HEVC 10-bit and ProRes masters Rec.2020 HLG or PQ; H.264 exports stay SDR.")
+            .help("SDR or HDR, not quality: picking HDR does not improve normal footage. SDR Rec.709 is what almost every screen shows. HLG or PQ make the HEVC 10-bit and ProRes exports HDR (Rec.2020), for footage shot in HDR such as iPhone video. The preview and H.264 exports stay SDR.")
         }
     }
 }

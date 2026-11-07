@@ -399,7 +399,7 @@ extension ToolExecutor {
         let previous = document.project.settings.color
         try document.apply("Colour: \(c.title)", origin: origin) { p in p.settings.color = c }
         let note = c.isHDR
-            ? "HDR \(c == .pq ? "PQ" : "HLG") in Rec.2020: the preview and the hevc10 / ProRes masters carry it (SDR sources sit at 203-nit reference white; HLG and PQ sources keep their highlights); high / medium / low H.264 exports and capture_frame stay SDR, with HDR sources tone-mapped. Grades, LUTs and the green-screen key work in 0-1, so their output above SDR white is clipped."
+            ? "HDR \(c == .pq ? "PQ" : "HLG") in Rec.2020: the hevc10 / ProRes masters carry it (SDR sources sit at 203-nit reference white; HLG and PQ sources keep their highlights); the preview, high / medium / low H.264 exports and capture_frame stay SDR, with HDR sources tone-mapped. Grades, LUTs and the green-screen key work in 0-1, so their output above SDR white is clipped."
             : "SDR Rec.709: every frame passes through unmanaged, as before."
         return ProjectColorResult(color: c.rawValue, title: c.title, previous: previous.rawValue, note: note)
     }

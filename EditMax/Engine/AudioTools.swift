@@ -120,13 +120,13 @@ extension ToolExecutor {
         return try updateAudio(f.id, "Hum removal", changed: changed, note: note) { $0.hum = final }
     }
 
-    /// 50 or 60 Hz, from the clip's unprocessed sound.
+    /// 50 or 60 Hz, from the clip's unprocessed sound. The detector looks at its first minute, so only that is read.
     func detectHum(_ id: UUID) async throws -> HumDetector.Result {
         var p = try Loudness.isolate(id, in: current)
         p.tracks[0].clips[0].audio = ClipAudio()
         p.tracks[0].clips[0].volume = 1; p.tracks[0].clips[0].animations[ClipParam.volume.rawValue] = nil
         p.tracks[0].clips[0].fadeIn = 0; p.tracks[0].clips[0].fadeOut = 0
-        let st = try await Loudness.render(p)
+        let st = try await Loudness.render(p, seconds: HumDetector.seconds)
         var mono = [Float](repeating: 0, count: st.count / 2)
         for i in 0..<mono.count { mono[i] = (st[2 * i] + st[2 * i + 1]) * 0.5 }
         guard mono.count >= 48_000 else { throw EditError.invalid("the clip is under a second long: too short to tell 50 from 60 Hz hum; give frequency 50 or 60") }

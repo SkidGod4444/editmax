@@ -96,6 +96,13 @@ that track's strip. Clip volume is one envelope per
 clip (keyframes × fades × transition crossfade × ducking) emitted as back-to-back ramps. Voice isolation renders
 Apple's on-device `AUSoundIsolation` over the asset once (cached in `Application Support/EditMax/isolated/`).
 
+Loudness (`Loudness.measure`, used by measure and normalize) renders the mix as the export does and meters each buffer
+as it is read (`Loudness.stream`); nothing is kept, so an 18-hour mix stays at a few MB instead of about 25 GB. A
+reader that stops more than 0.1 s before the end of the sound throws `ShortRead`; `measure` reads once more, then
+fails, so part of the sound is never reported as the whole. Hum detection reads only the minute it looks at
+(`HumDetector.seconds`). Speed in an optimized build: metering 77 ns a frame, so about 4 min per 18 h plus decoding;
+normalize measures 2 to 6 times. `render` still returns the whole mix as an array, for short spans and tests.
+
 Masters (`ExportService.exportMaster`, `export_video preset: hevc10 | prores422hq | prores422 | prores4444`) go
 through `AVAssetReader` + `AVAssetWriter` with `EditMaxCompositor10` (64RGBAHalf frames) at the project size, with
 Rec.709 tags. HEVC Main 10: 4:2:0, `hvc1`, about 0.25 bits per pixel per frame, AAC sound, MP4. ProRes: `apch`, `apcn`

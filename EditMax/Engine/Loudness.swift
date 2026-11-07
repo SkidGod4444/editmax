@@ -165,22 +165,52 @@ enum Loudness {
         return p
     }
 
-    /// Renders the project's sound the way the export does (48 kHz stereo float, every tap and volume ramp) and meters it.
+    /// Renders the project's sound the way the export does (48 kHz stereo float, every tap and volume ramp) and meters it
+    /// as it is read. Nothing is kept: an 18-hour mix held whole would be about 25 GB.
     static func measure(_ project: Project) async throws -> LoudnessMeter.Result {
         try await IsolatedAudio.shared.ensureAll(project)
-        let samples = try await render(project)
+        do { return try await meter(project) }
+        catch let e as ShortRead {
+            // Never measure part of the sound as the whole. Read once more; stopping short twice is an error.
+            DebugLog.event("loudness-short-read", ["got": e.got, "wanted": e.wanted])
+            return try await meter(project)
+        }
+    }
+    private static func meter(_ project: Project) async throws -> LoudnessMeter.Result {
         let m = LoudnessMeter(channels: 2, sampleRate: 48_000)
-        samples.withUnsafeBufferPointer { m.feed(interleaved: $0.baseAddress!, frames: $0.count / 2) }
+        try await stream(project) { m.feed(interleaved: $0.baseAddress!, frames: $0.count / 2) }
         return m.result
     }
 
-    /// The project's mixed sound as interleaved stereo float at 48 kHz.
-    static func render(_ project: Project) async throws -> [Float] {
+    /// The project's mixed sound as interleaved stereo float at 48 kHz: whole, or its first `seconds`. This holds all of
+    /// it in memory, so it is for short spans and tests; a whole long project goes through `stream`.
+    static func render(_ project: Project, seconds: Double? = nil) async throws -> [Float] {
+        var samples: [Float] = []
+        try await stream(project, seconds: seconds) { samples.append(contentsOf: $0) }
+        return samples
+    }
+
+    /// The reader finished before the end of the sound it was asked for.
+    struct ShortRead: LocalizedError {
+        let got: Double, wanted: Double
+        var errorDescription: String? { String(format: "reading the mixed sound stopped at %.1f s of %.1f s", got, wanted) }
+    }
+
+    /// Reads the project's mixed sound (interleaved stereo float, 48 kHz) a buffer at a time, whole or its first
+    /// `seconds`, and hands each buffer to `body`. Throws `ShortRead` if the sound ends early.
+    static func stream(_ project: Project, seconds: Double? = nil, _ body: (UnsafeBufferPointer<Float>) throws -> Void) async throws {
         let out = try await CompositionBuilder.build(project)
         let tracks = try await out.composition.loadTracks(withMediaType: .audio)
         guard !tracks.isEmpty else { throw EditError.invalid("nothing to measure: no clip with sound on an unmuted track") }
+        var range = CMTimeRange(start: .zero, duration: out.duration)
+        if let seconds, seconds < out.duration.seconds { range.duration = CMTime(seconds: seconds, preferredTimescale: 48_000) }
+        // The sound runs to the end of its last track (empty edits read as silence); a reader that stops before that
+        // has stopped short.
+        var soundEnd = 0.0
+        for t in tracks { soundEnd = max(soundEnd, try await t.load(.timeRange).end.seconds) }
+        let wanted = min(range.end.seconds, soundEnd)
         let reader = try AVAssetReader(asset: out.composition)
-        reader.timeRange = CMTimeRange(start: .zero, duration: out.duration)
+        reader.timeRange = range
         let a = AVAssetReaderAudioMixOutput(audioTracks: tracks, audioSettings: [AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: 48_000, AVNumberOfChannelsKey: 2,
                                                                                  AVLinearPCMBitDepthKey: 32, AVLinearPCMIsFloatKey: true, AVLinearPCMIsNonInterleaved: false, AVLinearPCMIsBigEndianKey: false])
         a.audioMix = out.audioMix
@@ -188,18 +218,33 @@ enum Loudness {
         guard reader.canAdd(a) else { throw EditError.invalid("cannot read the mixed sound") }
         reader.add(a)
         // The composition does not keep its source assets alive; `out.sources` does, for as long as `out` lives.
-        return try withExtendedLifetime(out) {
+        try withExtendedLifetime(out) {
             guard reader.startReading() else { throw reader.error ?? EditError.invalid("cannot read the mixed sound") }
-            var samples: [Float] = []
-            samples.reserveCapacity(Int(out.duration.seconds * 48_000 * 2) + 4096)
-            while let sb = a.copyNextSampleBuffer() {
-                guard let bb = CMSampleBufferGetDataBuffer(sb) else { continue }
-                var len = 0; var ptr: UnsafeMutablePointer<CChar>?
-                guard CMBlockBufferGetDataPointer(bb, atOffset: 0, lengthAtOffsetOut: nil, totalLengthOut: &len, dataPointerOut: &ptr) == noErr, let ptr else { continue }
-                ptr.withMemoryRebound(to: Float.self, capacity: len / 4) { samples.append(contentsOf: UnsafeBufferPointer(start: $0, count: len / 4)) }
+            var frames = 0
+            func next() throws -> Bool {
+                // One pool per buffer: an 18-hour read is hundreds of thousands of them.
+                try autoreleasepool {
+                    guard let sb = a.copyNextSampleBuffer() else { return false }
+                    guard var bb = CMSampleBufferGetDataBuffer(sb) else { return true }
+                    var total = 0, here = 0
+                    if CMBlockBufferGetDataPointer(bb, atOffset: 0, lengthAtOffsetOut: &here, totalLengthOut: &total, dataPointerOut: nil) == noErr, here < total {
+                        var flat: CMBlockBuffer?   // in pieces: read it as one run
+                        guard CMBlockBufferCreateContiguous(allocator: nil, sourceBuffer: bb, blockAllocator: nil, customBlockSource: nil,
+                                                            offsetToData: 0, dataLength: 0, flags: 0, blockBufferOut: &flat) == noErr, let flat else { return true }
+                        bb = flat
+                    }
+                    var len = 0; var ptr: UnsafeMutablePointer<CChar>?
+                    guard CMBlockBufferGetDataPointer(bb, atOffset: 0, lengthAtOffsetOut: nil, totalLengthOut: &len, dataPointerOut: &ptr) == noErr, let ptr,
+                          len >= 8 else { return true }
+                    try ptr.withMemoryRebound(to: Float.self, capacity: len / 4) { try body(UnsafeBufferPointer(start: $0, count: len / 8 * 2)) }
+                    frames += len / 8
+                    return true
+                }
             }
+            while try next() {}
             if reader.status == .failed { throw reader.error ?? EditError.invalid("reading the mixed sound failed") }
-            return samples
+            let got = Double(frames) / 48_000
+            if got < wanted - 0.1 { throw ShortRead(got: got, wanted: wanted) }
         }
     }
 
@@ -256,9 +301,12 @@ enum HumDetector {
 
     /// Which mains frequency hums in the sound: Goertzel power at 50, 100, 150, 200 Hz against 60, 120, 180, 240 Hz,
     /// each compared with the spectrum 3–6 Hz to either side, averaged over 1 s windows (up to 60 s of sound).
+    /// The most sound `detect` looks at.
+    static let seconds = 60.0
+
     static func detect(_ mono: [Float], sampleRate fs: Double) -> Result {
         let n = Int(fs)   // 1 Hz resolution
-        let windows = min(60, mono.count / max(1, n))
+        let windows = min(Int(seconds), mono.count / max(1, n))
         func power(_ f: Double, _ start: Int) -> Double {
             let w = 2 * cos(2 * .pi * f / fs)
             var s1 = 0.0, s2 = 0.0

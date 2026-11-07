@@ -58,7 +58,7 @@ panel you are looking at, and it never brings EditMax to the front.
 
 ### Settings
 
-In **Settings ▸ General**:
+In **Settings ▸ Files**:
 
 - **Notch drawer** (on by default) shows or hides the drawer.
 - **Watch Downloads** (on by default) lists new downloads in the drawer. The first time, macOS asks whether EditMax may

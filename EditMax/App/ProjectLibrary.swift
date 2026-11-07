@@ -33,7 +33,7 @@ final class ProjectLibrary: ObservableObject {
     private var thumbnailsInFlight: Set<String> = []
 
     static var directory: URL {
-        // Settings ▸ General can point the library elsewhere; the default is Movies ▸ EditMax Projects.
+        // Settings ▸ Files can point the library elsewhere; the default is Movies ▸ EditMax Projects.
         let chosen = UserDefaults.standard.string(forKey: AppSettings.Key.library) ?? ""
         let dir = chosen.isEmpty ? FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask)[0].appendingPathComponent("EditMax Projects")
                                  : URL(fileURLWithPath: chosen)
@@ -101,7 +101,7 @@ final class ProjectLibrary: ObservableObject {
         }
     }
 
-    /// To EditMax's Archive, erased for good after the period in Settings ▸ General.
+    /// To EditMax's Archive, erased for good after the period in Settings ▸ Files.
     func trash(_ entry: Entry) throws {
         try AppArchive.shared.archive(entry.url, kind: .project, name: entry.name)
         AssetLibrary.shared.forgetProject(AssetLibrary.projectID(for: entry.url))   // Assets no longer says "Used in" it

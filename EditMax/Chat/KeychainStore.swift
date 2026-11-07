@@ -21,8 +21,18 @@ enum KeychainStore {
         return s.isEmpty ? nil : s
     }
 
+    /// The slot a chat provider reads its key from (the Claude Agent SDK uses the Anthropic key); nil for one EditMax
+    /// does not know.
+    static func slot(forProvider provider: String) -> String? {
+        provider == "claude-agent" ? "anthropic" : slots.contains(provider) ? provider : nil
+    }
+
+    /// Tests (previews of Settings) say where each key comes from, so nothing reads the login keychain.
+    static var sourceOverride: [String: String]?
+
     /// "environment" when the variable is set, "keychain" when saved, "" when there is none.
     static func source(_ slot: String) -> String {
+        if let s = sourceOverride?[slot] { return s }
         if let env = envNames[slot].flatMap({ ProcessInfo.processInfo.environment[$0] }), !env.isEmpty { return "environment" }
         return key(slot) == nil ? "" : "keychain"
     }

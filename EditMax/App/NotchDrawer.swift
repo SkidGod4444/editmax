@@ -131,7 +131,7 @@ final class NotchDrawer: ObservableObject {
     /// The download the drawer is peeking at.
     @Published private(set) var peeking: URL?
     @Published private(set) var geometry: NotchGeometry?
-    /// Downloads is being watched (Settings ▸ General ▸ Watch Downloads, and macOS let EditMax read it).
+    /// Downloads is being watched (Settings ▸ Files ▸ Watch Downloads, and macOS let EditMax read it).
     @Published private(set) var watching = false
     /// Downloads cannot be read (the user said no to macOS's question).
     @Published private(set) var downloadsDenied = false
@@ -165,7 +165,7 @@ final class NotchDrawer: ObservableObject {
         applySettings()
     }
 
-    /// Settings ▸ General changed (or start): show or hide the panel, start or stop watching Downloads.
+    /// Settings ▸ Files changed (or start): show or hide the panel, start or stop watching Downloads.
     func applySettings() {
         guard started else { return }
         let s = AppSettings.shared
@@ -501,7 +501,7 @@ struct NotchDrawerView: View {
         if drawer.downloadsDenied {
             note("EditMax cannot see Downloads. Allow it in System Settings ▸ Privacy & Security ▸ Files and Folders.")
         } else if !drawer.watching {
-            note("Watching Downloads is off in Settings ▸ General.")
+            note("Watching Downloads is off in Settings ▸ Files.")
         } else if drawer.downloads.isEmpty {
             note("Nothing new yet. Media you download shows up here.")
         } else {

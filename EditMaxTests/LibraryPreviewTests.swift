@@ -146,7 +146,41 @@ final class LibraryPreviewTests: LibraryTestCase {
         try save(scene(), "drawer-pill-open", size: pill.frame(around: pill.openBody).size, dark: true)
     }
 
-    func testPreviewGeneralSettings() throws {
-        for dark in [true, false] { try save(GeneralSettings(), "settings-general", size: CGSize(width: 560, height: 1000), dark: dark) }
+    /// Settings' four tabs at the window's own width (each scrolls inside 580 pt; shown full height here).
+    func testPreviewSettingsTabs() throws {
+        let size = CGSize(width: 560, height: 820)
+        for dark in [true, false] {
+            try save(GeneralSettings(), "settings-general", size: size, dark: dark)
+            try save(FilesSettings(), "settings-files", size: size, dark: dark)
+            try save(AssistantSettings(), "settings-assistant", size: size, dark: dark)
+            try save(AdvancedSettings(), "settings-advanced", size: size, dark: dark)
+            // The API-key branch's keys: one saved, one from the environment, two empty (no keychain read).
+            KeychainStore.sourceOverride = ["anthropic": "keychain", "openai": "environment", "google": "", "xai": ""]
+            defer { KeychainStore.sourceOverride = nil }
+            try save(Form { APIKeysSection(inUse: "anthropic") }.formStyle(.grouped), "settings-assistant-keys", size: CGSize(width: 560, height: 420), dark: dark)
+        }
+    }
+
+    /// Each tab has one job: nothing that belongs elsewhere (the old cross options) is on it.
+    func testSettingsOptionsLiveOnTheirTab() throws {
+        let tabs: [(String, AnyView, [String], [String])] = [
+            ("general", AnyView(GeneralSettings()), ["settings.general.appearance", "settings.general.menuBarIcon", "settings.general.updates.checkNow"],
+             ["settings.files.archiveDays", "settings.runtime.auto", "settings.assistant.followAgent"]),
+            ("files", AnyView(FilesSettings()), ["settings.files.library.change", "settings.files.notchDrawer", "settings.files.archiveDays"],
+             ["settings.general.updates.check"]),
+            ("assistant", AnyView(AssistantSettings()), ["settings.assistant.backend", "settings.assistant.followAgent"], ["settings.advanced.port"]),
+            ("advanced", AnyView(AdvancedSettings()), ["settings.advanced.port", "settings.runtime.check", "settings.runtime.auto", "settings.advanced.logs"],
+             ["settings.assistant.followAgent", "settings.general.updates.check"]),
+        ]
+        for (name, view, has, hasNot) in tabs {
+            let h = OffscreenHost(view, size: CGSize(width: 560, height: 1400), dark: true)
+            for id in has { XCTAssertNotNil(h.frame(id), "\(name) has \(id)") }
+            for id in hasNot { XCTAssertNil(h.frame(id), "\(name) does not have \(id)") }
+            h.close()
+        }
+        XCTAssertEqual(SettingsView.Pane.allCases.map(\.rawValue), ["general", "files", "assistant", "advanced"])
+        XCTAssertEqual(KeychainStore.slot(forProvider: "claude-agent"), "anthropic")
+        XCTAssertEqual(KeychainStore.slot(forProvider: "openai"), "openai")
+        XCTAssertNil(KeychainStore.slot(forProvider: "someone-new"))
     }
 }

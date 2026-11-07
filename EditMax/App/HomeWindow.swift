@@ -221,7 +221,7 @@ struct HomeView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Button { openPanel() } label: { HomeSidebarRowLabel(title: "Open…", symbol: "folder") }
                     .buttonStyle(.plain).focusable(false).pointer().uiFrame("home.open").uiTap("home.open") { openPanel() }
-                Button { NSWorkspace.shared.activateFileViewerSelecting([ProjectLibrary.directory]) } label: { HomeSidebarRowLabel(title: "Show library in Finder", symbol: "arrow.up.forward.square") }
+                Button { NSWorkspace.shared.activateFileViewerSelecting([ProjectLibrary.directory]) } label: { HomeSidebarRowLabel(title: "Show projects in Finder", symbol: "arrow.up.forward.square") }
                     .buttonStyle(.plain).focusable(false).pointer().uiFrame("home.finder")
                 SettingsLink { HomeSidebarRowLabel(title: "Settings…", symbol: "gearshape") }
                     .buttonStyle(.plain).focusable(false).pointer().uiFrame("home.settings")

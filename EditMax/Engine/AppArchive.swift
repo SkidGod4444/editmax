@@ -3,7 +3,7 @@ import AppKit
 /// EditMax's own archive, for files that would otherwise be lost: EditMax's copy of an Assets item, a project deleted
 /// from Home, an installed font, a saved template. They are moved here instead of the Mac's Trash, can be put back from
 /// Home ▸ Archive (also Window ▸ Archive) until they are erased for good, once they have been here longer than the period
-/// set in Settings ▸ General (30 days unless changed). That check runs at launch, about every hour in the background,
+/// set in Settings ▸ Files (30 days unless changed). That check runs at launch, about every hour in the background,
 /// and whenever the period changes. Timeline items (clips, text, markers) are not files: ⌘Z and History bring them back.
 /// A file on another drive (an export replaced on an external disk) is kept on that drive, in a hidden ".EditMax Archive"
 /// folder at its root as the Mac's Trash does, so a large render is never copied onto the Mac's own disk.

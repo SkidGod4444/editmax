@@ -68,7 +68,7 @@ button is down. A new download peeks for 4 s.
 drawer's message. They touch no document, `EditorState` or window; `testADropChangesNoProjectAndNoView` holds that.
 
 The drawer starts 2 s after launch, after the splash has gone (`SplashScreen.afterDismiss`), and never under XCTest.
-Settings ▸ General ▸ Notch drawer and Watch Downloads (`AppSettings.notchDrawer` / `.watchDownloads`, both default on,
+Settings ▸ Files ▸ Notch drawer and Watch Downloads (`AppSettings.notchDrawer` / `.watchDownloads`, both default on,
 both off under XCTest) call `NotchDrawer.applySettings()`.
 
 ### UI driver

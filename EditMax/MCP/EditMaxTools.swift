@@ -150,7 +150,7 @@ enum EditMaxTools {
              inputSchema: schema(["clip": str("Multicam clip id or name"), "project": projectArg], required: ["clip"])),
         Tool(name: "make_proxies", description: "Build low-resolution proxy files (960×540) for the project's video assets and switch the preview to them for smooth playback; the export always uses the originals. Returns each asset's proxy status; call again to poll progress.",
              inputSchema: schema(["project": projectArg])),
-        Tool(name: "list_archive", description: "Files deleted in EditMax that can still be restored: EditMax's copies of Assets items, projects deleted from Home, fonts, templates. Each has an id, kind, name, where it was, when it was deleted and the days left before it is erased for good (Settings ▸ General sets the period).",
+        Tool(name: "list_archive", description: "Files deleted in EditMax that can still be restored: EditMax's copies of Assets items, projects deleted from Home, fonts, templates. Each has an id, kind, name, where it was, when it was deleted and the days left before it is erased for good (Settings ▸ Files sets the period).",
              inputSchema: schema([:]), annotations: .init(readOnlyHint: true)),
         Tool(name: "restore_from_archive", description: "Put a deleted file back where it was (\"name 2\" beside it if the name was taken since) and back where it is used: an Assets item in Assets, a project on Home, a font in the Font picker. Then import_media or open it as usual.",
              inputSchema: schema(["item": str("Archive id (prefix) from list_archive, or the item's name")], required: ["item"])),

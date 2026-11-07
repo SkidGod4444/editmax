@@ -217,7 +217,7 @@ It stands aside while the user works: real mouse, key and scroll events (not the
 It never switches away from the Chat tab (the user chose to watch the conversation). In the focus layout (only the
 player and the chat) only the playhead follows: no selection, inspector or mixer change waits for the user when focus
 ends. It never moves a playing playhead, and is off in tests.
-`ui_screenshot` waits for an edit's animation to finish. Settings > Advanced has the switch (`followAgent`).
+`ui_screenshot` waits for an edit's animation to finish. Settings ▸ Assistant has the switch (`followAgent`).
 
 ## UI conventions
 

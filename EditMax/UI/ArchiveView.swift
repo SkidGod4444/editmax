@@ -4,10 +4,11 @@ import AppKit
 /// Home ▸ Archive: every file deleted in EditMax (EditMax's copies of Assets items, projects, fonts, templates), with
 /// Restore to put it back where it was and use it again, until it is erased for good. Laid out like Home's Projects and
 /// Assets pages: a title with its count, actions on the right, a kind filter, then the items. Window ▸ Archive and
-/// Settings ▸ General ▸ Show Archive open Home here.
+/// Settings ▸ Files ▸ Show Archive open Home here.
 struct ArchivePane: View {
     @ObservedObject var model: HomeModel
     @ObservedObject private var archive = AppArchive.shared
+    @Environment(\.openSettings) private var openSettings
     @State private var erasing: AppArchive.Entry?
     @State private var confirmEmpty = false
     @State private var erasingPicked = false
@@ -71,7 +72,8 @@ struct ArchivePane: View {
                 Spacer()
                 HStack(spacing: 4) {
                     Text("Erased for good after \(archive.periodText).").foregroundStyle(.secondary)
-                    SettingsLink { Text("Change…") }.buttonStyle(.link).pointer().uiFrame("archive.period")
+                    Button("Change…") { SettingsView.show(.files, using: openSettings) }   // where the period is set
+                        .buttonStyle(.link).pointer().uiFrame("archive.period")
                 }
                 .font(.caption)
             }

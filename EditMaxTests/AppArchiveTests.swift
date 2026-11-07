@@ -232,9 +232,9 @@ final class AppArchiveTests: XCTestCase {
 
     func testSettingsAsksBeforeAShorterPeriod() throws {
         try AppArchive.shared.archive(try file("Old.mp4"), now: Date().addingTimeInterval(-86_400 * 10))
-        let h = OffscreenHost(GeneralSettings(), size: CGSize(width: 520, height: 900), dark: true)
+        let h = OffscreenHost(FilesSettings(), size: CGSize(width: 520, height: 900), dark: true)
         defer { h.close() }
-        XCTAssertNotNil(h.frame("settings.general.archiveDays"))
+        XCTAssertNotNil(h.frame("settings.files.archiveDays"))
         XCTAssertEqual(AppArchive.shared.entries.count, 1)
     }
 

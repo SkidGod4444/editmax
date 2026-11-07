@@ -52,7 +52,10 @@ final class AppUpdater: ObservableObject {
     }
 
     /// Starts the updater (called once at launch); the checks then run on Sparkle's schedule.
-    func start() { UpdatePrompt.shared.startDemoIfAsked() }
+    func start() {
+        if !AppDelegate.isTesting { UpdateNotifications.setUp() }   // a click on a reminder notification reaches EditMax
+        UpdatePrompt.shared.startDemoIfAsked()
+    }
 
     /// Check now and show the result, whatever the automatic settings say.
     func checkForUpdates() {

@@ -1,14 +1,19 @@
 import AppKit
 import SwiftUI
 import Sparkle
+import UserNotifications
 
-/// "EditMax x.y is ready": the popup that offers a downloaded update. Install Now saves every open project and lets
-/// Sparkle install and relaunch; Remind Me Later closes it and asks again a day later. Either way Sparkle still
-/// installs the update when EditMax quits, so Later never loses it.
+/// "EditMax x.y is ready": the Liquid Glass popup that offers a downloaded update.
+/// - **Install Now** saves every open project and lets Sparkle install and relaunch.
+/// - **Remind Me Later** closes it. While EditMax is in front it comes back every 2 hours; while EditMax runs in the
+///   background a Mac notification reminds every 6 hours instead (its Install Now button installs straight away, a
+///   click on it brings the popup). Sparkle still installs the update when EditMax quits, so Later never loses it.
+/// - After the relaunch onto the new version (Install Now, or a quit and reopen) a card says it is installed, once,
+///   after the splash.
 ///
 /// When: Sparkle downloads updates in the background (`SUAutomaticallyUpdate`) and, once one is ready, hands it to
-/// `AppUpdaterDelegate`, which brings it here. Before this popup it was installed silently at the next quit, and the
-/// user never heard about it. With background downloads turned off in Settings, Sparkle's own window asks instead.
+/// `AppUpdaterDelegate`, which brings it here. With background downloads turned off in Settings, Sparkle's own window
+/// asks instead.
 ///
 /// It never interrupts: it never pulls EditMax over another app (it waits until EditMax is in front), never takes the
 /// keyboard from what you are typing in (the panel does not become key; Return does not mean Install Now), and waits
@@ -18,46 +23,63 @@ import Sparkle
 final class UpdatePrompt: ObservableObject {
     static let shared = UpdatePrompt()
 
-    struct Offer: Equatable {
+    struct Offer: Equatable, Codable {
         let version: String
         let notes: URL?
     }
 
     @Published private(set) var offer: Offer?
+    /// The card on screen: the waiting update, or the one just installed.
+    private(set) var showing: UpdatePromptView.Mode?
     var isShowing: Bool { panel?.isVisible == true }
 
-    /// Seams for the tests: whether EditMax is in front, what work is running, how long Later waits, how often a
-    /// waiting popup looks again, where the popup goes.
+    /// Seams for the tests.
     var appIsActive: () -> Bool = { NSApp.isActive }
     var busy: () -> String? = { BusyWork.current }
-    var remindAfter: TimeInterval = 24 * 3600
+    var clock: () -> Date = { Date() }
+    var activeEvery: TimeInterval = 2 * 3600       // the popup again, while EditMax is in front
+    var backgroundEvery: TimeInterval = 6 * 3600   // a notification, while EditMax runs in the background
+    var tickEvery: TimeInterval = 60
     var idleCheck: TimeInterval = 5
+    var installedNoteFor: TimeInterval = 15
+    var notify: (Offer) -> Void = { UpdateNotifications.post($0) }
+    var askNotificationPermission: () -> Void = { UpdateNotifications.requestPermission() }
+    var defaults: UserDefaults = .standard
+    var currentVersion: () -> String = { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "" }
     var offscreen = false
     var window: NSPanel? { panel }
 
     private var install: (() -> Void)?
     private var panel: UpdatePromptPanel?
-    private var reminder: Timer?
     private var waitingForFront: NSObjectProtocol?
     private var waitingForIdle: Timer?
+    private var ticker: Timer?
+    private var reminding = false
+    private var lastPopup = Date.distantPast
+    private var lastNotice = Date.distantPast
+    private var noteTimer: Timer?
+
+    /// The update the user was offered, so the relaunch onto it can say "installed".
+    static let offeredKey = "EditMaxUpdateOffered"
 
     init() {}
 
     /// A downloaded, verified update. `install` installs it and relaunches EditMax (Sparkle's immediate install).
-    func offer(version: String, notes: URL?, install: @escaping () -> Void) {
-        offer = Offer(version: version, notes: notes)
+    func offer(version: String, notes: URL?, remember: Bool = true, install: @escaping () -> Void) {
+        let o = Offer(version: version, notes: notes)
+        offer = o
         self.install = install
+        if remember, let data = try? JSONEncoder().encode(o) { defaults.set(data, forKey: Self.offeredKey) }
         DebugLog.event("app-update-ready", ["version": version])
         present()
     }
 
     /// Shows the popup now if EditMax is in front and nothing long is running, otherwise once both hold.
     func present() {
-        guard offer != nil else { return }
-        reminder?.invalidate(); reminder = nil
+        guard let offer else { return }
         if let what = busy() { waitForIdle(what); return }
         guard appIsActive() else { waitForFront(); return }
-        show()
+        show(.ready(offer))
     }
 
     func installNow() {
@@ -72,11 +94,45 @@ final class UpdatePrompt: ObservableObject {
         install()   // Sparkle quits, installs and relaunches; if the quit is cancelled the update still waits
     }
 
+    /// Remind Me Later: every 2 h while EditMax is in front, a notification every 6 h while it is in the background.
     func later() {
-        DebugLog.event("app-update-later", ["version": offer?.version ?? "", "remind-in-s": Int(remindAfter)])
+        DebugLog.event("app-update-later", ["version": offer?.version ?? "", "popup-every-s": Int(activeEvery), "notify-every-s": Int(backgroundEvery)])
         close()
-        reminder = Timer.scheduledTimer(withTimeInterval: remindAfter, repeats: false) { [weak self] _ in
-            Task { @MainActor in self?.present() }
+        let now = clock()
+        lastPopup = now; lastNotice = now
+        if !reminding { askNotificationPermission() }
+        reminding = true
+        ticker?.invalidate()
+        ticker = Timer.scheduledTimer(withTimeInterval: tickEvery, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.tick() }
+        }
+    }
+
+    /// One look at the reminder clock (every `tickEvery`).
+    func tick() {
+        guard reminding, let offer, !isShowing, waitingForIdle == nil else { return }
+        let now = clock()
+        if appIsActive() {
+            guard now.timeIntervalSince(lastPopup) >= activeEvery else { return }
+            DebugLog.event("app-update-remind", ["how": "popup", "version": offer.version])
+            present()
+        } else if now.timeIntervalSince(lastNotice) >= backgroundEvery {
+            lastNotice = now
+            DebugLog.event("app-update-remind", ["how": "notification", "version": offer.version])
+            notify(offer)
+        }
+    }
+
+    /// After a relaunch onto the version that was offered: "EditMax x.y is installed", once. Called after the splash.
+    func showInstalledNoteIfUpdated() {
+        guard let data = defaults.data(forKey: Self.offeredKey), let o = try? JSONDecoder().decode(Offer.self, from: data),
+              o.version == currentVersion() else { return }
+        defaults.removeObject(forKey: Self.offeredKey)
+        DebugLog.event("app-update-installed", ["version": o.version])
+        show(.installed(o))
+        noteTimer?.invalidate()
+        noteTimer = Timer.scheduledTimer(withTimeInterval: installedNoteFor, repeats: false) { [weak self] _ in
+            Task { @MainActor in if case .installed = self?.showing { self?.close() } }
         }
     }
 
@@ -106,21 +162,24 @@ final class UpdatePrompt: ObservableObject {
         }
     }
 
-    private func show() {
-        guard let offer else { return }
-        let view = UpdatePromptView(offer: offer, install: { [weak self] in self?.installNow() }, later: { [weak self] in self?.later() })
+    private func show(_ mode: UpdatePromptView.Mode) {
+        let view = UpdatePromptView(mode: mode, install: { [weak self] in self?.installNow() }, later: { [weak self] in self?.later() },
+                                    dismiss: { [weak self] in self?.close() })
         let host = NSHostingView(rootView: view)
         host.frame = CGRect(origin: .zero, size: host.fittingSize)
         let panel = self.panel ?? UpdatePromptPanel()
         panel.contentView = host
         panel.setFrame(frame(for: host.frame.size), display: true)
         self.panel = panel
+        showing = mode
+        if case .ready = mode { lastPopup = clock() }
         panel.orderFront(nil)   // not key: whatever the user is typing in keeps the keyboard
-        DebugLog.event("app-update-shown", ["version": offer.version])
+        DebugLog.event("app-update-shown", ["card": mode.name])
     }
 
     private func close() {
         panel?.orderOut(nil)
+        showing = nil
         if let o = waitingForFront { NotificationCenter.default.removeObserver(o) }
         waitingForFront = nil
     }
@@ -138,14 +197,66 @@ final class UpdatePrompt: ObservableObject {
     }
 
     /// Debug builds only: `-EditMaxUpdatePromptDemo YES` shows the popup with a made-up version, so its look can be
-    /// checked without a release. Install Now and Later only close it.
+    /// checked without a release. Install Now and Later only close it (Later still starts the reminders).
     func startDemoIfAsked() {
         #if DEBUG
         guard UserDefaults.standard.bool(forKey: "EditMaxUpdatePromptDemo") else { return }
-        offer(version: "0.1.2", notes: URL(string: "https://github.com/SkidGod4444/editmax/releases/latest")) { [weak self] in
+        offer(version: "0.1.2", notes: URL(string: "https://github.com/SkidGod4444/editmax/releases/latest"), remember: false) { [weak self] in
             DebugLog.event("app-update-demo-install"); self?.offer = nil
         }
         #endif
+    }
+}
+
+/// The reminder notification while EditMax runs in the background: Install Now installs straight away (after any
+/// export), a click on the notification brings EditMax forward with the popup.
+enum UpdateNotifications {
+    static let category = "editmax.update"
+    static let installAction = "editmax.update.install"
+    private static let handler = Handler()
+
+    /// At launch, so a click on a reminder reaches EditMax.
+    static func setUp() {
+        let center = UNUserNotificationCenter.current()
+        center.delegate = handler
+        let install = UNNotificationAction(identifier: installAction, title: "Install Now", options: [.foreground])
+        center.setNotificationCategories([UNNotificationCategory(identifier: category, actions: [install], intentIdentifiers: [])])
+    }
+
+    /// Asked once, when the user first picks Remind Me Later (they are there to answer).
+    static func requestPermission() {
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, _ in
+            DebugLog.event("app-update-notify-permission", ["granted": granted])
+        }
+    }
+
+    static func post(_ o: UpdatePrompt.Offer) {
+        let content = UNMutableNotificationContent()
+        content.title = "EditMax \(o.version) is ready"
+        content.body = "Install it now, or it installs by itself the next time you quit EditMax."
+        content.categoryIdentifier = category
+        // One identifier: a new reminder replaces the last one instead of piling up.
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "editmax.update", content: content, trigger: nil)) { error in
+            if let error { DebugLog.event("app-update-notify-failed", ["error": error.localizedDescription]) }
+        }
+    }
+
+    private final class Handler: NSObject, UNUserNotificationCenterDelegate {
+        func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler done: @escaping () -> Void) {
+            let action = response.actionIdentifier
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    DebugLog.event("app-update-notification-clicked", ["action": action])
+                    NSApp.activate()
+                    if action == UpdateNotifications.installAction { UpdatePrompt.shared.installNow() }
+                    else if action == UNNotificationDefaultActionIdentifier { UpdatePrompt.shared.present() }
+                }
+                done()
+            }
+        }
+        func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler done: @escaping (UNNotificationPresentationOptions) -> Void) {
+            done([.banner, .list])
+        }
     }
 }
 
@@ -163,7 +274,7 @@ final class AppUpdaterDelegate: NSObject, SPUUpdaterDelegate {
     }
 }
 
-/// The popup's window: borderless and clear (the card draws its own glass), floats over EditMax's windows only while
+/// The popup's window: borderless and clear (the card is the glass), floats over EditMax's windows only while
 /// EditMax is in front, and never takes the keyboard.
 final class UpdatePromptPanel: NSPanel {
     init() {
@@ -183,10 +294,31 @@ final class UpdatePromptPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
+/// The card: Liquid Glass (`glassEffect`, macOS 26; a material before it) with glass buttons grouped so they blend.
 struct UpdatePromptView: View {
-    let offer: UpdatePrompt.Offer
+    enum Mode: Equatable {
+        case ready(UpdatePrompt.Offer), installed(UpdatePrompt.Offer)
+        var offer: UpdatePrompt.Offer { switch self { case .ready(let o), .installed(let o): o } }
+        var name: String { if case .ready = self { "ready" } else { "installed" } }
+    }
+
+    let mode: Mode
     let install: () -> Void
     let later: () -> Void
+    let dismiss: () -> Void
+
+    private var title: String {
+        switch mode {
+        case .ready(let o): "EditMax \(o.version) is ready"
+        case .installed(let o): "EditMax \(o.version) is installed"
+        }
+    }
+    private var message: String {
+        switch mode {
+        case .ready: "Install Now saves your projects and restarts EditMax. Not now? It installs by itself the next time you quit."
+        case .installed: "You're on the newest version. What's new lists everything that changed."
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -195,28 +327,37 @@ struct UpdatePromptView: View {
                     .resizable().interpolation(.high)
                     .frame(width: 64, height: 64)
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("EditMax \(offer.version) is ready")
-                        .font(.title3.weight(.semibold))
-                    Text("Install Now saves your projects and restarts EditMax. Not now? It installs by itself the next time you quit.")
-                        .font(.callout).foregroundStyle(.secondary)
+                    Text(title).font(.title3.weight(.semibold))
+                    Text(message).font(.callout).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
             HStack(spacing: 10) {
-                if let notes = offer.notes {
+                if let notes = mode.offer.notes {
                     Button("What's new") { NSWorkspace.shared.open(notes) }
                         .buttonStyle(.link).font(.callout)
                         .pointer().help(notes.absoluteString).uiFrame("update.whatsNew")
                 }
                 Spacer(minLength: 12)
-                Button("Remind Me Later", action: later)
-                    .glassButtonStyle().controlSize(.large)
-                    .pointer().help("Asks again tomorrow. It still installs when you quit EditMax.")
-                    .uiFrame("update.later").uiTap("update.later", later)
-                // No Return shortcut: a stray Return typed into a title must never restart EditMax.
-                Button("Install Now", action: install)
-                    .glassButtonStyle(prominent: true).controlSize(.large)
-                    .pointer().uiFrame("update.install").uiTap("update.install", install)
+                GlassGroup(spacing: 10) {
+                    HStack(spacing: 10) {
+                        switch mode {
+                        case .ready:
+                            Button("Remind Me Later", action: later)
+                                .glassButtonStyle().controlSize(.large)
+                                .pointer().help("Reminds you every 2 hours while you use EditMax, or with a notification every 6 hours while it runs in the background. It still installs when you quit EditMax.")
+                                .uiFrame("update.later").uiTap("update.later", later)
+                            // No Return shortcut: a stray Return typed into a title must never restart EditMax.
+                            Button("Install Now", action: install)
+                                .glassButtonStyle(prominent: true).controlSize(.large)
+                                .pointer().uiFrame("update.install").uiTap("update.install", install)
+                        case .installed:
+                            Button("OK", action: dismiss)
+                                .glassButtonStyle(prominent: true).controlSize(.large)
+                                .pointer().uiFrame("update.ok").uiTap("update.ok", dismiss)
+                        }
+                    }
+                }
             }
         }
         .padding(22)

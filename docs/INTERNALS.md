@@ -295,7 +295,12 @@ background download with install on quit (`SUAutomaticallyUpdate`); Settings ▸
 the block to `UpdatePrompt`: a glass popup (a borderless `NSPanel` that never becomes key and has no Return shortcut,
 so typing is never taken over; it hides while EditMax is in the background, waits for it to come to the front, and
 waits while `BusyWork` counts an export or an agent reply, even after Install Now is clicked) with Install Now (autosaves every open project, then calls the block: quit, install,
-relaunch) and Remind Me Later (24 h timer; install on quit still stands). Debug builds show it with
+relaunch) and Remind Me Later: a 60 s tick shows the popup again once 2 h have passed while EditMax is active, or posts
+a `UNUserNotification` (category with an Install Now action; `UpdateNotifications`, permission asked at the first Later)
+once 6 h have passed while it is not; install on quit still stands. The offered version is kept in `EditMaxUpdateOffered`;
+the first activation on that version shows an "installed" card after the splash. `SparkleInstallTests` (opt-in,
+`TEST_RUNNER_EDITMAX_SPARKLE_TEST=1`, run from a derived-data folder outside `~/Desktop`: TCC blocks launchd's
+`Autoupdate` there) installs a signed 2.0 of a stand-in app from a local feed through the real Sparkle and Install Now. Debug builds show it with
 `-EditMaxUpdatePromptDemo YES`. The updater does not start in Debug builds (they
 would "update" to the release) or under XCTest; `EDITMAX_UPDATES=1` starts it in a Debug build. `package.sh` signs
 Sparkle's `Installer.xpc`, `Downloader.xpc` (keeping its entitlements), `Autoupdate` and `Updater.app` before the

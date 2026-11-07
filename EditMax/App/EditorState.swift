@@ -42,6 +42,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// app right after launch; a background launch (`open -g`, the agent's test relaunches) never does, and gets none.
     func applicationDidBecomeActive(_ notification: Notification) {
         if Date().timeIntervalSince(launchedAt) < 2, AppSettings.bool(AppSettings.Key.showSplash, default: true) { SplashScreen.shared.show(); SplashScreen.shared.dismissWhenReady() }
+        // Just updated? "EditMax x.y is installed", once, after the splash (at once when there is none).
+        if !Self.isTesting { SplashScreen.shared.afterDismiss { UpdatePrompt.shared.showInstalledNoteIfUpdated() } }
     }
     /// True when the app is the host of the unit tests: no splash, no Home, no untitled document handling.
     static let isTesting = NSClassFromString("XCTestCase") != nil || ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil

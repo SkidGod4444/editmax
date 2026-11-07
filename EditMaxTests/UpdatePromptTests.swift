@@ -4,16 +4,30 @@ import AppKit
 import Sparkle
 @testable import EditMax
 
-/// The "new version is ready" popup: Sparkle's hand-off, when it shows, Install Now and Remind Me Later. Every popup
-/// here is placed off screen. Its look is written to $EDITMAX_PREVIEW_DIR/update when that is set.
+/// The "new version is ready" popup: Sparkle's hand-off, when it shows, Install Now, Remind Me Later's reminders and
+/// the "installed" card after the relaunch. Every popup here is placed off screen; nothing is posted to Notification
+/// Center (the poster is stubbed). Its look is written to $EDITMAX_PREVIEW_DIR/update when that is set.
 @MainActor
 final class UpdatePromptTests: XCTestCase {
+    private static let suite = "editmax.tests.updateprompt"
+    private var defaults: UserDefaults { UserDefaults(suiteName: Self.suite)! }
+    private var notified: [String] = []
+
+    override func tearDown() {
+        UserDefaults().removePersistentDomain(forName: Self.suite)
+        super.tearDown()
+    }
+
     private func prompt(active: Bool = true) -> UpdatePrompt {
         let p = UpdatePrompt()
         p.offscreen = true
         p.appIsActive = { active }
         p.busy = { nil }
         p.idleCheck = 0.05
+        p.tickEvery = 0.05
+        p.defaults = defaults
+        p.askNotificationPermission = {}
+        p.notify = { [weak self] in self?.notified.append($0.version) }
         return p
     }
 
@@ -65,17 +79,78 @@ final class UpdatePromptTests: XCTestCase {
         XCTAssertTrue(savedBeforeInstall, "the project is on disk before EditMax quits to install")
     }
 
-    func testRemindMeLaterClosesItAndAsksAgainLater() {
-        let p = prompt()
-        p.remindAfter = 0.2
-        var installs = 0
+    /// Remind Me Later while EditMax stays in front: the popup again every 2 hours, never sooner, never a notification.
+    func testLaterRemindsEveryTwoHoursWhileEditMaxIsInFront() {
+        var now = Date(timeIntervalSince1970: 1_000_000)
+        let p = prompt(); p.clock = { now }
+        var installs = 0, asked = 0
+        p.askNotificationPermission = { asked += 1 }
         p.offer(version: "0.1.2", notes: nil) { installs += 1 }
         p.later()
         XCTAssertFalse(p.isShowing)
-        spin(0.6)
-        XCTAssertTrue(p.isShowing, "asks again after the wait")
+        now += 2 * 3600 - 60; spin(0.2)
+        XCTAssertFalse(p.isShowing, "not before 2 hours")
+        now += 60; spin(0.2)
+        XCTAssertTrue(p.isShowing, "2 hours on: the popup again")
+        p.later()
+        now += 3600; spin(0.2)
+        XCTAssertFalse(p.isShowing)
+        now += 3600; spin(0.2)
+        XCTAssertTrue(p.isShowing, "and every 2 hours after")
+        XCTAssertEqual(notified, [], "no notification while EditMax is in front")
         XCTAssertEqual(installs, 0, "Later never installs")
-        p.remindAfter = 3600; p.later()
+        XCTAssertEqual(asked, 1, "notification permission is asked once, at the first Later")
+        p.later()
+    }
+
+    /// In the background: a notification every 6 hours, no popup; back in front after that, the popup.
+    func testInTheBackgroundANotificationEverySixHours() {
+        var now = Date(timeIntervalSince1970: 1_000_000), active = true
+        let p = prompt(); p.clock = { now }; p.appIsActive = { active }
+        p.offer(version: "0.1.2", notes: nil) {}
+        p.later()
+        active = false
+        now += 5 * 3600; spin(0.2)
+        XCTAssertEqual(notified, [], "not before 6 hours")
+        now += 3600; spin(0.2)
+        XCTAssertEqual(notified, ["0.1.2"], "6 hours in the background: one notification")
+        XCTAssertFalse(p.isShowing, "no popup while EditMax is in the background")
+        now += 3 * 3600; spin(0.2)
+        XCTAssertEqual(notified.count, 1, "once per 6 hours")
+        now += 3 * 3600; spin(0.2)
+        XCTAssertEqual(notified.count, 2)
+        active = true; spin(0.2)
+        XCTAssertTrue(p.isShowing, "back in front, more than 2 hours on: the popup")
+        p.later()
+    }
+
+    /// Reminders start only after Remind Me Later: an unanswered popup just waits for EditMax to be in front again.
+    func testNoRemindersBeforeTheUserAnswers() {
+        var now = Date(timeIntervalSince1970: 1_000_000), active = true
+        let p = prompt(); p.clock = { now }; p.appIsActive = { active }
+        p.offer(version: "0.1.2", notes: nil) {}
+        active = false
+        now += 7 * 3600; spin(0.2)
+        XCTAssertEqual(notified, [])
+    }
+
+    /// The relaunch onto the offered version (Install Now, or a quit and reopen) says it is installed, once.
+    func testAfterTheUpdateTheNextOpenSaysItIsInstalled() {
+        let before = prompt(); before.currentVersion = { "0.1.1" }
+        before.offer(version: "0.1.2", notes: URL(string: "https://github.com/SkidGod4444/editmax/releases/tag/v0.1.2")) {}
+        before.showInstalledNoteIfUpdated()
+        XCTAssertNotEqual(before.showing?.name, "installed", "still on 0.1.1: nothing installed yet")
+        before.later()
+
+        let after = prompt(); after.currentVersion = { "0.1.2" }; after.installedNoteFor = 0.2
+        after.showInstalledNoteIfUpdated()
+        XCTAssertTrue(after.isShowing)
+        XCTAssertEqual(after.showing, .installed(UpdatePrompt.Offer(version: "0.1.2", notes: URL(string: "https://github.com/SkidGod4444/editmax/releases/tag/v0.1.2"))))
+        spin(0.4)
+        XCTAssertFalse(after.isShowing, "goes by itself")
+        let again = prompt(); again.currentVersion = { "0.1.2" }
+        again.showInstalledNoteIfUpdated()
+        XCTAssertFalse(again.isShowing, "only once")
     }
 
     /// The side agent's catch: the popup took the keyboard and Return meant Install Now, so a Return typed into a title
@@ -140,7 +215,8 @@ final class UpdatePromptTests: XCTestCase {
 
     func testCheckForUpdatesShowsTheWaitingUpdateAgain() {
         let p = UpdatePrompt.shared
-        p.offscreen = true; p.appIsActive = { true }; p.busy = { nil }; p.remindAfter = 3600
+        p.offscreen = true; p.appIsActive = { true }; p.busy = { nil }
+        p.defaults = defaults; p.askNotificationPermission = {}; p.notify = { _ in }
         p.offer(version: "0.1.2", notes: nil) {}
         p.later()
         XCTAssertFalse(p.isShowing)
@@ -162,7 +238,8 @@ final class UpdatePromptTests: XCTestCase {
         let offer = UpdatePrompt.Offer(version: "0.1.2", notes: URL(string: "https://github.com/SkidGod4444/editmax/releases/latest"))
         for dark in [true, false] {
             let size = CGSize(width: 1400, height: 878)
-            let card = UpdatePromptView(offer: offer, install: {}, later: {})
+            let card = UpdatePromptView(mode: .ready(offer), install: {}, later: {}, dismiss: {})
+            let installed = UpdatePromptView(mode: .installed(offer), install: {}, later: {}, dismiss: {})
             let scene = ZStack(alignment: .top) {
                 if let backdrop { Image(nsImage: backdrop).resizable().aspectRatio(contentMode: .fill).frame(width: size.width, height: size.height).clipped() }
                 else { LinearGradient(colors: [Color(white: 0.16), Color(white: 0.08)], startPoint: .top, endPoint: .bottom) }
@@ -170,6 +247,7 @@ final class UpdatePromptTests: XCTestCase {
             }
             try render(scene, size: size, dark: dark, to: out.appendingPathComponent("update-prompt-\(dark ? "dark" : "light").png"))
             try render(card, size: CGSize(width: 528, height: 190), dark: dark, to: out.appendingPathComponent("update-prompt-card-\(dark ? "dark" : "light").png"))
+            try render(installed, size: CGSize(width: 528, height: 190), dark: dark, to: out.appendingPathComponent("update-installed-card-\(dark ? "dark" : "light").png"))
         }
     }
 

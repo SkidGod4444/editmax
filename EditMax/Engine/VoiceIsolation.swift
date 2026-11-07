@@ -25,6 +25,22 @@ final class IsolatedAudio: ObservableObject {
     private var scheduled: [UUID: Task<Void, Never>] = [:]
 
     nonisolated static let sampleRate = 48_000.0
+
+    /// The rendered file: Apple Lossless at 16 bits. Lossless and without encoder priming, so it lines up sample for
+    /// sample like the 16-bit PCM it replaced, at about half the size for speech (18 h of stereo PCM is 12.4 GB).
+    nonisolated static func fileSettings(channels: Int) -> [String: Any] {
+        [AVFormatIDKey: kAudioFormatAppleLossless, AVSampleRateKey: sampleRate, AVNumberOfChannelsKey: channels, AVEncoderBitDepthHintKey: 16]
+    }
+    /// The most disk a render can take (Apple Lossless never ends much above 16-bit PCM), plus 0.5 GB left over.
+    nonisolated static func diskNeeded(seconds: Double, channels: Int) -> Int64 {
+        Int64(max(0, seconds) * sampleRate * Double(channels) * 2 * 1.02) + 500_000_000
+    }
+    /// Refuses a render that could fill the disk: an 18-hour file can need over 12 GB.
+    nonisolated static func checkDisk(needed: Int64, free: Int64, name: String) throws {
+        guard free < needed else { return }
+        throw EditError.invalid(String(format: "Voice isolation of '%@' needs up to %.1f GB free on the disk that holds Application Support; %.1f GB is free. Free some space, or isolate a shorter file.",
+                                       name, Double(needed) / 1e9, Double(free) / 1e9))
+    }
     nonisolated static let chunk: AVAudioFrameCount = 4096
 
     // MARK: Keys and paths
@@ -154,7 +170,7 @@ final class IsolatedAudio: ObservableObject {
     final class CancelFlag: @unchecked Sendable { var cancelled = false }
 
     /// Decodes the asset's sound (48 kHz float, 1 or 2 channels) through an AVAssetReader, runs it through AUSoundIsolation
-    /// in an offline AVAudioEngine and writes a PCM .caf of exactly the decoded frame count, lined up sample for sample
+    /// in an offline AVAudioEngine and writes an Apple Lossless .caf of exactly the decoded frame count, lined up sample for sample
     /// with the source. The unit's delay is measured on the very instance that renders (`Calibration`: it changes once
     /// the model has loaded, at a frame that depends on wall-clock timing), then the first half second of the recording
     /// warms the model up, then the recording plays from its first frame; everything before that plus the measured delay
@@ -168,6 +184,9 @@ final class IsolatedAudio: ObservableObject {
         }
         let seconds = try await track.load(.timeRange).duration.seconds
         let channels = AVAudioChannelCount(max(1, min(2, srcChannels)))
+        if let free = try? url.deletingLastPathComponent().resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]).volumeAvailableCapacityForImportantUsage {
+            try checkDisk(needed: diskNeeded(seconds: seconds, channels: Int(channels)), free: free, name: source.lastPathComponent)
+        }
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
             DispatchQueue.global(qos: .utility).async {
                 do { try renderBlocking(asset: av, track: track, channels: channels, seconds: seconds, to: url, pct: pct, cancel: cancel, progress: progress); cont.resume() }
@@ -247,9 +266,7 @@ final class IsolatedAudio: ObservableObject {
         // 3. The recording: drop `delay` frames, write exactly the decoded frame count.
         let tmp = url.deletingPathExtension().appendingPathExtension("part.caf")
         try? FileManager.default.removeItem(at: tmp)
-        let file = try AVAudioFile(forWriting: tmp, settings: [AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: sampleRate, AVNumberOfChannelsKey: Int(channels),
-                                                                AVLinearPCMBitDepthKey: 16, AVLinearPCMIsFloatKey: false, AVLinearPCMIsNonInterleaved: false, AVLinearPCMIsBigEndianKey: false],
-                                   commonFormat: .pcmFormatFloat32, interleaved: false)
+        let file = try AVAudioFile(forWriting: tmp, settings: fileSettings(channels: Int(channels)), commonFormat: .pcmFormatFloat32, interleaved: false)
         var skipped = 0, written = 0, lastReport = Date.distantPast
         do {
             while true {

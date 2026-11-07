@@ -105,7 +105,10 @@ compressor, gain, pan and limiter, then the track's strip (fader, pan, bus, mast
 or the mixer asks for it. J/L-cut sounds go on lanes of their own (`SplitEditAudio`), one owner track per lane, with
 that track's strip. Clip volume is one envelope per
 clip (keyframes × fades × transition crossfade × ducking) emitted as back-to-back ramps. Voice isolation renders
-Apple's on-device `AUSoundIsolation` over the asset once (cached in `Application Support/EditMax/isolated/`).
+Apple's on-device `AUSoundIsolation` over the asset once (cached in `Application Support/EditMax/isolated/`), written
+as 16-bit Apple Lossless: the same samples and exact length as the 16-bit PCM it replaced, about half the size for
+speech. It always covers the whole file, so an 18-hour stereo source can take up to 12.7 GB; a render is refused
+before it starts when the disk has less than that plus 0.5 GB free (`IsolatedAudio.diskNeeded`, `checkDisk`).
 
 Loudness (`Loudness.measure`, used by measure and normalize) renders the mix as the export does and meters each buffer
 as it is read (`Loudness.stream`); nothing is kept, so an 18-hour mix stays at a few MB instead of about 25 GB. A

@@ -93,6 +93,12 @@ final class AppArchive: ObservableObject {
         return erase { $0.archivedAt <= cutoff }
     }
 
+    /// How many items a period of `days` would erase at once (Settings asks before a shorter period erases anything).
+    func wouldErase(days: Int, now: Date = Date()) -> Int {
+        let cutoff = now.addingTimeInterval(-Double(max(1, days)) * 86_400)
+        return entries.filter { $0.archivedAt <= cutoff && FileManager.default.fileExists(atPath: $0.path) }.count
+    }
+
     /// Erases everything now (Empty Archive).
     @discardableResult
     func emptyNow() -> Int { erase { _ in true } }

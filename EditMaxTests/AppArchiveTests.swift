@@ -112,6 +112,26 @@ final class AppArchiveTests: XCTestCase {
         }
     }
 
+    /// Settings asks before a shorter period erases anything: it needs the count first, and that count erases nothing.
+    func testAShorterPeriodSaysHowManyItWouldErase() throws {
+        let now = Date()
+        try AppArchive.shared.archive(try file("Week old.mp4"), now: now.addingTimeInterval(-86_400 * 8))
+        try AppArchive.shared.archive(try file("Yesterday.mp4"), now: now.addingTimeInterval(-86_400 * 1.5))
+        try AppArchive.shared.archive(try file("Today.mp4"), now: now.addingTimeInterval(-3_600))
+        XCTAssertEqual(AppArchive.shared.wouldErase(days: 30, now: now), 0)
+        XCTAssertEqual(AppArchive.shared.wouldErase(days: 7, now: now), 1)
+        XCTAssertEqual(AppArchive.shared.wouldErase(days: 1, now: now), 2)
+        XCTAssertEqual(AppArchive.shared.entries.count, 3, "counting erases nothing")
+    }
+
+    func testSettingsAsksBeforeAShorterPeriod() throws {
+        try AppArchive.shared.archive(try file("Old.mp4"), now: Date().addingTimeInterval(-86_400 * 10))
+        let h = OffscreenHost(GeneralSettings(), size: CGSize(width: 520, height: 900), dark: true)
+        defer { h.close() }
+        XCTAssertNotNil(h.frame("settings.general.archiveDays"))
+        XCTAssertEqual(AppArchive.shared.entries.count, 1)
+    }
+
     func testPeriodsOnOffer() {
         XCTAssertEqual(AppArchive.periods, [1, 7, 14, 30, 60, 90])
         XCTAssertTrue(AppArchive.periods.contains(AppArchive.defaultDays))

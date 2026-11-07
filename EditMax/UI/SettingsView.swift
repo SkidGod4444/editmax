@@ -35,6 +35,13 @@ struct GeneralSettings: View {
     @ObservedObject private var updates = AppUpdater.shared
     @ObservedObject private var archive = AppArchive.shared
     @State private var confirmEmpty = false
+    /// A shorter period that would erase items at once, waiting for the user to confirm (nil: none).
+    @State private var pendingDays: Int?
+    private static func daysText(_ d: Int) -> String { d == 1 ? "1 day" : "\(d) days" }
+    private var pendingTitle: String {
+        let n = pendingDays.map { archive.wouldErase(days: $0) } ?? 0
+        return "Erase \(n) item\(n == 1 ? "" : "s") from the Archive now?"
+    }
     @AppStorage("showMenuBarIcon") private var showMenuBarIcon = true
 
     var body: some View {
@@ -84,7 +91,10 @@ struct GeneralSettings: View {
                 Text("New video, audio, images and fonts in Downloads show up in the drawer. macOS asks once to let EditMax see the folder.")
             }
             Section {
-                Picker("Keep deleted files for", selection: $s.archiveDays) {
+                Picker("Keep deleted files for", selection: Binding(get: { s.archiveDays }, set: { d in
+                    // A shorter period erases what is already older than it: ask first, naming how many.
+                    if archive.wouldErase(days: d) > 0 { pendingDays = d } else { s.archiveDays = d }
+                })) {
                     ForEach(AppArchive.periods, id: \.self) { d in Text(d == 1 ? "1 day" : "\(d) days").tag(d) }
                 }
                 .pointer().uiFrame("settings.general.archiveDays")
@@ -102,6 +112,10 @@ struct GeneralSettings: View {
             } footer: {
                 Text("Files you delete in EditMax (Assets items, projects, fonts, templates) wait in the Archive for this long, so you can restore them from Window ▸ Archive; then they are erased for good. EditMax checks at launch and about every hour.")
             }
+            .confirmationDialog(pendingTitle, isPresented: Binding(get: { pendingDays != nil }, set: { if !$0 { pendingDays = nil } }), titleVisibility: .visible) {
+                Button("Erase and Keep \(pendingDays.map(Self.daysText) ?? "")", role: .destructive) { if let d = pendingDays { s.archiveDays = d }; pendingDays = nil }
+                Button("Cancel", role: .cancel) { pendingDays = nil }
+            } message: { Text("They were deleted more than \(pendingDays.map(Self.daysText) ?? "") ago. This can't be undone; Cancel keeps \(Self.daysText(s.archiveDays)).") }
             .confirmationDialog("Erase everything in the Archive now?", isPresented: $confirmEmpty, titleVisibility: .visible) {
                 Button("Erase \(archive.entries.count) Item\(archive.entries.count == 1 ? "" : "s")", role: .destructive) { archive.emptyNow() }
                 Button("Cancel", role: .cancel) {}

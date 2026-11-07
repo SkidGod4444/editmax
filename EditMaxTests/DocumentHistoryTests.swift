@@ -99,6 +99,9 @@ final class InteractionLogTests: XCTestCase {
 
     func testNearestRegisteredElementWithinReach() {
         let reg = UIRegistry.shared
+        // Only this test's elements: windows other tests left open still register theirs (a notch drop switches every
+        // open media panel to Assets, whose rows can sit at these points).
+        for id in Array(reg.frames.keys) { reg.remove(id) }
         reg.set("test.divider", CGRect(x: 100, y: 0, width: 32, height: 300))
         reg.set("test.far", CGRect(x: 900, y: 0, width: 32, height: 300))
         defer { reg.remove("test.divider"); reg.remove("test.far") }

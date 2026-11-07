@@ -47,24 +47,30 @@ final class HomeWindow {
             let frame = savedFrame ?? w.frame   // hide() empties the window, which can collapse its frame; keep the real one
             let model = HomeModel()
             if let place { model.place = place }
-            let split = NSSplitViewController()
-            let sideVC = NSHostingController(rootView: HomeView(part: .sidebar, model: model))
-            let mainVC = NSHostingController(rootView: HomeView(part: .projects, model: model))
-            sideVC.sizingOptions = []; mainVC.sizingOptions = []   // the window keeps its own frame; SwiftUI does not size it
-            let side = NSSplitViewItem(sidebarWithViewController: sideVC)
-            side.minimumThickness = 250; side.maximumThickness = 250; side.canCollapse = false
-            side.titlebarSeparatorStyle = .none
-            let main = NSSplitViewItem(viewController: mainVC)
-            main.titlebarSeparatorStyle = .none
-            split.addSplitViewItem(side); split.addSplitViewItem(main)
-            split.view.frame = NSRect(origin: .zero, size: frame.size)
-            w.contentViewController = split
+            w.contentViewController = Self.content(model: model, size: frame.size)
             w.setFrame(frame, display: false)
             if !NSScreen.screens.contains(where: { $0.visibleFrame.intersects(w.frame) }) { w.center() }   // never off every screen
         }
         ProjectLibrary.shared.refresh()
         window?.makeKeyAndOrderFront(nil)   // orders within EditMax's own layer; never activates the app
         DebugLog.event("home-show", ["windowNumber": window?.windowNumber ?? -1])
+    }
+
+    /// Home's two panes: the sidebar (AppKit's sidebar item) and the page, over one model. Tests build it in a window
+    /// of their own to measure it.
+    static func content(model: HomeModel, size: NSSize) -> NSSplitViewController {
+        let split = NSSplitViewController()
+        let sideVC = NSHostingController(rootView: HomeView(part: .sidebar, model: model))
+        let mainVC = NSHostingController(rootView: HomeView(part: .projects, model: model))
+        sideVC.sizingOptions = []; mainVC.sizingOptions = []   // the window keeps its own frame; SwiftUI does not size it
+        let side = NSSplitViewItem(sidebarWithViewController: sideVC)
+        side.minimumThickness = 250; side.maximumThickness = 250; side.canCollapse = false
+        side.titlebarSeparatorStyle = .none
+        let main = NSSplitViewItem(viewController: mainVC)
+        main.titlebarSeparatorStyle = .none
+        split.addSplitViewItem(side); split.addSplitViewItem(main)
+        split.view.frame = NSRect(origin: .zero, size: size)
+        return split
     }
 
     var isVisible: Bool { window?.isVisible ?? false }
@@ -177,7 +183,7 @@ struct HomeView: View {
                     Text("Agentic video editor").font(.caption).foregroundStyle(.secondary)
                 }
             }
-            .padding(.top, 36)
+            .uiFrame("home.brand")   // right under the window buttons: the sidebar already starts below the title bar
 
             VStack(alignment: .leading, spacing: 2) {
                 place(.projects, "Projects", "film.stack", count: library.entries.count)
@@ -198,7 +204,7 @@ struct HomeView: View {
                             .liquidGlass(tint: on ? Color.glassSelection : nil, interactive: true)
                             .foregroundStyle(on ? Color.white : Color.primary)
                             .pointer()
-                            .help("\(t.name): \(t.width)×\(t.height) at \(Int(t.fps)) fps")
+                            .help(Text(verbatim: "\(t.name): \(t.width)×\(t.height) at \(Int(t.fps)) fps"))
                             .uiFrame("home.template.\(slug(t))").uiTap("home.template.\(slug(t))") { model.template = t }
                     }
                 }
@@ -223,10 +229,9 @@ struct HomeView: View {
 
             Spacer()
             place(.archive, "Archive", "archivebox", count: archive.entries.count)
-            Text("Projects live in Movies ▸ EditMax Projects. A draft is a project you have not named yet.\nEditMax by Saidev Dhal.")
-                .font(.caption2).foregroundStyle(.tertiary).fixedSize(horizontal: false, vertical: true)
+            HomeVersionLine()
         }
-        .padding(22)
+        .padding(.horizontal, 22).padding(.bottom, 18)
         .frame(maxHeight: .infinity, alignment: .top)
     }
 
@@ -304,6 +309,28 @@ final class HomeModel: ObservableObject {
     @Published var assetMessage: String?
     // Archive (ArchiveView.swift)
     @Published var archiveFilter: ArchivePane.Filter = .all
+}
+
+/// The sidebar's last line: the version, and one action, Check for Updates (only where updates are on).
+struct HomeVersionLine: View {
+    @ObservedObject private var updates = AppUpdater.shared
+    /// Release builds; a test turns it on to see the link.
+    var showsUpdates = AppUpdater.isEnabled
+    private var version: String { Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "" }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text(verbatim: "EditMax \(version)").foregroundStyle(.tertiary).help("EditMax by Saidev Dhal")
+            Spacer(minLength: 4)
+            if showsUpdates {
+                Button("Check for Updates") { updates.checkForUpdates() }
+                    .buttonStyle(.link)
+                    .pointer().uiFrame("home.updates").uiTap("home.updates") { if updates.canCheck { updates.checkForUpdates() } }
+            }
+        }
+        .font(.caption)
+        .padding(.horizontal, 8)   // the rows' inset, so it lines up with them
+    }
 }
 
 /// A sidebar row's inside: a 20 pt icon column, the title, an optional count, 28 pt tall and inset 8 pt, shared by the
@@ -388,7 +415,7 @@ private struct ProjectCard: View {
             .animation(.snappy(duration: 0.18), value: hover)
             VStack(alignment: .leading, spacing: 2) {
                 Text(entry.name).font(.system(size: 13, weight: .semibold)).lineLimit(1)
-                Text("\(relative(entry.modified)) · \(entry.width)×\(entry.height)").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                Text(verbatim: "\(relative(entry.modified)) · \(entry.width)×\(entry.height)").font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
         }
         .contentShape(Rectangle())

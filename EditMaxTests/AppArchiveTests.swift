@@ -106,6 +106,7 @@ final class AppArchiveTests: XCTestCase {
             let archive = try XCTUnwrap(h.frame("home.place.archive"))
             let settings = try XCTUnwrap(h.frame("home.settings"))
             XCTAssertGreaterThan(archive.minY, settings.maxY + 40, "at the foot, not with the other links")
+            XCTAssertLessThan(archive.maxY, 660 - 22 - 12, "with only the one-line version under it")
             let rows = try ["home.place.projects", "home.place.assets", "home.open", "home.finder", "home.settings", "home.place.archive"].map { try XCTUnwrap(h.frame($0), $0) }
             for r in rows {
                 XCTAssertEqual(r.minX, rows[0].minX, accuracy: 0.5, "same inset")
@@ -114,6 +115,37 @@ final class AppArchiveTests: XCTestCase {
             }
             h.save("home-sidebar-\(dark ? "dark" : "light")")
             h.close()
+            let foot = OffscreenHost(VStack(alignment: .leading, spacing: 18) {
+                HomePlaceRow(place: .archive, title: "Archive", symbol: "archivebox", count: 1, model: model)
+                HomeVersionLine(showsUpdates: true)
+            }.padding(22), size: CGSize(width: 250, height: 110), dark: dark)
+            foot.save("home-sidebar-foot-\(dark ? "dark" : "light")")
+            foot.close()
+        }
+    }
+
+    /// Home in a real titled window (full-size content, see-through title bar): where the window buttons end and where
+    /// the logo starts, and the page title beside it.
+    func testHomeBrandSitsUnderTheWindowButtons() throws {
+        GlassCompat.forceFallback = true
+        defer { GlassCompat.forceFallback = false }
+        let w = NSWindow(contentRect: NSRect(x: -12_000, y: -12_000, width: 1000, height: 660), styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
+        w.titlebarAppearsTransparent = true; w.titleVisibility = .hidden; w.isReleasedWhenClosed = false
+        w.appearance = NSAppearance(named: .darkAqua)
+        w.contentViewController = HomeWindow.content(model: HomeModel(), size: NSSize(width: 1000, height: 660))
+        defer { w.close() }
+        for _ in 0..<6 { w.contentView?.layoutSubtreeIfNeeded(); RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
+        let close = try XCTUnwrap(w.standardWindowButton(.closeButton))
+        let inWindow = close.convert(close.bounds, to: nil)
+        let buttonsBottom = w.frame.height - inWindow.minY   // from the window's top edge
+        let el = UIRegistry.shared.elements(in: w).visible
+        let brand = try XCTUnwrap(el.first { $0.id == "home.brand" }?.rect)
+        print("HOME-MEASURE buttonsBottom=\(buttonsBottom) brandTop=\(brand.minY) brandBottom=\(brand.maxY) contentTop=\(w.contentLayoutRect.maxY) frameH=\(w.frame.height)")
+        XCTAssertGreaterThan(brand.minY, buttonsBottom, "below the window buttons")
+        XCTAssertLessThan(brand.minY - buttonsBottom, 20, "right under them, not far below")
+        if let dir = ColorFixtures.previewDir, let v = w.contentView, let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) {
+            v.cacheDisplay(in: v.bounds, to: rep)
+            try rep.representation(using: .png, properties: [:])?.write(to: dir.appendingPathComponent("inspector-fixes/home-window-dark.png"))
         }
     }
 

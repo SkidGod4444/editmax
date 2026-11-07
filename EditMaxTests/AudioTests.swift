@@ -107,7 +107,12 @@ final class AudioDSPTests: XCTestCase {
         XCTAssertEqual(S.meter([s, z]).integrated, -23.0, accuracy: 0.05)
         XCTAssertEqual(S.meter([s, s]).integrated, -20.0, accuracy: 0.05)
         // At 44.1 kHz the filters are redesigned for the rate.
-        let s44 = (0..<Int(5 * 44_100.0)).map { Float(0.1 * sin(2 * .pi * 997 * Double($0) / 44_100)) }
+        // Typed steps: CI's Xcode 26.6 could not type-check this as one expression.
+        let n44: Int = 5 * 44_100
+        let s44: [Float] = (0..<n44).map { (i: Int) -> Float in
+            let phase: Double = 2 * Double.pi * 997 * Double(i) / 44_100
+            return Float(0.1 * sin(phase))
+        }
         XCTAssertEqual(S.meter([s44, s44], rate: 44_100).integrated, -20.0, accuracy: 0.05)
     }
 

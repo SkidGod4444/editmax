@@ -3,12 +3,16 @@ import UniformTypeIdentifiers
 
 struct TimelineView: View {
     @ObservedObject var document: EditMaxDocument
-    @ObservedObject var player: PlayerController
+    /// Not observed: the player publishes its time 30 times a second while playing, and re-rendering the whole timeline
+    /// for each tick froze long timelines. Only the views that show the time watch it (`PlayerReader`).
+    let player: PlayerController
     @EnvironmentObject var state: EditorState
     @ObservedObject private var waveforms = WaveformStore.shared
     @ObservedObject private var thumbnails = ThumbnailStore.shared
     @State private var scroll = ScrollPosition()
-    @State private var visibleX: ClosedRange<CGFloat> = 0...0
+    /// What part of the lanes is on screen. Only the views that draw along the time axis read it (ruler, grid, clip
+    /// bodies), so a scroll redraws them and not the whole timeline.
+    @State private var viewport = TimelineViewport()
     @State private var dropLane: UUID?          // lane under a drag, for the highlight (nil id = the default lane)
     @State private var dropError: String?
     @State private var trackDropTarget: UUID?   // header row a dragged track hovers over
@@ -54,8 +58,8 @@ struct TimelineView: View {
                             .frame(width: max(contentWidth, geo.size.width - headerWidth), alignment: .topLeading).frame(minHeight: geo.size.height, alignment: .topLeading)
                         }
                         .scrollPosition($scroll)
-                        .onScrollGeometryChange(for: ClosedRange<CGFloat>.self) { g in g.contentOffset.x...(g.contentOffset.x + g.containerSize.width) } action: { _, new in visibleX = new }
-                        .onChange(of: player.currentTime) { _, t in followPlayhead(t) }
+                        .onScrollGeometryChange(for: ClosedRange<CGFloat>.self) { g in g.contentOffset.x...(g.contentOffset.x + g.containerSize.width) } action: { _, new in viewport.scrolled(to: new) }
+                        .background { PlayerReader(player: player) { p in Color.clear.onChange(of: p.currentTime) { _, t in followPlayhead(t) } } }
                     }
                 }
                 .onScrollGeometryChange(for: CGFloat.self) { g in max(0, g.contentOffset.y + g.contentInsets.top) } action: { _, y in vertical.y = y }
@@ -89,13 +93,13 @@ struct TimelineView: View {
             // Transport: one compact group on a faint plate.
             HStack(spacing: 0) {
                 toolButton("backward.frame", help: "Previous frame", id: "toolbar.stepBack") { player.step(frames: -1, fps: fps) }
-                toolButton(player.isPlaying ? "pause.fill" : "play.fill", help: "Play or pause (space)", id: "toolbar.play", width: 28) { player.togglePlay() }
+                PlayerReader(player: player) { p in toolButton(p.isPlaying ? "pause.fill" : "play.fill", help: "Play or pause (space)", id: "toolbar.play", width: 28) { p.togglePlay() } }
                 toolButton("forward.frame", help: "Next frame", id: "toolbar.stepForward") { player.step(frames: 1, fps: fps) }
             }
             .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             // Timecode HUD: the current time prominent, the duration secondary.
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(Timecode.string(player.currentTime, fps: fps)).font(.system(size: 13, weight: .semibold, design: .monospaced)).monospacedDigit()
+                PlayerReader(player: player) { p in Text(Timecode.string(p.currentTime, fps: fps)).font(.system(size: 13, weight: .semibold, design: .monospaced)).monospacedDigit() }
                 Text(Timecode.string(document.project.duration, fps: fps)).font(.system(size: 11, design: .monospaced)).monospacedDigit().foregroundStyle(.secondary)
             }
             .fixedSize()   // a narrow timeline (the mixer open) squeezes the zoom slider, never the time
@@ -309,33 +313,16 @@ struct TimelineView: View {
 
     /// Time ticks and lane stripes behind the clips, covering the full pane height.
     private var grid: some View {
-        Canvas { ctx, size in
-            let step: Double = pps >= 120 ? 0.5 : pps >= 40 ? 1 : pps >= 20 ? 2 : 5
-            let rows = document.project.tracks.count + 1
-            let lanesBottom = rulerHeight + CGFloat(rows) * (rowHeight + 1)
-            // Lanes carry a faint fill; the space below them stays bare so the stack has a visible end.
-            for lane in 0..<rows {
-                let y = rulerHeight + CGFloat(lane) * (rowHeight + 1)
-                ctx.fill(Path(CGRect(x: 0, y: y, width: size.width, height: rowHeight)), with: .color(.primary.opacity(lane % 2 == 1 ? 0.04 : 0.02)))
-            }
-            // Grid lines sit well under the clips: 6 % for the step lines, 9 % on every fifth (the ruler's labelled marks).
-            var t = 0.0
-            while CGFloat(t) * pps < size.width {
-                let x = CGFloat(t) * pps + 0.5
-                let major = t.truncatingRemainder(dividingBy: step * 5) == 0
-                ctx.stroke(Path { $0.move(to: CGPoint(x: x, y: rulerHeight)); $0.addLine(to: CGPoint(x: x, y: lanesBottom)) }, with: .color(.primary.opacity(major ? 0.09 : 0.06)), lineWidth: 1)
-                t += step
-            }
-        }
-        .allowsHitTesting(false)
+        TimelineGrid(viewport: viewport, pps: pps, rows: document.project.tracks.count + 1, rulerHeight: rulerHeight, rowHeight: rowHeight)
+            .allowsHitTesting(false)
     }
 
     /// Keeps the playhead in view: when it leaves the visible range (playback, seeking from the agent), the lanes scroll
     /// so it sits a little in from the left edge.
     private func followPlayhead(_ t: Double) {
-        let x = CGFloat(t) * pps
-        guard visibleX.upperBound > visibleX.lowerBound, !visibleX.contains(x) else { return }
-        DebugLog.event("timeline-follow", ["t": t, "x": Double(x), "from": Double(visibleX.lowerBound), "to": Double(visibleX.upperBound)])
+        let x = CGFloat(t) * pps, visible = viewport.visible
+        guard visible.upperBound > visible.lowerBound, !visible.contains(x) else { return }
+        DebugLog.event("timeline-follow", ["t": t, "x": Double(x), "from": Double(visible.lowerBound), "to": Double(visible.upperBound)])
         scroll.scrollTo(x: max(0, x - 80))
     }
 
@@ -466,43 +453,7 @@ struct TimelineView: View {
     }
 
     private var ruler: some View {
-        Canvas { ctx, size in
-            ctx.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.black.opacity(0.18)))
-            let step: Double = pps >= 120 ? 0.5 : pps >= 40 ? 1 : pps >= 20 ? 2 : 5
-            let minor = step / 5
-            // Timecodes in the top band; ticks and marker pins share the bottom band (markers are drawn after, on top).
-            let labelY: CGFloat = 8, markerTop = size.height - 14
-            var i = 0
-            while CGFloat(Double(i) * minor) * pps < size.width {
-                let t = Double(i) * minor   // computed, not accumulated, so labels stay exact
-                let x = CGFloat(t) * pps
-                let isMajor = i % 5 == 0
-                let h: CGFloat = isMajor ? 8 : 4
-                ctx.stroke(Path { $0.move(to: CGPoint(x: x, y: size.height)); $0.addLine(to: CGPoint(x: x, y: size.height - h)) }, with: .color(.primary.opacity(isMajor ? 0.5 : 0.22)), lineWidth: 1)
-                if isMajor { ctx.draw(Text(Timecode.string(t, fps: fps)).font(.system(size: 9, weight: .medium, design: .rounded)).foregroundColor(.secondary), at: CGPoint(x: x + 4, y: labelY), anchor: .leading) }
-                i += 1
-            }
-            if let i = state.inPoint, let o = state.outPoint, o > i {
-                ctx.fill(Path(CGRect(x: CGFloat(i) * pps, y: 0, width: CGFloat(o - i) * pps, height: size.height)), with: .color(.yellow.opacity(0.18)))
-                for e in [i, o] { ctx.stroke(Path { $0.move(to: CGPoint(x: CGFloat(e) * pps, y: 0)); $0.addLine(to: CGPoint(x: CGFloat(e) * pps, y: size.height)) }, with: .color(.yellow), lineWidth: 1) }
-            } else if let i = state.inPoint ?? state.outPoint {
-                ctx.stroke(Path { $0.move(to: CGPoint(x: CGFloat(i) * pps, y: 0)); $0.addLine(to: CGPoint(x: CGFloat(i) * pps, y: size.height)) }, with: .color(.yellow), lineWidth: 1)
-            }
-            for m in document.project.markers {
-                let x = CGFloat(m.time) * pps
-                let flag = Path { p in p.move(to: CGPoint(x: x, y: markerTop)); p.addLine(to: CGPoint(x: x + 7, y: markerTop)); p.addLine(to: CGPoint(x: x + 7, y: markerTop + 6)); p.addLine(to: CGPoint(x: x, y: markerTop + 6)); p.addLine(to: CGPoint(x: x, y: size.height)) }
-                ctx.fill(Path(CGRect(x: x, y: markerTop, width: 7, height: 6)), with: .color(Color(hex: m.colorHex)))
-                ctx.stroke(flag, with: .color(Color(hex: m.colorHex)), lineWidth: 1)
-                if !m.name.isEmpty {
-                    // A tag in the marker's colour beside the pin, in the bottom band: it covers ticks, never a timecode.
-                    let label = ctx.resolve(Text(m.name).font(.system(size: 8, weight: .medium)).foregroundColor(.white))
-                    let s = label.measure(in: CGSize(width: 120, height: 12))
-                    let tag = CGRect(x: x + 10, y: markerTop - 1, width: s.width + 6, height: 11)
-                    ctx.fill(Path(roundedRect: tag, cornerRadius: 3), with: .color(Color(hex: m.colorHex).opacity(0.9)))
-                    ctx.draw(label, at: CGPoint(x: tag.minX + 3, y: tag.midY), anchor: .leading) }
-            }
-            ctx.stroke(Path { $0.move(to: CGPoint(x: 0, y: size.height - 0.5)); $0.addLine(to: CGPoint(x: size.width, y: size.height - 0.5)) }, with: .color(.primary.opacity(0.15)))
-        }
+        TimelineRuler(viewport: viewport, pps: pps, fps: fps, inPoint: state.inPoint, outPoint: state.outPoint, markers: document.project.markers)
         .contentShape(Rectangle())
         .gesture(DragGesture(minimumDistance: 0).onChanged { v in seek(x: v.location.x) })
         .contextMenu {
@@ -529,7 +480,7 @@ struct TimelineView: View {
                            minStart: TrimLimitsUI.minStart(clip, asset: asset, project: document.project),
                            maxEnd: TrimLimitsUI.maxEnd(clip, asset: asset, project: document.project),
                            help: "\(clip.name)  \(Timecode.string(clip.start, fps: fps)) → \(Timecode.string(clip.end, fps: fps))",
-                           snaps: snapTimes(excluding: clip.id),
+                           snaps: { snapTimes(excluding: clip.id) },
                            onSelect: { drag in select(clip.id, keepGroup: drag) },
                            onMove: { newStart in
                                let group = state.selectedClipIDs
@@ -539,15 +490,18 @@ struct TimelineView: View {
                            },
                            onTrimStart: { try? x.trimClip(clip.id.uuidString, start: $0, end: nil) },
                            onTrimEnd: { try? x.trimClip(clip.id.uuidString, start: nil, end: $0) },
-                           editing: BarEditing.make(clip: clip, track: track, document: document, tool: state.editTool, strip: thumbnails.strips[clip.assetID], peaks: waveforms.peaks[clip.assetID] ?? [])) {
+                           editing: BarEditing.make(clip: clip, track: track, document: document, tool: state.editTool, strip: thumbnails.strips[clip.assetID], peaks: waveforms.peaks[clip.assetID] ?? []),
+                           viewport: viewport) {
             ClipBody(clip: clip, kind: track.kind, selected: selected, height: rowHeight - 10, pps: pps,
                      peaks: waveforms.peaks[clip.assetID] ?? [], strip: thumbnails.strips[clip.assetID],
-                     off: ClipBody.Off(track: track, in: document.project))
+                     off: ClipBody.Off(track: track, in: document.project), viewport: viewport)
                 .equatable()
                 .onAppear { if let asset { waveforms.request(asset); thumbnails.request(asset) } }
                 .contextMenu {
-            Button("Split at playhead", systemImage: "scissors") { select(clip.id, keepGroup: false); try? x.splitClip(clip.id.uuidString, at: player.currentTime) }
-                .disabled(player.currentTime <= clip.start + 0.01 || player.currentTime >= clip.end - 0.01)
+            PlayerReader(player: player) { p in
+                Button("Split at playhead", systemImage: "scissors") { select(clip.id, keepGroup: false); try? x.splitClip(clip.id.uuidString, at: p.currentTime) }
+                    .disabled(p.currentTime <= clip.start + 0.01 || p.currentTime >= clip.end - 0.01)
+            }
             Button("Go to start", systemImage: "arrow.left.to.line") { player.pause(); player.seek(to: clip.start) }
             Menu("Transition in") {
                 ForEach(Transition.Kind.allCases, id: \.self) { k in Button(k.title) { _ = try? x.setTransition(clip.id.uuidString, kind: k.rawValue, duration: nil) } }
@@ -565,7 +519,7 @@ struct TimelineView: View {
             document.apply(label, origin: .user) { p in if let i = p.texts.firstIndex(where: { $0.id == t.id }) { body(&p.texts[i]) } }
         }
         return TimelineBar(id: t.id, uiID: "text.\(t.id.short)", start: t.start, duration: t.duration, pps: pps, height: 30, minStart: 0, maxEnd: .infinity,
-                           help: "\(t.text)  \(Timecode.string(t.start, fps: fps)) → \(Timecode.string(t.end, fps: fps))", snaps: snapTimes(excluding: t.id),
+                           help: "\(t.text)  \(Timecode.string(t.start, fps: fps)) → \(Timecode.string(t.end, fps: fps))", snaps: { snapTimes(excluding: t.id) },
                            onSelect: { _ in state.selectedTextID = t.id; state.selectedClipIDs = [] },
                            onMove: { s in edit("Move text to \(s)s") { $0.start = s } },
                            onTrimStart: { s in edit("Trim text") { $0.duration = t.end - s; $0.start = s } },
@@ -585,19 +539,22 @@ struct TimelineView: View {
     }
 
     private var playhead: some View {
-        let x = CGFloat(player.currentTime) * pps
-        return Rectangle().fill(Color.red).frame(width: 1).frame(maxHeight: .infinity).offset(x: x)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .allowsHitTesting(false)
+        PlayerReader(player: player) { p in
+            Rectangle().fill(Color.red).frame(width: 1).frame(maxHeight: .infinity).offset(x: CGFloat(p.currentTime) * pps)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+        .allowsHitTesting(false)
     }
 
     /// The playhead's head in the ruler: a small downward triangle whose tip meets the line at the ruler's bottom edge.
     private var playheadHead: some View {
-        Path { p in
-            p.move(to: CGPoint(x: 0, y: rulerHeight - 8)); p.addLine(to: CGPoint(x: 10, y: rulerHeight - 8))
-            p.addLine(to: CGPoint(x: 5, y: rulerHeight)); p.closeSubpath()
+        PlayerReader(player: player) { pl in
+            Path { p in
+                p.move(to: CGPoint(x: 0, y: rulerHeight - 8)); p.addLine(to: CGPoint(x: 10, y: rulerHeight - 8))
+                p.addLine(to: CGPoint(x: 5, y: rulerHeight)); p.closeSubpath()
+            }
+            .fill(Color.red).frame(width: 10, height: rulerHeight).offset(x: CGFloat(pl.currentTime) * pps - 4.5)
         }
-        .fill(Color.red).frame(width: 10, height: rulerHeight).offset(x: CGFloat(player.currentTime) * pps - 4.5)
         .allowsHitTesting(false)
     }
 
@@ -611,6 +568,7 @@ struct TimelineView: View {
         state.selectedTextID = nil
     }
     /// Edges a dragged bar snaps to: every other clip and text edge, the markers, the in/out points, the playhead and 0.
+    /// Asked for during a drag (not built for every bar on every render: that was clips × clips per playhead tick).
     private func snapTimes(excluding id: UUID) -> [Double] {
         var t: [Double] = [0, player.currentTime]
         for c in document.project.allClips where c.id != id { t.append(c.start); t.append(c.end) }
@@ -649,6 +607,9 @@ struct ClipBody: View, Equatable {
     let strip: ThumbnailStore.Strip?
     /// What of the clip is left out of the program by its track, so the bar can say so (dimmed).
     var off = Off()
+    /// The timeline's viewport: the frames and the waveform are drawn only across its span (read in `body`, so a scroll
+    /// past a tile edge redraws this bar; not part of ==). nil draws the whole bar.
+    var viewport: TimelineViewport? = nil
 
     /// A hidden track leaves its clips out of the program entirely (picture and sound); a muted track, or one silenced
     /// because another track is soloed, leaves out their sound only.
@@ -710,6 +671,7 @@ struct ClipBody: View, Equatable {
     }
 
     var body: some View {
+        let visible = viewport?.local(start: clip.start, pps: pps, width: CGFloat(clip.duration) * pps)
         let waveBand: CGFloat = kind == .video ? 18 : height
         let base = kind == .video ? Color(red: 0.16, green: 0.32, blue: 0.62) : Color(red: 0.15, green: 0.45, blue: 0.3)
         let whole = off.whole(kind), soundBand = kind == .video && off.sound && !off.picture
@@ -721,7 +683,7 @@ struct ClipBody: View, Equatable {
                         ZStack {
                             Color.black.opacity(0.25)
                             if let strip, !strip.frames.isEmpty {
-                                ThumbnailStripView(strip: strip, sourceIn: clip.sourceIn, sourceOut: clip.sourceOut).equatable()
+                                ThumbnailStripView(strip: strip, sourceIn: clip.sourceIn, sourceOut: clip.sourceOut, visible: visible).equatable()
                             }
                         }
                         .frame(height: height - waveBand)
@@ -729,7 +691,7 @@ struct ClipBody: View, Equatable {
                     ZStack {
                         if kind == .video { Color.black.opacity(0.35) }
                         if !peaks.isEmpty {
-                            WaveformView(peaks: peaks, sourceIn: clip.sourceIn, sourceOut: clip.sourceOut, color: .white.opacity(kind == .video ? 0.75 : 0.8))
+                            WaveformView(peaks: peaks, sourceIn: clip.sourceIn, sourceOut: clip.sourceOut, color: .white.opacity(kind == .video ? 0.75 : 0.8), visible: visible)
                                 .equatable()
                                 .padding(.vertical, kind == .video ? 2 : 6)
                         }
@@ -790,12 +752,14 @@ private struct TimelineBar<Content: View>: View {
     let minStart: Double      // earliest start the leading edge may reach
     let maxEnd: Double        // latest end the trailing edge may reach
     let help: String
-    var snaps: [Double] = []
+    /// Times the dragged edges snap to, asked for when a drag needs them.
+    var snaps: () -> [Double] = { [] }
     let onSelect: (_ dragging: Bool) -> Void
     let onMove: (Double) -> Void
     let onTrimStart: (Double) -> Void
     let onTrimEnd: (Double) -> Void
     var editing: BarEditing? = nil   // roll / slip / slide (TrimTools.swift); nil = move and trim only
+    var viewport: TimelineViewport? = nil   // a slip's preview is drawn only across its span
     @ViewBuilder let content: () -> Content
 
     @State private var moveDX: CGFloat = 0
@@ -823,7 +787,8 @@ private struct TimelineBar<Content: View>: View {
             .overlay(alignment: .topLeading) {
                 if let d = toolDrag, let e = editing {
                     TrimFeedback(kind: d.kind, amount: d.amount, limited: d.limited, context: d.context, clip: e.clip, assetDuration: e.assetDuration,
-                                 strip: e.strip, peaks: e.peaks, pps: pps, width: fullW, height: height, shift: rollL + slidePx)
+                                 strip: e.strip, peaks: e.peaks, pps: pps, width: fullW, height: height, shift: rollL + slidePx,
+                                 visible: viewport?.local(start: start, pps: pps, width: fullW))
                 }
             }
             .offset(x: CGFloat(start) * pps + trimL + rollL + slidePx + max(-CGFloat(start) * pps, moveDX))
@@ -863,6 +828,7 @@ private struct TimelineBar<Content: View>: View {
         if kind != .slip, snapping {   // the moving edge snaps like a trim
             let edge: Double = kind == .roll(leading: true) ? start : kind == .slide ? start : end
             let cand = edge + raw
+            let snaps = self.snaps()
             if let s = snaps.first(where: { abs(CGFloat($0 - cand) * pps) < snapPx }) { raw = s - edge }
             else if kind == .slide, let s = snaps.first(where: { abs(CGFloat($0 - (end + raw)) * pps) < snapPx }) { raw = s - end }
         }
@@ -882,7 +848,7 @@ private struct TimelineBar<Content: View>: View {
     private func snappedMove(_ dx: CGFloat) -> CGFloat {
         guard snapping else { return dx }
         let cand = start + Double(dx) / Double(pps)
-        for s in snaps {
+        for s in snaps() {
             if abs(CGFloat(cand - s) * pps) < snapPx { return CGFloat(s - start) * pps }
             if abs(CGFloat(cand + duration - s) * pps) < snapPx { return CGFloat(s - duration - start) * pps }
         }
@@ -892,7 +858,7 @@ private struct TimelineBar<Content: View>: View {
         guard snapping else { return dx }
         let edge = leading ? start : end
         let cand = edge + Double(dx) / Double(pps)
-        for s in snaps where abs(CGFloat(cand - s) * pps) < snapPx { return CGFloat(s - edge) * pps }
+        for s in snaps() where abs(CGFloat(cand - s) * pps) < snapPx { return CGFloat(s - edge) * pps }
         return dx
     }
 
@@ -929,6 +895,132 @@ private struct TimelineBar<Content: View>: View {
                     let dx = snappedTrim(leading: leading, v.translation.width); trim = nil; commitTrim(leading: leading, dx: dx)
                 })
     }
+}
+
+/// The part of the lanes on screen, in content points, and the span worth drawing around it. A long timeline is wide
+/// (18 hours at 60 pt/s is 3.9 million points), so the ruler, the grid and the clip bodies draw only `drawn`: the
+/// visible part and a screen either side, widened to whole 2048-point tiles. `drawn` changes only when a scroll crosses
+/// a tile edge, so a scroll redraws them a few times a screen, not every frame; `visible` itself is not observed.
+@Observable final class TimelineViewport {
+    static let tile: CGFloat = 2048
+    @ObservationIgnored private(set) var visible: ClosedRange<CGFloat> = 0...0
+    /// Before the scroll view first reports: the first two tiles.
+    private(set) var drawn: ClosedRange<CGFloat> = 0...(2 * TimelineViewport.tile)
+
+    func scrolled(to v: ClosedRange<CGFloat>) {
+        visible = v
+        let d = Self.span(around: v)
+        if d != drawn { drawn = d }
+    }
+
+    static func span(around v: ClosedRange<CGFloat>) -> ClosedRange<CGFloat> {
+        guard v.upperBound > v.lowerBound else { return 0...(2 * tile) }
+        let w = v.upperBound - v.lowerBound
+        let lo = max(0, ((v.lowerBound - w) / tile).rounded(.down) * tile)
+        return lo...max(lo + tile, ((v.upperBound + w) / tile).rounded(.up) * tile)
+    }
+
+    /// `drawn` in a bar's own coordinates (its x 0 at `start` seconds, `width` wide), clamped to the bar: the whole bar
+    /// when it is all in the span (so it does not redraw while the span moves), 0...0 when none of it is.
+    func local(start: Double, pps: CGFloat, width: CGFloat) -> ClosedRange<CGFloat> {
+        let x0 = CGFloat(start) * pps
+        let lo = max(0, drawn.lowerBound - x0), hi = min(width, drawn.upperBound - x0)
+        return hi > lo ? lo...hi : 0...0
+    }
+}
+
+/// Lane stripes and time lines behind the clips. Background fills span the whole width (one rectangle each); the
+/// lines are drawn only across the viewport's span.
+private struct TimelineGrid: View {
+    let viewport: TimelineViewport
+    let pps: CGFloat
+    let rows: Int
+    let rulerHeight: CGFloat
+    let rowHeight: CGFloat
+
+    var body: some View {
+        let span = viewport.drawn
+        Canvas { ctx, size in
+            let step: Double = pps >= 120 ? 0.5 : pps >= 40 ? 1 : pps >= 20 ? 2 : 5
+            let lanesBottom = rulerHeight + CGFloat(rows) * (rowHeight + 1)
+            // Lanes carry a faint fill; the space below them stays bare so the stack has a visible end.
+            for lane in 0..<rows {
+                let y = rulerHeight + CGFloat(lane) * (rowHeight + 1)
+                ctx.fill(Path(CGRect(x: 0, y: y, width: size.width, height: rowHeight)), with: .color(.primary.opacity(lane % 2 == 1 ? 0.04 : 0.02)))
+            }
+            // Grid lines sit well under the clips: 6 % for the step lines, 9 % on every fifth (the ruler's labelled marks).
+            // Counted from 0 (k), not from the span's edge, so a line is at the same place whichever span draws it.
+            let hi = min(size.width, span.upperBound)
+            var k = max(0, Int((Double(span.lowerBound / pps) / step).rounded(.down)))
+            while CGFloat(Double(k) * step) * pps < hi {
+                let x = CGFloat(Double(k) * step) * pps + 0.5
+                ctx.stroke(Path { $0.move(to: CGPoint(x: x, y: rulerHeight)); $0.addLine(to: CGPoint(x: x, y: lanesBottom)) }, with: .color(.primary.opacity(k % 5 == 0 ? 0.09 : 0.06)), lineWidth: 1)
+                k += 1
+            }
+        }
+    }
+}
+
+/// Ticks, timecodes, the in/out range and markers. Ticks, labels and markers are drawn only across the viewport's span:
+/// at 60 pt/s an 18-hour ruler has 65,000 labels, and laying them all out took 1.7 s per redraw.
+private struct TimelineRuler: View {
+    let viewport: TimelineViewport
+    let pps: CGFloat
+    let fps: Double
+    let inPoint: Double?
+    let outPoint: Double?
+    let markers: [Marker]
+
+    var body: some View {
+        let span = viewport.drawn
+        Canvas { ctx, size in
+            ctx.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.black.opacity(0.18)))
+            let step: Double = pps >= 120 ? 0.5 : pps >= 40 ? 1 : pps >= 20 ? 2 : 5
+            let minor = step / 5
+            // Timecodes in the top band; ticks and marker pins share the bottom band (markers are drawn after, on top).
+            let labelY: CGFloat = 8, markerTop = size.height - 14
+            let lo = span.lowerBound, hi = min(size.width, span.upperBound)
+            var i = max(0, Int((Double(lo / pps) / minor).rounded(.down)))
+            while CGFloat(Double(i) * minor) * pps < hi {
+                let t = Double(i) * minor   // computed from the tick's index, not accumulated, so labels stay exact
+                let x = CGFloat(t) * pps
+                let isMajor = i % 5 == 0
+                let h: CGFloat = isMajor ? 8 : 4
+                ctx.stroke(Path { $0.move(to: CGPoint(x: x, y: size.height)); $0.addLine(to: CGPoint(x: x, y: size.height - h)) }, with: .color(.primary.opacity(isMajor ? 0.5 : 0.22)), lineWidth: 1)
+                if isMajor { ctx.draw(Text(Timecode.string(t, fps: fps)).font(.system(size: 9, weight: .medium, design: .rounded)).foregroundColor(.secondary), at: CGPoint(x: x + 4, y: labelY), anchor: .leading) }
+                i += 1
+            }
+            if let i = inPoint, let o = outPoint, o > i {
+                ctx.fill(Path(CGRect(x: CGFloat(i) * pps, y: 0, width: CGFloat(o - i) * pps, height: size.height)), with: .color(.yellow.opacity(0.18)))
+                for e in [i, o] { ctx.stroke(Path { $0.move(to: CGPoint(x: CGFloat(e) * pps, y: 0)); $0.addLine(to: CGPoint(x: CGFloat(e) * pps, y: size.height)) }, with: .color(.yellow), lineWidth: 1) }
+            } else if let i = inPoint ?? outPoint {
+                ctx.stroke(Path { $0.move(to: CGPoint(x: CGFloat(i) * pps, y: 0)); $0.addLine(to: CGPoint(x: CGFloat(i) * pps, y: size.height)) }, with: .color(.yellow), lineWidth: 1)
+            }
+            for m in markers {
+                let x = CGFloat(m.time) * pps
+                guard x > lo - 140, x < hi else { continue }   // the pin and its tag (up to ~130 pt) reach right of x
+                let flag = Path { p in p.move(to: CGPoint(x: x, y: markerTop)); p.addLine(to: CGPoint(x: x + 7, y: markerTop)); p.addLine(to: CGPoint(x: x + 7, y: markerTop + 6)); p.addLine(to: CGPoint(x: x, y: markerTop + 6)); p.addLine(to: CGPoint(x: x, y: size.height)) }
+                ctx.fill(Path(CGRect(x: x, y: markerTop, width: 7, height: 6)), with: .color(Color(hex: m.colorHex)))
+                ctx.stroke(flag, with: .color(Color(hex: m.colorHex)), lineWidth: 1)
+                if !m.name.isEmpty {
+                    // A tag in the marker's colour beside the pin, in the bottom band: it covers ticks, never a timecode.
+                    let label = ctx.resolve(Text(m.name).font(.system(size: 8, weight: .medium)).foregroundColor(.white))
+                    let s = label.measure(in: CGSize(width: 120, height: 12))
+                    let tag = CGRect(x: x + 10, y: markerTop - 1, width: s.width + 6, height: 11)
+                    ctx.fill(Path(roundedRect: tag, cornerRadius: 3), with: .color(Color(hex: m.colorHex).opacity(0.9)))
+                    ctx.draw(label, at: CGPoint(x: tag.minX + 3, y: tag.midY), anchor: .leading) }
+            }
+            ctx.stroke(Path { $0.move(to: CGPoint(x: 0, y: size.height - 0.5)); $0.addLine(to: CGPoint(x: size.width, y: size.height - 0.5)) }, with: .color(.primary.opacity(0.15)))
+        }
+    }
+}
+
+/// Re-renders `content` when the player publishes (its time, 30 times a second while playing), so the timeline that
+/// holds it does not.
+private struct PlayerReader<Content: View>: View {
+    @ObservedObject var player: PlayerController
+    @ViewBuilder let content: (PlayerController) -> Content
+    var body: some View { content(player) }
 }
 
 /// How far a scroll view is scrolled, shared with the views it pins. Observable, so a scroll redraws only the pinned

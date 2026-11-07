@@ -24,6 +24,8 @@ final class WaveformStore: ObservableObject {
     }
     /// Reads the asset's file again (after a relink pointed it at another file).
     func refresh(_ asset: Asset) { peaks[asset.id] = nil; request(asset) }
+    /// Peaks made elsewhere (tests: an 18-hour clip's waveform without an 18-hour file); a later `request` keeps them.
+    func install(_ p: [Float], for id: UUID) { peaks[id] = p }
 }
 
 enum WaveformExtractor {
@@ -90,7 +92,10 @@ struct WaveformView: View, Equatable {
     let sourceIn: Double
     let sourceOut: Double
     var color: Color = .white.opacity(0.7)
-    static func == (a: WaveformView, b: WaveformView) -> Bool { a.peaks.count == b.peaks.count && a.sourceIn == b.sourceIn && a.sourceOut == b.sourceOut && a.color == b.color }
+    /// The part worth drawing, in the view's own points (nil: all of it). A long clip is millions of points wide; its
+    /// waveform is drawn only where the timeline can show it.
+    var visible: ClosedRange<CGFloat>? = nil
+    static func == (a: WaveformView, b: WaveformView) -> Bool { a.peaks.count == b.peaks.count && a.sourceIn == b.sourceIn && a.sourceOut == b.sourceOut && a.color == b.color && a.visible == b.visible }
 
     var body: some View {
         Canvas { ctx, size in
@@ -99,25 +104,26 @@ struct WaveformView: View, Equatable {
             let step: CGFloat = 1
             let columns = Int(size.width / step)
             guard columns > 1 else { return }
-            // Loudest peak under each column, then a 3-column average so the shape reads as audio, not noise.
-            var raw = [CGFloat](repeating: 0, count: columns)
-            for c in 0..<columns {
+            // Columns c0..<c1 are drawn; each column is the same whatever range draws it (counted from the view's 0).
+            let c0 = visible.map { max(0, min(columns, Int(($0.lowerBound / step).rounded(.down)))) } ?? 0
+            let c1 = visible.map { max(c0, min(columns, Int(($0.upperBound / step).rounded(.up)))) } ?? columns
+            guard c1 > c0 else { return }
+            // Loudest peak under each column, then a 3-column average so the shape reads as audio, not noise (so one
+            // column either side of the range is read too).
+            let r0 = max(0, c0 - 1), r1 = min(columns, c1 + 1)
+            var raw = [CGFloat](repeating: 0, count: r1 - r0)
+            for c in r0..<r1 {
                 let t0 = sourceIn + Double(c) / Double(columns) * (sourceOut - sourceIn)
                 let t1 = sourceIn + Double(c + 1) / Double(columns) * (sourceOut - sourceIn)
                 let i0 = max(0, Int(t0 * pps)), i1 = min(peaks.count, max(i0 + 1, Int(t1 * pps)))
-                if i0 < peaks.count { raw[c] = CGFloat(peaks[i0..<i1].max() ?? 0) }
+                if i0 < peaks.count { raw[c - r0] = CGFloat(peaks[i0..<i1].max() ?? 0) }
             }
+            func level(_ c: Int) -> CGFloat { (raw[max(r0, c - 1) - r0] + raw[c - r0] + raw[min(r1 - 1, c + 1) - r0]) / 3 }
             let mid = size.height / 2
             var path = Path()
-            path.move(to: CGPoint(x: 0, y: mid))
-            for c in 0..<columns {
-                let v = (raw[max(0, c - 1)] + raw[c] + raw[min(columns - 1, c + 1)]) / 3
-                path.addLine(to: CGPoint(x: CGFloat(c) * step, y: mid - max(0.5, v * mid)))
-            }
-            for c in stride(from: columns - 1, through: 0, by: -1) {
-                let v = (raw[max(0, c - 1)] + raw[c] + raw[min(columns - 1, c + 1)]) / 3
-                path.addLine(to: CGPoint(x: CGFloat(c) * step, y: mid + max(0.5, v * mid)))
-            }
+            path.move(to: CGPoint(x: CGFloat(c0) * step, y: mid))
+            for c in c0..<c1 { path.addLine(to: CGPoint(x: CGFloat(c) * step, y: mid - max(0.5, level(c) * mid))) }
+            for c in stride(from: c1 - 1, through: c0, by: -1) { path.addLine(to: CGPoint(x: CGFloat(c) * step, y: mid + max(0.5, level(c) * mid))) }
             path.closeSubpath()
             ctx.fill(path, with: .color(color))
         }

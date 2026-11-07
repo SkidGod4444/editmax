@@ -48,6 +48,20 @@ within 1.5 s (a slider drag) into one undo step and one version. Analysis caches
   result and the inspector say so), `inspect_timeline` lists `textOverlaps` made by hand, the text inspector offers
   "Move clear", and the Text lane stacks concurrent bars into two sub-rows.
 
+## Timeline drawing (long projects)
+
+- The timeline is as wide as the project (18 h at 60 px/s is 3.9 million points), so nothing draws the full width.
+  `TimelineViewport` holds the drawn span: the screen plus one screen either side, rounded out to 2048-pt tiles.
+  Scrolling inside it changes nothing that SwiftUI observes; crossing a tile edge redraws once.
+- The ruler, the grid, each clip's thumbnails and waveform and the trim/slip feedback draw only the part inside the
+  drawn span, on the same grid as a full draw (ticks counted from 0, thumbnails from whole tiles, waveform columns
+  from the clip start), so a slice is pixel-for-pixel the full picture. `LongTimelineTests` checks this.
+- The playhead time (30 updates a second) is read only by the views that show it, through `PlayerReader`: the
+  toolbar's play button and timecode, the playhead, the follow-the-playhead scroll and "Split at playhead". The
+  timeline body itself never reads it, so a tick does not rebuild every clip.
+- Measured at 18 h, 60 px/s: a playhead update went from 1.7 s to 37 ms (a 1-minute project: 38 ms); memory
+  from about 3 GB to about 400 MB.
+
 ## Picture and sound
 
 EditMax's own compositor (`Compositor.swift`, Core Image on the GPU) draws every frame of the preview, the export and

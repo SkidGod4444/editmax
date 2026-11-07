@@ -160,6 +160,8 @@ struct TrimFeedback: View {
     let height: CGFloat
     /// How far the bar's own leading edge has moved in this drag (points), which the overlay undoes.
     var shift: CGFloat = 0
+    /// The part of the bar on screen, in its own points (nil: all): a slip on a long clip redraws only that part.
+    var visible: ClosedRange<CGFloat>? = nil
 
     private let margin: CGFloat = 1600
     private let tagHeight: CGFloat = 20
@@ -183,12 +185,12 @@ struct TrimFeedback: View {
         return VStack(spacing: 0) {
             ZStack {
                 Color.black.opacity(0.35)
-                if let strip, !strip.frames.isEmpty { ThumbnailStripView(strip: strip, sourceIn: inT, sourceOut: outT) }
+                if let strip, !strip.frames.isEmpty { ThumbnailStripView(strip: strip, sourceIn: inT, sourceOut: outT, visible: visible) }
             }
             .frame(height: height - 18)
             ZStack {
                 Color.black.opacity(0.45)
-                if !peaks.isEmpty { WaveformView(peaks: peaks, sourceIn: inT, sourceOut: outT, color: .white.opacity(0.8)).padding(.vertical, 2) }
+                if !peaks.isEmpty { WaveformView(peaks: peaks, sourceIn: inT, sourceOut: outT, color: .white.opacity(0.8), visible: visible).padding(.vertical, 2) }
             }
             .frame(height: 18)
         }

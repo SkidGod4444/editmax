@@ -23,6 +23,8 @@ final class ThumbnailStore: ObservableObject {
     }
     /// Reads the asset's file again (after a relink pointed it at another file).
     func refresh(_ asset: Asset) { strips[asset.id] = nil; request(asset) }
+    /// A strip made elsewhere (tests: frames for a clip without its file); a later `request` keeps it.
+    func install(_ strip: Strip, for id: UUID) { strips[id] = strip }
 
     private static func generate(url: URL, duration: Double) async -> Strip {
         let started = Date()
@@ -59,14 +61,19 @@ struct ThumbnailStripView: View, Equatable {
     let strip: ThumbnailStore.Strip
     let sourceIn: Double
     let sourceOut: Double
-    static func == (a: ThumbnailStripView, b: ThumbnailStripView) -> Bool { a.strip.frames.count == b.strip.frames.count && a.strip.interval == b.strip.interval && a.sourceIn == b.sourceIn && a.sourceOut == b.sourceOut }
+    /// The part worth drawing, in the view's own points (nil: all of it): a long clip's tiles are drawn only where the
+    /// timeline can show them.
+    var visible: ClosedRange<CGFloat>? = nil
+    static func == (a: ThumbnailStripView, b: ThumbnailStripView) -> Bool { a.strip.frames.count == b.strip.frames.count && a.strip.interval == b.strip.interval && a.sourceIn == b.sourceIn && a.sourceOut == b.sourceOut && a.visible == b.visible }
 
     var body: some View {
         Canvas { ctx, size in
             guard !strip.frames.isEmpty, sourceOut > sourceIn, size.height > 0 else { return }
             let tileW = max(8, size.height * strip.aspect)
-            var x: CGFloat = 0
-            while x < size.width {
+            // Tiles stay on the grid they have when the whole strip is drawn (counted from 0).
+            var x: CGFloat = visible.map { max(0, ($0.lowerBound / tileW).rounded(.down) * tileW) } ?? 0
+            let end = min(size.width, visible?.upperBound ?? size.width)
+            while x < end {
                 let t = sourceIn + Double(x / size.width) * (sourceOut - sourceIn)
                 let i = min(strip.frames.count - 1, max(0, Int((t / strip.interval).rounded())))
                 ctx.draw(Image(decorative: strip.frames[i], scale: 1).interpolation(.medium), in: CGRect(x: x, y: 0, width: tileW - 1, height: size.height))

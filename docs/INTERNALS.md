@@ -42,7 +42,9 @@ within 1.5 s (a slider drag) into one undo step and one version. Analysis caches
 - `rippleDelete` removes a range from every track (splitting or trimming clips), drops text inside it and shifts
   later text and markers, so a separate voice track stays in sync.
 - Transcripts are stored per asset and mapped through each clip's source offset and speed, so they stay valid after
-  any ripple.
+  any ripple. `get_transcript` returns 2000 words a page (up to 10 000 with `max_words`): `firstWord` and `nextWord`
+  are indices into all of the clip's or asset's words, the same ones `cut_transcript` takes, and `from`/`to` pick a
+  stretch of time. An 18-hour talk is about 160 000 words, far more than one reply can hold.
 - Texts never cover each other. `TextLayout` measures a text's box in the frame with the rasterizer's font and
   wrapping; a text added where another is already on screen moves to the nearest free band, below on a tie (the tool
   result and the inspector say so), `inspect_timeline` lists `textOverlaps` made by hand, the text inspector offers

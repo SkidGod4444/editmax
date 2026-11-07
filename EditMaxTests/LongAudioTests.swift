@@ -3,7 +3,7 @@ import AVFoundation
 @testable import EditMax
 
 /// Long projects: measuring loudness reads the mix a buffer at a time instead of holding it (an 18-hour mix held whole is
-/// about 25 GB), and hum detection reads only the minute it looks at.
+/// about 25 GB), hum detection reads only the minute it looks at, and a long transcript comes in pages.
 @MainActor
 final class LongAudioTests: XCTestCase {
     typealias S = TestSignal
@@ -55,6 +55,37 @@ final class LongAudioTests: XCTestCase {
         XCTAssertEqual(Double(st.count) / 2 / 48_000, HumDetector.seconds, accuracy: 0.05)
         let whole = try await Loudness.render(all, seconds: 3600)   // longer than the project: all of it
         XCTAssertEqual(Double(whole.count) / 2 / 48_000, 720, accuracy: 0.05)
+    }
+
+    func testALongTranscriptComesInPagesWithIndicesThatCutTranscriptTakes() async throws {
+        let tone = S.sine(1000, seconds: 2, dbfs: -20)
+        _ = try await x.importMedia(paths: [try S.writeWAV([tone, tone], to: S.scratch.appendingPathComponent("talk.wav")).path])
+        let id = doc.project.assets[0].id
+        // 30 minutes of talk: 4500 words, one every 0.4 s.
+        doc.project.transcripts = [id.uuidString: Transcript(locale: "en", words: (0..<4500).map {
+            TranscriptWord(text: "w\($0)", start: Double($0) * 0.4, end: Double($0) * 0.4 + 0.3)
+        })]
+        let p1 = try await x.getTranscript(asset: "talk.wav", clip: nil, language: nil)
+        XCTAssertEqual([p1.totalWords, p1.firstWord, p1.wordCount, p1.nextWord], [4500, 0, 2000, 2000])
+        XCTAssertEqual(p1.words.first?.text, "w0"); XCTAssertEqual(p1.words.last?.text, "w1999")
+        XCTAssertNotNil(p1.note)
+        XCTAssertLessThan(try JSONEncoder().encode(p1).count, 150_000, "a page fits an agent's context")
+        let p2 = try await x.getTranscript(asset: "talk.wav", clip: nil, language: nil, firstWord: p1.nextWord)
+        XCTAssertEqual([p2.firstWord, p2.wordCount, p2.nextWord], [2000, 2000, 4000])
+        XCTAssertEqual(p2.words.first?.text, "w2000")
+        let p3 = try await x.getTranscript(asset: "talk.wav", clip: nil, language: nil, firstWord: p2.nextWord)
+        XCTAssertEqual([p3.firstWord, p3.wordCount], [4000, 500])
+        XCTAssertNil(p3.nextWord); XCTAssertNil(p3.note)
+        // A stretch of time: 10:00 to 10:40 is words 1500 to 1599.
+        let span = try await x.getTranscript(asset: "talk.wav", clip: nil, language: nil, from: 600, to: 640)
+        XCTAssertEqual([span.firstWord, span.wordCount], [1500, 100])
+        XCTAssertNil(span.nextWord)
+        let small = try await x.getTranscript(asset: "talk.wav", clip: nil, language: nil, from: 600, to: 640, maxWords: 30)
+        XCTAssertEqual([small.firstWord, small.wordCount, small.nextWord], [1500, 30, 1530])
+        let past = try await x.getTranscript(asset: "talk.wav", clip: nil, language: nil, from: 5000)
+        XCTAssertEqual(past.wordCount, 0); XCTAssertNotNil(past.note)
+        do { _ = try await x.getTranscript(asset: "talk.wav", clip: nil, language: nil, maxWords: 0); XCTFail("max_words 0") } catch {}
+        do { _ = try await x.getTranscript(asset: "talk.wav", clip: nil, language: nil, from: 10, to: 5); XCTFail("to before from") } catch {}
     }
 
     /// The highest memory footprint while `work` runs, sampled every 5 ms, in MB above where it started.

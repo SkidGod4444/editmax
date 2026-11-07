@@ -216,7 +216,16 @@ struct ToolExecutor {
     struct TranscriptInfo: Codable {
         struct Word: Codable { var text: String, start: Double, end: Double }
         var asset: String, assetName: String, clip: String?, locale: String, wordCount: Int, text: String, words: [Word]
+        /// Every word in the clip or asset. `words` are indices `firstWord ..< firstWord + wordCount` of them, the same
+        /// indices cut_transcript's from_word/to_word take.
+        var totalWords: Int, firstWord: Int
+        /// Pass as first_word for the next page; absent when this page reaches the end (or `to`).
+        var nextWord: Int?
+        var note: String?
     }
+
+    /// Words per get_transcript page by default, and at most: an 18-hour talk is about 160 000 words (some 7 MB).
+    static let transcriptPage = 2000, transcriptPageMax = 10_000
 
     /// The asset's transcript, made on first use (on-device, blocks for a while on long files) and cached on the project.
     func ensureTranscript(assetID: UUID, language: String?) async throws -> Transcript {
@@ -255,7 +264,11 @@ struct ToolExecutor {
         return out.sorted { $0.start < $1.start }
     }
 
-    func getTranscript(asset: String?, clip: String?, language: String?) async throws -> TranscriptInfo {
+    func getTranscript(asset: String?, clip: String?, language: String?, from: Double? = nil, to: Double? = nil,
+                       firstWord: Int? = nil, maxWords: Int? = nil) async throws -> TranscriptInfo {
+        if let maxWords, !(1...Self.transcriptPageMax).contains(maxWords) { throw EditError.invalid("max_words must be 1 to \(Self.transcriptPageMax); got \(maxWords)") }
+        if let firstWord, firstWord < 0 { throw EditError.invalid("first_word must be 0 or more; got \(firstWord)") }
+        if let from, let to, to <= from { throw EditError.invalid("to (\(r(to)) s) must be after from (\(r(from)) s)") }
         let clipRef: Clip?
         let assetID: UUID
         if let clip, !clip.isEmpty {
@@ -268,9 +281,24 @@ struct ToolExecutor {
             clipRef = nil; assetID = candidates[0].id
         }
         let t = try await ensureTranscript(assetID: assetID, language: language)
-        let words = clipRef.map { timelineWords(t, clip: $0) } ?? t.words
+        let all = clipRef.map { timelineWords(t, clip: $0) } ?? t.words
+        // A page: from the later of first_word and the first word starting at `from`, up to max_words words that start
+        // before `to`.
+        let lo = max(firstWord ?? 0, from.map { f in all.firstIndex { $0.start >= f } ?? all.count } ?? 0)
+        let cap = maxWords ?? Self.transcriptPage, until = to ?? .infinity
+        var hi = min(lo, all.count)
+        while hi < all.count, all[hi].start < until, hi - lo < cap { hi += 1 }
+        let more = hi < all.count && all[hi].start < until
+        let words = lo < hi ? Array(all[lo..<hi]) : []
+        var note: String? = nil
+        if more {
+            note = "Words \(lo)–\(hi - 1) of \(all.count), \(cap) at a time. Next page: first_word \(hi)\(to.map { ", to \(r($0))" } ?? ""). search_transcript finds a phrase anywhere without paging."
+        } else if words.isEmpty, !all.isEmpty {
+            note = "No words in that range: there are \(all.count), from \(r(all[0].start)) s to \(r(all[all.count - 1].end)) s."
+        }
         return TranscriptInfo(asset: assetID.short, assetName: project.asset(assetID)?.name ?? "", clip: clipRef?.id.short, locale: t.locale, wordCount: words.count,
-                              text: words.map(\.text).joined(separator: " "), words: words.map { .init(text: $0.text, start: r($0.start), end: r($0.end)) })
+                              text: words.map(\.text).joined(separator: " "), words: words.map { .init(text: $0.text, start: r($0.start), end: r($0.end)) },
+                              totalWords: all.count, firstWord: min(lo, all.count), nextWord: more ? hi : nil, note: note)
     }
 
     struct CaptionResult: Codable { var count: Int, group: String, preset: String, clips: Int, first: Double?, last: Double? }

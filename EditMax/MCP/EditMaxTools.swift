@@ -53,9 +53,12 @@ enum EditMaxTools {
                                   "font": str("Font family (any case) or PostScript name, from list_fonts; a Google font not on this Mac is downloaded first. Default: the preset's font"),
                                   "font_size": num("Points at project resolution (default from the preset)"), "color": str("Hex color like #FFFFFF"),
                                   "x": num("Horizontal center 0-1 (default 0.5)"), "y": num("Vertical center 0-1, 0 = top (default from the preset)"), "project": projectArg], required: ["text", "start", "duration"])),
-        Tool(name: "get_transcript", description: "Speech in an asset or clip as timed words (on-device recognition, cached per asset; the first call on a long file takes a while). Clip times are timeline seconds, asset times are source seconds.",
+        Tool(name: "get_transcript", description: "Speech in an asset or clip as timed words (on-device recognition, cached per asset; the first call on a long file takes a while). Clip times are timeline seconds, asset times are source seconds. Long speech comes in pages of 2000 words: the result gives totalWords, firstWord (the index of its first word, as cut_transcript's from_word counts) and nextWord to pass as first_word for the next page. from/to pick a stretch of time.",
              inputSchema: schema(["clip": str("Clip id prefix (timeline times)"), "asset": str("Asset id prefix or file name (source times)"),
-                                  "language": str("Language tag such as en, en-IN, hi (default: the Mac's language)"), "project": projectArg])),
+                                  "language": str("Language tag such as en, en-IN, hi (default: the Mac's language)"),
+                                  "from": num("Seconds: start at the first word starting here"), "to": num("Seconds: stop before the first word starting here"),
+                                  "first_word": int("0-based index of the first word (nextWord of the previous page)"),
+                                  "max_words": int("Words in this page, 1 to 10000 (default 2000)"), "project": projectArg])),
         Tool(name: "add_captions", description: "Transcribe the speech in a clip (or every clip with audio) and add timed caption lines as text overlays in one edit. Returns the caption group id.",
              inputSchema: schema(["clip": str("Clip id prefix (default: all clips with audio)"), "preset": str("Look: subtitle (default), boxed, bold, outline, minimal, title"),
                                   "max_words": int("Words per line (default from the preset)"), "language": str("Language tag (default: the Mac's language)"), "project": projectArg])),
@@ -573,7 +576,8 @@ enum EditMaxTools {
             if let f = s("font") { font = try await FontLibrary.shared.resolve(f) }
             return try payload(try x.setTextStyle(try req("text"), font: font, fontSize: d("font_size"), color: s("color")))
         case "get_transcript":
-            return try payload(try await x.getTranscript(asset: s("asset"), clip: s("clip"), language: s("language")))
+            return try payload(try await x.getTranscript(asset: s("asset"), clip: s("clip"), language: s("language"), from: d("from"), to: d("to"),
+                                                         firstWord: i("first_word"), maxWords: i("max_words")))
         case "add_captions":
             return try payload(try await x.addCaptions(clip: s("clip"), preset: s("preset"), maxWords: i("max_words"), language: s("language")))
         case "detect_silence":

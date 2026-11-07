@@ -91,6 +91,21 @@ final class LoudnessMeter {
 
     static func lufs(_ power: Double) -> Double { power > 0 ? -0.691 + 10 * log10(power) : -.infinity }
 
+    /// Starts counting afresh, keeping the filters' and the true-peak detector's state: what was fed so far was lead-in,
+    /// so a piece of a mix measured on its own settles as it does in a read of the whole. Call on a 100 ms hop edge.
+    func beginCounting() { hops = []; hopEnergy = 0; hopFill = 0; peak = 0; truePeak = 0; sumSquares = 0; count = 0 }
+
+    /// Consecutive pieces of one mix, joined: their 100 ms hops back to back, peaks and sums together.
+    static func joined(_ parts: [LoudnessMeter]) -> LoudnessMeter {
+        let m = LoudnessMeter(channels: parts.first?.channels ?? 2, sampleRate: parts.first?.sampleRate ?? 48_000)
+        for p in parts {
+            m.hops += p.hops
+            m.peak = max(m.peak, p.peak); m.truePeak = max(m.truePeak, p.truePeak)
+            m.sumSquares += p.sumSquares; m.count += p.count
+        }
+        return m
+    }
+
     var result: Result {
         // Momentary blocks: 4 hops (400 ms); short-term windows: 30 hops (3 s).
         func windows(_ w: Int) -> [Double] {
@@ -166,20 +181,88 @@ enum Loudness {
     }
 
     /// Renders the project's sound the way the export does (48 kHz stereo float, every tap and volume ramp) and meters it
-    /// as it is read. Nothing is kept: an 18-hour mix held whole would be about 25 GB.
-    static func measure(_ project: Project) async throws -> LoudnessMeter.Result {
+    /// as it is read. Nothing is kept: an 18-hour mix held whole would be about 25 GB. A long mix is read in pieces at
+    /// once (`parts`), each with `leadIn` seconds before it so filters and dynamics settle, and the pieces are joined.
+    static func measure(_ project: Project, progress: (@Sendable (Double) -> Void)? = nil) async throws -> LoudnessMeter.Result {
         try await IsolatedAudio.shared.ensureAll(project)
-        do { return try await meter(project) }
+        do { return try await meter(project, progress) }
         catch let e as ShortRead {
             // Never measure part of the sound as the whole. Read once more; stopping short twice is an error.
             DebugLog.event("loudness-short-read", ["got": e.got, "wanted": e.wanted])
-            return try await meter(project)
+            return try await meter(project, progress)
         }
     }
-    private static func meter(_ project: Project) async throws -> LoudnessMeter.Result {
-        let m = LoudnessMeter(channels: 2, sampleRate: 48_000)
-        try await stream(project) { m.feed(interleaved: $0.baseAddress!, frames: $0.count / 2) }
-        return m.result
+
+    /// Pieces a mix of `seconds` is read in: one per core up to 8, none under a minute long.
+    static func parts(_ seconds: Double) -> Int {
+        let cores = ProcessInfo.processInfo.activeProcessorCount
+        return max(1, min(8, cores, Int(seconds / 60)))
+    }
+    /// Lead-in before each later piece, metered and dropped: a whole number of 100 ms hops.
+    static let leadIn = 3.0
+
+    static func meter(_ project: Project, _ progress: (@Sendable (Double) -> Void)?, parts forced: Int? = nil) async throws -> LoudnessMeter.Result {
+        let total = project.duration
+        let n = forced ?? parts(total)
+        // Whole seconds: piece edges fall on 100 ms hops, so the joined hops are the ones a single read makes.
+        let len = max(1, (total / Double(n)).rounded(.up))
+        var reads: [Read] = []
+        for k in 0..<n {
+            let a = Double(k) * len
+            guard k == 0 || a < total else { break }
+            let lead = k == 0 ? 0 : min(leadIn, a)
+            reads.append(try await open(project, from: a - lead, to: k == n - 1 ? nil : a + len, leadIn: lead))
+        }
+        let wanted = reads.reduce(0) { $0 + $1.wanted }
+        let done = Counter()
+        let pieces = reads.map { Piece(read: $0, meter: LoudnessMeter(channels: 2, sampleRate: 48_000)) }
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for piece in pieces {
+                group.addTask {
+                    // A blocking read: on its own thread, never the cooperative pool's.
+                    try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
+                        DispatchQueue.global(qos: .userInitiated).async {
+                            let r = piece.read, m = piece.meter
+                            do {
+                                let leadFrames = Int((r.leadIn * 48_000).rounded())
+                                var fed = 0, reported = Date()
+                                try pump(r) { buf in
+                                    let frames = buf.count / 2
+                                    if fed < leadFrames, fed + frames > leadFrames {
+                                        let k = leadFrames - fed
+                                        m.feed(interleaved: buf.baseAddress!, frames: k)
+                                        m.beginCounting()
+                                        m.feed(interleaved: buf.baseAddress! + 2 * k, frames: frames - k)
+                                    } else {
+                                        m.feed(interleaved: buf.baseAddress!, frames: frames)
+                                        if fed + frames == leadFrames { m.beginCounting() }
+                                    }
+                                    fed += frames
+                                    let all = done.add(frames)
+                                    if let progress, wanted > 0, Date().timeIntervalSince(reported) > 0.25 {
+                                        reported = Date(); progress(min(0.999, Double(all) / 48_000 / wanted))
+                                    }
+                                }
+                                if leadFrames > 0, fed < leadFrames { m.beginCounting() }   // the sound ended inside the lead-in
+                                c.resume()
+                            } catch { c.resume(throwing: error) }
+                        }
+                    }
+                }
+            }
+            try await group.waitForAll()
+        }
+        progress?(1)
+        return LoudnessMeter.joined(pieces.map(\.meter)).result
+    }
+
+    /// One piece's reader and meter; only the one task that reads the piece touches them.
+    private struct Piece: @unchecked Sendable { let read: Read, meter: LoudnessMeter }
+
+    /// Frames read so far by every piece together.
+    private final class Counter: @unchecked Sendable {
+        private let lock = NSLock(); private var n = 0
+        func add(_ k: Int) -> Int { lock.lock(); defer { lock.unlock() }; n += k; return n }
     }
 
     /// The project's mixed sound as interleaved stereo float at 48 kHz: whole, or its first `seconds`. This holds all of
@@ -197,18 +280,43 @@ enum Loudness {
     }
 
     /// Reads the project's mixed sound (interleaved stereo float, 48 kHz) a buffer at a time, whole or its first
-    /// `seconds`, and hands each buffer to `body`. Throws `ShortRead` if the sound ends early.
-    static func stream(_ project: Project, seconds: Double? = nil, _ body: (UnsafeBufferPointer<Float>) throws -> Void) async throws {
+    /// `seconds`, and hands each buffer to `body`. Throws `ShortRead` if the sound ends early. `progress` gets the
+    /// fraction read about four times a second, and 1 at the end.
+    static func stream(_ project: Project, seconds: Double? = nil, progress: (@Sendable (Double) -> Void)? = nil,
+                       _ body: (UnsafeBufferPointer<Float>) throws -> Void) async throws {
+        let r = try await open(project, from: 0, to: seconds, leadIn: 0)
+        var frames = 0, reported = Date()
+        try pump(r) { buf in
+            try body(buf)
+            frames += buf.count / 2
+            if let progress, r.wanted > 0, Date().timeIntervalSince(reported) > 0.25 {
+                reported = Date(); progress(min(1, Double(frames) / 48_000 / r.wanted))
+            }
+        }
+        progress?(1)
+    }
+
+    /// A reader over part of the mix, with its own composition (and so its own audio taps: two reads never share their
+    /// state), and how many seconds of sound it should give.
+    private struct Read: @unchecked Sendable {
+        let out: CompositionBuilder.Output, reader: AVAssetReader, output: AVAssetReaderAudioMixOutput
+        let wanted: Double, leadIn: Double
+    }
+
+    private static func open(_ project: Project, from: Double, to: Double?, leadIn: Double) async throws -> Read {
         let out = try await CompositionBuilder.build(project)
         let tracks = try await out.composition.loadTracks(withMediaType: .audio)
         guard !tracks.isEmpty else { throw EditError.invalid("nothing to measure: no clip with sound on an unmuted track") }
-        var range = CMTimeRange(start: .zero, duration: out.duration)
-        if let seconds, seconds < out.duration.seconds { range.duration = CMTime(seconds: seconds, preferredTimescale: 48_000) }
+        let end = min(to ?? .infinity, out.duration.seconds)
+        let start = min(max(0, from), end)
+        let range = start == 0 && to == nil ? CMTimeRange(start: .zero, duration: out.duration)
+            : CMTimeRange(start: CMTime(value: CMTimeValue((start * 48_000).rounded()), timescale: 48_000),
+                          end: to == nil ? out.duration : CMTime(value: CMTimeValue((end * 48_000).rounded()), timescale: 48_000))
         // The sound runs to the end of its last track (empty edits read as silence); a reader that stops before that
         // has stopped short.
         var soundEnd = 0.0
         for t in tracks { soundEnd = max(soundEnd, try await t.load(.timeRange).end.seconds) }
-        let wanted = min(range.end.seconds, soundEnd)
+        let wanted = max(0, min(range.end.seconds, soundEnd) - range.start.seconds)
         let reader = try AVAssetReader(asset: out.composition)
         reader.timeRange = range
         let a = AVAssetReaderAudioMixOutput(audioTracks: tracks, audioSettings: [AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: 48_000, AVNumberOfChannelsKey: 2,
@@ -217,14 +325,22 @@ enum Loudness {
         a.alwaysCopiesSampleData = false
         guard reader.canAdd(a) else { throw EditError.invalid("cannot read the mixed sound") }
         reader.add(a)
+        return Read(out: out, reader: reader, output: a, wanted: wanted, leadIn: leadIn)
+    }
+
+    /// Reads `r` to its end, handing over whole stereo frames. Throws `ShortRead` when it gives clearly less than it
+    /// should. A file with dropped audio packets (a gap of a few hundred samples here and there, as joined recordings
+    /// have) reads to its end with fewer frames than its length, and the buffer times close the gaps up, so a little
+    /// short is allowed: 2% of the length, at least 0.1 s. An 18-hour file with a gap every 10 minutes is 2.3 s short.
+    private static func pump(_ r: Read, _ body: (UnsafeBufferPointer<Float>) throws -> Void) throws {
         // The composition does not keep its source assets alive; `out.sources` does, for as long as `out` lives.
-        try withExtendedLifetime(out) {
-            guard reader.startReading() else { throw reader.error ?? EditError.invalid("cannot read the mixed sound") }
+        try withExtendedLifetime(r.out) {
+            guard r.reader.startReading() else { throw r.reader.error ?? EditError.invalid("cannot read the mixed sound") }
             var frames = 0
             func next() throws -> Bool {
                 // One pool per buffer: an 18-hour read is hundreds of thousands of them.
                 try autoreleasepool {
-                    guard let sb = a.copyNextSampleBuffer() else { return false }
+                    guard let sb = r.output.copyNextSampleBuffer() else { return false }
                     guard var bb = CMSampleBufferGetDataBuffer(sb) else { return true }
                     var total = 0, here = 0
                     if CMBlockBufferGetDataPointer(bb, atOffset: 0, lengthAtOffsetOut: &here, totalLengthOut: &total, dataPointerOut: nil) == noErr, here < total {
@@ -242,15 +358,26 @@ enum Loudness {
                 }
             }
             while try next() {}
-            if reader.status == .failed { throw reader.error ?? EditError.invalid("reading the mixed sound failed") }
+            if r.reader.status == .failed { throw r.reader.error ?? EditError.invalid("reading the mixed sound failed") }
             let got = Double(frames) / 48_000
-            if got < wanted - 0.1 { throw ShortRead(got: got, wanted: wanted) }
+            if got < r.wanted - max(0.1, r.wanted * 0.02) { throw ShortRead(got: got, wanted: r.wanted) }
         }
     }
 
     // MARK: Normalizing
 
     struct Step: Codable { var gain: Double, integrated: Double, truePeak: Double }
+    /// Measurements `solve` makes at most, after the one before it.
+    static let maxSteps = 6
+
+    /// How far a measurement has got: which full read of the mix (`pass` of at most `passes`) and how much of it.
+    /// Normalize reads the whole mix 2 to 7 times; at 18 h each read takes minutes.
+    struct Progress: Sendable, Equatable {
+        var pass: Int, passes: Int, fraction: Double
+        var text: String { (passes > 1 ? "pass \(pass) of up to \(passes), " : "") + "\(Int((fraction * 100).rounded(.down)))%" }
+        /// Further on than `other`. Pieces read on several threads, so reports can arrive slightly out of order.
+        func isAhead(of other: Progress?) -> Bool { other.map { pass != $0.pass ? pass > $0.pass : fraction >= $0.fraction } ?? true }
+    }
     struct Plan { var gain: Double; var after: LoudnessMeter.Result; var steps: [Step]; var note: String? }
 
     /// Finds the gain (dB, added to `startGain`) that brings `apply(gain)`'s integrated loudness to `target` with the
@@ -264,7 +391,7 @@ enum Loudness {
         var steps: [Step] = []
         var capped = false, peakBound = false
         var best: (gain: Double, r: LoudnessMeter.Result)? = nil
-        for _ in 0..<6 {
+        for _ in 0..<maxSteps {
             if gain > gainRange.upperBound { gain = gainRange.upperBound; capped = true }
             if gain < gainRange.lowerBound { gain = gainRange.lowerBound; capped = true }
             let r = try await measure(gain)

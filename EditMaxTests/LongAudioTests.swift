@@ -49,6 +49,88 @@ final class LongAudioTests: XCTestCase {
         XCTAssertEqual(streamed.integrated, -20, accuracy: 0.1, "BS.1770: a 1 kHz tone peaking at −20 dBFS in both channels")
     }
 
+    func testAMixReadInPiecesMeasuresWhatOneReadMeasures() async throws {
+        // 12 s, 3 s a level; the −12 dBFS stretch drives the master limiter, and the cut at 8 s falls inside it.
+        let levels = [-30.0, -18, -12, -24]
+        let sig = S.concat(levels.map { S.sine(1000, seconds: 3, dbfs: $0) })
+        let voice = S.voice(seconds: 12, level: 0.05)
+        let left = zip(sig, voice).map { $0 + $1 }
+        _ = try await x.importMedia(paths: [try S.writeWAV([left, sig], to: S.scratch.appendingPathComponent("steps.wav")).path])
+        _ = try x.insertClip(asset: "steps.wav", track: nil)
+        doc.project.mix.masterLimiter = LimiterSettings(ceiling: -14, release: 100, lookahead: 1.5)
+        let one = try await Loudness.meter(doc.project, nil, parts: 1)
+        let three = try await Loudness.meter(doc.project, nil, parts: 3)   // 0–4 s, 4–8 s, 8–12 s, each after 3 s of lead-in
+        print("LONG-AUDIO pieces: one \(one) three \(three)")
+        XCTAssertEqual(three.duration, one.duration, accuracy: 1e-9)
+        XCTAssertEqual(three.integrated, one.integrated, accuracy: 0.01)
+        XCTAssertEqual(three.range, one.range, accuracy: 0.05)
+        XCTAssertEqual(three.truePeak, one.truePeak, accuracy: 0.01)
+        XCTAssertEqual(three.samplePeak, one.samplePeak, accuracy: 0.01)
+        XCTAssertEqual(three.momentaryMax, one.momentaryMax, accuracy: 0.01)
+        XCTAssertEqual(three.shortTermMax, one.shortTermMax, accuracy: 0.01)
+        XCTAssertEqual(three.rms, one.rms, accuracy: 0.01)
+        XCTAssertLessThan(one.truePeak, -13.5, "the limiter was on in both")
+    }
+
+    /// Times measuring a long file: set TEST_RUNNER_EDITMAX_LONG_FILE to its path, and use an optimized build (the
+    /// Debug build meters about 170 times slower).
+    func testTimeMeasuringALongFile() async throws {
+        guard let path = ProcessInfo.processInfo.environment["EDITMAX_LONG_FILE"] else { throw XCTSkip("no long file given") }
+        _ = try await x.importMedia(paths: [path])
+        _ = try x.insertClip(asset: URL(fileURLWithPath: path).lastPathComponent, track: nil)
+        let p = doc.project
+        let hours = p.duration / 3600
+        var t = Date()
+        let m = LoudnessMeter(channels: 2, sampleRate: 48_000)
+        try await Loudness.stream(p, seconds: 3600) { m.feed(interleaved: $0.baseAddress!, frames: $0.count / 2) }
+        let oneReadHour = Date().timeIntervalSince(t)
+        t = Date()
+        let r = try await Loudness.measure(p)
+        let whole = Date().timeIntervalSince(t)
+        print(String(format: "LONG-AUDIO timing: %.2f h, %d pieces; one read of the first hour %.1f s (x%.1f = %.0f s); measure in pieces %.1f s; %.2f LUFS",
+                     hours, Loudness.parts(p.duration), oneReadHour, hours, oneReadHour * hours, whole, r.integrated))
+        XCTAssertEqual(r.duration, p.duration, accuracy: p.duration * 0.001, "a looped file is a little short: a gap at each join")
+    }
+
+    func testAFileWithDroppedAudioPacketsStillMeasures() async throws {
+        // Fixtures/audio-gaps.m4a: twenty copies of a 0.5 s AAC tone joined without re-encoding (ffmpeg -stream_loop 19
+        // -c copy), so each join leaves a gap of a few hundred samples. It is 10.4 s long but holds about 10.26 s of sound.
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "audio-gaps", withExtension: "m4a"))
+        _ = try await x.importMedia(paths: [url.path])
+        _ = try x.insertClip(asset: "audio-gaps.m4a", track: nil)
+        var frames = 0
+        try await Loudness.stream(doc.project) { frames += $0.count / 2 }
+        XCTAssertLessThan(Double(frames) / 48_000, doc.project.duration - 0.1, "the gaps give fewer frames than the length")
+        let r = try await Loudness.measure(doc.project)
+        XCTAssertEqual(r.integrated, -41.4, accuracy: 0.2, "what ffmpeg's ebur128 filter measures on the file")
+    }
+
+    func testReadingTheMixSaysHowFarItHasGot() async throws {
+        let (_, all) = try await twelveMinutes()
+        let seen = Seen<Double>()
+        try await Loudness.stream(all, progress: { seen.add($0) }) { _ in usleep(250) }   // slowed so it reports along the way
+        let v = seen.values
+        XCTAssertGreaterThan(v.count, 2)
+        XCTAssertEqual(v, v.sorted(), "only forward")
+        XCTAssertEqual(v.last, 1)
+    }
+
+    func testNormalizeSaysWhichPassItIsOnAndHowFar() async throws {
+        let tone = S.sine(1000, seconds: 4, dbfs: -30)
+        _ = try await x.importMedia(paths: [try S.writeWAV([tone, tone], to: S.scratch.appendingPathComponent("quiet-tone.wav")).path])
+        _ = try x.insertClip(asset: "quiet-tone.wav", track: nil)
+        let seen = Seen<Loudness.Progress>()
+        let r = try await x.normalizeLoudness(target: "youtube", ceiling: nil, clip: nil, progress: { seen.add($0) })
+        let v = seen.values
+        let passes = Set(v.map(\.pass)).sorted()
+        XCTAssertEqual(passes, Array(1...(1 + r.steps.count)), "the measurement before, then one per step")
+        XCTAssertTrue(v.allSatisfy { $0.passes == 7 })
+        for p in passes { XCTAssertEqual(v.last { $0.pass == p }?.fraction, 1, "pass \(p) reached its end") }
+        XCTAssertEqual(v.first?.text, "pass 1 of up to 7, \(Int(v.first!.fraction * 100))%")
+        XCTAssertTrue(Loudness.Progress(pass: 2, passes: 7, fraction: 0.1).isAhead(of: .init(pass: 1, passes: 7, fraction: 0.9)))
+        XCTAssertFalse(Loudness.Progress(pass: 2, passes: 7, fraction: 0.3).isAhead(of: .init(pass: 2, passes: 7, fraction: 0.4)), "a late report from another piece")
+    }
+
     func testHumDetectionReadsOnlyTheMinuteItLooksAt() async throws {
         let (_, all) = try await twelveMinutes()
         let st = try await Loudness.render(all, seconds: HumDetector.seconds)
@@ -86,6 +168,13 @@ final class LongAudioTests: XCTestCase {
         XCTAssertEqual(past.wordCount, 0); XCTAssertNotNil(past.note)
         do { _ = try await x.getTranscript(asset: "talk.wav", clip: nil, language: nil, maxWords: 0); XCTFail("max_words 0") } catch {}
         do { _ = try await x.getTranscript(asset: "talk.wav", clip: nil, language: nil, from: 10, to: 5); XCTFail("to before from") } catch {}
+    }
+
+    /// Values a background callback hands over.
+    private final class Seen<T>: @unchecked Sendable {
+        private let lock = NSLock(); private var v: [T] = []
+        func add(_ x: T) { lock.lock(); v.append(x); lock.unlock() }
+        var values: [T] { lock.lock(); defer { lock.unlock() }; return v }
     }
 
     /// The highest memory footprint while `work` runs, sampled every 5 ms, in MB above where it started.

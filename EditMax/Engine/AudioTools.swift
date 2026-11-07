@@ -350,13 +350,14 @@ extension ToolExecutor {
 
     /// Integrated loudness (ITU-R BS.1770-4), true peak and the rest, for the whole mix or one clip alone, rendered the
     /// way the export renders it.
-    func measureLoudness(clip: String?) async throws -> LoudnessReport {
+    func measureLoudness(clip: String?, progress: (@Sendable (Loudness.Progress) -> Void)? = nil) async throws -> LoudnessReport {
+        let report = progress.map { p in { @Sendable (f: Double) in p(.init(pass: 1, passes: 1, fraction: f)) } }
         if let clip {
             let f = try soundClip(clip)
-            return LoudnessReport(scope: "clip '\(f.clip.name)' alone (its own processing; no track fader, bus or master)", try await Loudness.measure(try Loudness.isolate(f.id, in: current)))
+            return LoudnessReport(scope: "clip '\(f.clip.name)' alone (its own processing; no track fader, bus or master)", try await Loudness.measure(try Loudness.isolate(f.id, in: current), progress: report))
         }
         let soloed = current.tracks.filter(\.mix.solo).map(\.name)
-        var r = LoudnessReport(scope: soloed.isEmpty ? "mix" : "mix with only the soloed tracks (\(soloed.joined(separator: ", ")))", try await Loudness.measure(current))
+        var r = LoudnessReport(scope: soloed.isEmpty ? "mix" : "mix with only the soloed tracks (\(soloed.joined(separator: ", ")))", try await Loudness.measure(current, progress: report))
         if !soloed.isEmpty { r.note = [r.note, "Solo is on, so this is not the whole mix."].compactMap { $0 }.joined(separator: " ") }
         return r
     }
@@ -371,20 +372,28 @@ extension ToolExecutor {
 
     /// Brings the mix (master gain + master limiter) or one clip (clip gain + clip limiter) to `target` LUFS with the
     /// true peak at or under `ceiling` dBTP, then measures again and returns both measurements. One undo step.
-    func normalizeLoudness(target: String?, ceiling: Double?, clip: String?) async throws -> NormalizeResult {
+    func normalizeLoudness(target: String?, ceiling: Double?, clip: String?, progress: (@Sendable (Loudness.Progress) -> Void)? = nil) async throws -> NormalizeResult {
         let lufs = try Loudness.parseTarget(target)
+        // Each measurement reads the whole mix: one before, then up to `maxSteps` while solving.
+        var pass = 0
+        let passes = 1 + Loudness.maxSteps
+        func next() -> (@Sendable (Double) -> Void)? {
+            pass += 1
+            let n = pass
+            return progress.map { p in { @Sendable (f: Double) in p(.init(pass: n, passes: passes, fraction: f)) } }
+        }
         try Self.check("ceiling", ceiling, Loudness.ceilingRange, " dBTP")
         let ceil = ceiling ?? -1
         let start = current
         if let clip {
             let f = try soundClip(clip)
             let base = try Loudness.isolate(f.id, in: start)
-            let before = try await Loudness.measure(base)
+            let before = try await Loudness.measure(base, progress: next())
             let lim = LimiterSettings(ceiling: ceil, release: f.clip.audio.limiter?.release ?? 100, lookahead: f.clip.audio.limiter?.lookahead ?? 1.5)
             let plan = try await Loudness.solve(target: lufs, ceiling: ceil, startGain: f.clip.audio.gain, before: before, gainRange: ClipAudio.gainRange) { g in
                 var p = base
                 p.tracks[0].clips[0].audio.gain = g; p.tracks[0].clips[0].audio.limiter = lim
-                return try await Loudness.measure(p)
+                return try await Loudness.measure(p, progress: next())
             }
             let g = (plan.gain * 100).rounded() / 100
             try document.apply("Normalize \(f.clip.name) to \(Self.fmt(lufs)) LUFS", origin: origin) { p in try p.updateClip(f.id) { $0.audio.gain = g; $0.audio.limiter = lim } }
@@ -394,12 +403,12 @@ extension ToolExecutor {
         }
         let soloed = start.tracks.filter(\.mix.solo).map(\.name)
         guard soloed.isEmpty else { throw EditError.invalid("solo is on (\(soloed.joined(separator: ", "))): the mix would be measured without the other tracks. Turn solo off first") }
-        let before = try await Loudness.measure(start)
+        let before = try await Loudness.measure(start, progress: next())
         let lim = LimiterSettings(ceiling: ceil, release: start.mix.masterLimiter?.release ?? 100, lookahead: start.mix.masterLimiter?.lookahead ?? 1.5)
         let plan = try await Loudness.solve(target: lufs, ceiling: ceil, startGain: start.mix.masterGain, before: before, gainRange: ClipAudio.gainRange) { g in
             var p = start
             p.mix.masterGain = g; p.mix.masterLimiter = lim
-            return try await Loudness.measure(p)
+            return try await Loudness.measure(p, progress: next())
         }
         let g = (plan.gain * 100).rounded() / 100
         try document.apply("Normalize to \(Self.fmt(lufs)) LUFS", origin: origin) { p in p.mix.masterGain = g; p.mix.masterLimiter = lim }

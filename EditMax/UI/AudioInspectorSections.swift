@@ -12,6 +12,7 @@ struct ClipAudioSections: View {
     @State private var crossfadeNote: String?
     @State private var loudness: String?
     @State private var measuring = false
+    @State private var measuringProgress: Loudness.Progress?
 
     /// Slider drags make one undo step.
     private var x: ToolExecutor { ToolExecutor(document: document, origin: .user, coalesce: true) }
@@ -96,7 +97,8 @@ struct ClipAudioSections: View {
 
     private var mixCard: some View {
         let mono = (channels ?? 2) < 2
-        return InspectorCard("Gain & pan", footer: loudness ?? (mono ? "Mono sound: it plays in both speakers and cannot be panned." : nil), trailing: {
+        let footer = measuring ? "Reading the sound: " + (measuringProgress?.text ?? "starting") + "." : loudness ?? (mono ? "Mono sound: it plays in both speakers and cannot be panned." : nil)
+        return InspectorCard("Gain & pan", footer: footer, trailing: {
             HStack(spacing: 6) {
                 if measuring { ProgressView().controlSize(.mini) }
                 Button("Measure") { measure() }.controlSize(.small).fixedSize().pointer().disabled(measuring).uiFrame("inspector.audio.loudness.measure")
@@ -151,20 +153,25 @@ struct ClipAudioSections: View {
         }
     }
 
+    /// Shows how far a measurement has got in the card's footer while it runs.
+    private var report: @Sendable (Loudness.Progress) -> Void {
+        { p in Task { @MainActor in if measuring, p.isAhead(of: measuringProgress) { measuringProgress = p } } }
+    }
+
     private func measure() {
-        measuring = true
+        measuring = true; measuringProgress = nil
         Task {
-            defer { measuring = false }
-            do { loudness = Self.describe(try await plain.measureLoudness(clip: id)) } catch { loudness = InspectorMessage.text(error, scope: .clip) }
+            defer { measuring = false; measuringProgress = nil }
+            do { loudness = Self.describe(try await plain.measureLoudness(clip: id, progress: report)) } catch { loudness = InspectorMessage.text(error, scope: .clip) }
         }
     }
 
     private func normalize(_ target: String) {
-        measuring = true
+        measuring = true; measuringProgress = nil
         Task {
-            defer { measuring = false }
+            defer { measuring = false; measuringProgress = nil }
             do {
-                let r = try await plain.normalizeLoudness(target: target, ceiling: nil, clip: id)
+                let r = try await plain.normalizeLoudness(target: target, ceiling: nil, clip: id, progress: report)
                 loudness = "Now " + Self.describe(r.after) + (r.note.map { " " + $0 } ?? "")
             } catch { loudness = InspectorMessage.text(error, scope: .clip) }
         }

@@ -42,14 +42,23 @@ struct MixerSplit<Content: View>: View {
 struct MixerJobLine: View {
     let title: String
     let started: Date
+    /// How far it has got ("pass 2 of up to 7, 40%"), when it says.
+    var detail: String? = nil
     var body: some View {
         // Ticks once a second, so the count shows it is still going. (`TimelineView` alone is the editor's timeline.)
         SwiftUI.TimelineView(.periodic(from: started, by: 1)) { context in
             HStack(spacing: 6) {
                 ProgressView().controlSize(.mini)
-                Text("\(title)… \(max(0, Int(context.date.timeIntervalSince(started)))) s").font(.system(size: 11)).monospacedDigit().foregroundStyle(.secondary)
+                Text("\(title)… \(detail.map { "\($0), " } ?? "")\(Self.elapsed(context.date.timeIntervalSince(started)))").font(.system(size: 11)).monospacedDigit().foregroundStyle(.secondary)
             }
         }
+    }
+    /// 42 s, 3 min 05 s, 1 h 02 min: a long mix reads for minutes.
+    static func elapsed(_ t: TimeInterval) -> String {
+        let n = max(0, Int(t))
+        if n < 60 { return "\(n) s" }
+        if n < 3600 { return String(format: "%d min %02d s", n / 60, n % 60) }
+        return String(format: "%d h %02d min", n / 3600, n / 60 % 60)
     }
 }
 
@@ -97,6 +106,7 @@ struct MixerPane: View {
     /// The measurement running now ("Measuring the mix", "Normalizing to −14 LUFS") and when it started: it plays the
     /// whole mix through, which takes seconds, so the pane says what it is doing and for how long.
     @State private var job: (title: String, started: Date)?
+    @State private var jobProgress: Loudness.Progress?
     @State private var newBus = ""
     private var working: Bool { job != nil }
 
@@ -228,7 +238,7 @@ struct MixerPane: View {
                 }
             }
             if let job {
-                MixerJobLine(title: job.title, started: job.started).padding(.horizontal, 4)
+                MixerJobLine(title: job.title, started: job.started, detail: jobProgress?.text).padding(.horizontal, 4)
             } else if let loudness {
                 InspectorFootnote(loudness).padding(.horizontal, 4)
             }
@@ -256,21 +266,22 @@ struct MixerPane: View {
     static let measuring = "Measuring the mix"
 
     private func measure() {
-        run(Self.measuring) { Self.text(try await plain.measureLoudness(clip: nil)) }
+        run(Self.measuring) { report in Self.text(try await plain.measureLoudness(clip: nil, progress: report)) }
     }
 
     private func normalize(_ target: String, _ lufs: String) {
-        run("Normalizing to \(lufs) LUFS") {
-            let r = try await plain.normalizeLoudness(target: target, ceiling: nil, clip: nil)
+        run("Normalizing to \(lufs) LUFS") { report in
+            let r = try await plain.normalizeLoudness(target: target, ceiling: nil, clip: nil, progress: report)
             return "Now " + Self.text(r.after) + String(format: " Master gain %+.1f dB.", r.gain) + (r.note.map { " " + $0 } ?? "")
         }
     }
 
-    private func run(_ title: String, _ work: @escaping () async throws -> String) {
-        job = (title, Date())
+    private func run(_ title: String, _ work: @escaping (_ report: @escaping @Sendable (Loudness.Progress) -> Void) async throws -> String) {
+        job = (title, Date()); jobProgress = nil
+        let report: @Sendable (Loudness.Progress) -> Void = { p in Task { @MainActor in if job != nil, p.isAhead(of: jobProgress) { jobProgress = p } } }
         Task {
-            defer { job = nil }
-            do { loudness = try await work() } catch { loudness = InspectorMessage.text(error) }
+            defer { job = nil; jobProgress = nil }
+            do { loudness = try await work(report) } catch { loudness = InspectorMessage.text(error) }
         }
     }
 

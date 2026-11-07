@@ -111,11 +111,19 @@ speech. It always covers the whole file, so an 18-hour stereo source can take up
 before it starts when the disk has less than that plus 0.5 GB free (`IsolatedAudio.diskNeeded`, `checkDisk`).
 
 Loudness (`Loudness.measure`, used by measure and normalize) renders the mix as the export does and meters each buffer
-as it is read (`Loudness.stream`); nothing is kept, so an 18-hour mix stays at a few MB instead of about 25 GB. A
-reader that stops more than 0.1 s before the end of the sound throws `ShortRead`; `measure` reads once more, then
-fails, so part of the sound is never reported as the whole. Hum detection reads only the minute it looks at
-(`HumDetector.seconds`). Speed in an optimized build: metering 77 ns a frame, so about 4 min per 18 h plus decoding;
-normalize measures 2 to 6 times. `render` still returns the whole mix as an array, for short spans and tests.
+as it is read; nothing is kept, so an 18-hour mix stays at a few MB instead of about 25 GB. A mix of a minute or more
+is read in pieces at once (`Loudness.parts`: one per core, at most 8, none under a minute), each with its own
+composition and taps. Every piece after the first starts `Loudness.leadIn` (3 s) early: those seconds run through the
+taps and the meter's filters and are then dropped (`LoudnessMeter.beginCounting`), and the pieces' 100 ms hops are
+joined (`LoudnessMeter.joined`). Pieces are whole seconds long, so their hops are the ones a single read makes; a
+three-piece read equals a single read to 1e-12 LUFS with the master limiter working across a cut (LongAudioTests).
+A read that gives clearly less sound than it should throws `ShortRead` (allowed short: 2% of the length, at least
+0.1 s, because a file with dropped AAC packets reads to its end with fewer frames and AVFoundation closes the gaps up;
+Fixtures/audio-gaps.m4a); `measure` reads once more, then fails. Progress: `measure`/`normalizeLoudness` take a
+`Loudness.Progress` callback (pass n of up to 7, fraction); the mixer's job line and the clip's Gain & pan card show it.
+Measured on an 18-hour AAC file in an optimized build: one read of the whole mix 74.5 s in 8 pieces, against about
+261 s for a single reader (its first hour took 14.5 s); normalize reads 2 to 7 times. Hum detection reads only the
+minute it looks at (`HumDetector.seconds`). `render` and `stream` read in one piece, for short spans and tests.
 
 Masters (`ExportService.exportMaster`, `export_video preset: hevc10 | prores422hq | prores422 | prores4444`) go
 through `AVAssetReader` + `AVAssetWriter` with `EditMaxCompositor10` (64RGBAHalf frames) at the project size, with

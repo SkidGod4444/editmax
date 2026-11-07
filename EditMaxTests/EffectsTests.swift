@@ -4,6 +4,7 @@ import CoreImage
 import AppKit
 import SwiftUI
 import Vision
+import VideoToolbox   // kVTProfileLevel_*: newer SDKs re-export it through AVFoundation, Xcode 26.6 does not
 @testable import EditMax
 
 /// Green-screen key, blend modes, face / region blur, animated titles and lower thirds, the newer transitions and HDR

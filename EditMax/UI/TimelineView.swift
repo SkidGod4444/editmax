@@ -502,7 +502,7 @@ struct TimelineView: View {
                            viewport: viewport) {
             ClipBody(clip: clip, kind: track.kind, selected: selected, height: rowHeight - 10, pps: pps,
                      peaks: waveforms.peaks[clip.assetID] ?? [], strip: thumbnails.strips[clip.assetID],
-                     off: ClipBody.Off(track: track, in: document.project), viewport: viewport)
+                     off: ClipBody.Off(track: track, in: document.project), viewport: viewport, fine: thumbnails.fine(for: asset))
                 .equatable()
                 .onAppear { if let asset { waveforms.request(asset); thumbnails.request(asset) } }
                 .contextMenu {
@@ -618,6 +618,8 @@ struct ClipBody: View, Equatable {
     /// The timeline's viewport: the frames and the waveform are drawn only across its span (read in `body`, so a scroll
     /// past a tile edge redraws this bar; not part of ==). nil draws the whole bar.
     var viewport: TimelineViewport? = nil
+    /// Denser frames for a long file (nil for short files). The strip watches their frames itself; == compares only which.
+    var fine: FineThumbnails? = nil
 
     /// A hidden track leaves its clips out of the program entirely (picture and sound); a muted track, or one silenced
     /// because another track is soloed, leaves out their sound only.
@@ -635,7 +637,7 @@ struct ClipBody: View, Equatable {
 
     static func == (a: ClipBody, b: ClipBody) -> Bool {
         a.clip == b.clip && a.kind == b.kind && a.selected == b.selected && a.height == b.height && a.pps == b.pps
-            && a.peaks.count == b.peaks.count && a.strip?.frames.count == b.strip?.frames.count && a.off == b.off
+            && a.peaks.count == b.peaks.count && a.strip?.frames.count == b.strip?.frames.count && a.off == b.off && a.fine === b.fine
     }
 
     /// Transition wedge at the head, fade ramps at both ends, as other editors draw them.
@@ -691,7 +693,7 @@ struct ClipBody: View, Equatable {
                         ZStack {
                             Color.black.opacity(0.25)
                             if let strip, !strip.frames.isEmpty {
-                                ThumbnailStripView(strip: strip, sourceIn: clip.sourceIn, sourceOut: clip.sourceOut, visible: visible).equatable()
+                                ThumbnailStripView(strip: strip, sourceIn: clip.sourceIn, sourceOut: clip.sourceOut, visible: visible, fine: fine).equatable()
                             }
                         }
                         .frame(height: height - waveBand)

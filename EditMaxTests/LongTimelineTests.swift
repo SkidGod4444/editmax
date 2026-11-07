@@ -1,6 +1,7 @@
 import XCTest
 import SwiftUI
 import AppKit
+import AVFoundation
 @testable import EditMax
 
 /// An 18-hour clip on the timeline. The ruler, the grid and the clip's frames and waveform are drawn only around what
@@ -130,7 +131,81 @@ final class LongTimelineTests: XCTestCase {
         XCTAssertLessThan(many, max(one * 3, 0.05), "2000 clips: \(Int(many * 1000)) ms a tick, 1 clip: \(Int(one * 1000)) ms")
     }
 
+    func testFineFrameLevelsMatchTheTileWidth() {
+        XCTAssertEqual(FineThumbnails.level(tileSeconds: 0.3), 0)    // 0.5 s apart (the closest there is)
+        XCTAssertEqual(FineThumbnails.level(tileSeconds: 1.3), 1)    // 1 s: 60 pt/s with 78-pt tiles
+        XCTAssertEqual(FineThumbnails.level(tileSeconds: 4.4), 3)    // 4 s
+        XCTAssertEqual(FineThumbnails.step(3), 4)
+        XCTAssertEqual(FineThumbnails.key(301.4, level: 1), .init(level: 1, index: 301))
+    }
+
+    /// Zoomed in on a long file, each tile shows its own second, not the overview frame of minutes around it.
+    func testZoomedInOnALongFileEachTileShowsItsOwnSecond() async throws {
+        // Ten minutes at 1 frame a second, red, green, blue by second; the overview strip is grey at 2.5 s a frame.
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("editmax-fine-thumbs.mp4")
+        try await Self.writeVideo(seconds: 600, to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let fine = FineThumbnails(url: url, duration: 600)
+        let grey = ThumbnailStore.Strip(interval: 2.5, frames: Array(repeating: Self.solid(.gray), count: 240), aspect: 16 / 9)
+        let pps: CGFloat = 60, size = CGSize(width: 30 * pps, height: 44)   // 5:00 to 5:30 of the file
+        let view = ThumbnailStripView(strip: grey, sourceIn: 300, sourceOut: 330, fine: fine).frame(width: size.width, height: size.height)
+        let host = NSHostingView(rootView: view)
+        let window = NSWindow(contentRect: CGRect(origin: CGPoint(x: -10_000, y: -10_000), size: size), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        defer { window.contentView = nil }
+        // Tiles are 78 pt (1.3 s): level 1, a frame each second. Wait for them (made in the background).
+        let deadline = Date().addingTimeInterval(20)
+        while fine.frames.count < 20, Date() < deadline { host.layoutSubtreeIfNeeded(); try await Task.sleep(nanoseconds: 50_000_000) }
+        XCTAssertGreaterThanOrEqual(fine.frames.count, 20, "the visible tiles' frames were made")
+        XCTAssertTrue(fine.frames.keys.allSatisfy { $0.level == 1 })
+        for _ in 0..<5 { host.layoutSubtreeIfNeeded(); RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }   // the last batch drawn
+        let rep = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: rep)
+        let scale = CGFloat(rep.pixelsWide) / size.width, tileW = 44 * 16.0 / 9
+        var right = 0
+        for k in 0..<20 {
+            let t = 300 + Double(CGFloat(k) * tileW / size.width) * 30
+            let expected = Int(t.rounded()) % 3
+            let (r, g, b) = Self.rgb(rep.colorAt(x: Int((CGFloat(k) + 0.5) * tileW * scale), y: Int(22 * scale)))
+            let got = [r, g, b].enumerated().max { $0.element < $1.element }!.offset
+            if max(r, g, b) - min(r, g, b) > 0.3, got == expected { right += 1 }
+        }
+        XCTAssertEqual(right, 20, "each tile shows the colour of its own second")
+        save(rep, "long-fine-thumbnails")
+    }
+
     // MARK: Helpers
+
+    /// A small H.264 file at one frame a second: red, green, blue by second.
+    private static func writeVideo(seconds: Int, to url: URL) async throws {
+        try? FileManager.default.removeItem(at: url)
+        let (w, h) = (128, 72)
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: [AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: w, AVVideoHeightKey: h])
+        input.expectsMediaDataInRealTime = false
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA, kCVPixelBufferWidthKey as String: w, kCVPixelBufferHeightKey as String: h])
+        writer.add(input)
+        XCTAssertTrue(writer.startWriting())
+        writer.startSession(atSourceTime: .zero)
+        let bgra: [[UInt8]] = [[0, 0, 255, 255], [0, 255, 0, 255], [255, 0, 0, 255]]   // red, green, blue
+        for i in 0..<seconds {
+            while !input.isReadyForMoreMediaData { try await Task.sleep(nanoseconds: 1_000_000) }
+            var pb: CVPixelBuffer?
+            CVPixelBufferPoolCreatePixelBuffer(nil, try XCTUnwrap(adaptor.pixelBufferPool), &pb)
+            let buf = try XCTUnwrap(pb)
+            CVPixelBufferLockBaseAddress(buf, [])
+            let base = CVPixelBufferGetBaseAddress(buf)!.assumingMemoryBound(to: UInt8.self), row = CVPixelBufferGetBytesPerRow(buf)
+            for y in 0..<h { for x in 0..<w { for c in 0..<4 { base[y * row + x * 4 + c] = bgra[i % 3][c] } } }
+            CVPixelBufferUnlockBaseAddress(buf, [])
+            XCTAssertTrue(adaptor.append(buf, withPresentationTime: CMTime(value: CMTimeValue(i), timescale: 1)))
+        }
+        input.markAsFinished()
+        writer.endSession(atSourceTime: CMTime(value: CMTimeValue(seconds), timescale: 1))
+        await writer.finishWriting()
+        XCTAssertEqual(writer.status, .completed, "\(writer.error.map { "\($0)" } ?? "")")
+    }
 
     /// `seconds` of one file on V1, as one clip or cut into `clips` back-to-back pieces. Its waveform is quiet except one
     /// loud second at `loud`; its 240 frames are solid red, green, blue in turn, so a tile shows which frame it drew.

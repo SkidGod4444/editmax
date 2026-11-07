@@ -66,6 +66,12 @@ within 1.5 s (a slider drag) into one undo step and one version. Analysis caches
 - Clips and texts get views only inside the drawn span, plus the selected ones (a drag keeps its bar). An 18-hour
   stream cut into 2000 clips cost 321 ms a playhead update before this, 48 ms after (one clip: 47 ms). Off-screen
   clips are therefore not in the UI driver's hidden list until the timeline scrolls to them.
+- Thumbnails: the overview strip has at most 240 frames a file, made at import. When a file's overview is sparser
+  than the tiles need (one every 4.5 min of an 18-hour file, against 1.3 s a tile at 60 px/s), `FineThumbnails`
+  makes frames for the tiles on screen, on a grid per level (0.5 s, 1 s, 2 s …, so zooming reuses them), keeps the
+  600 wanted last (about 33 MB a file) and accepts any frame within half a step (often a keyframe: no decode run).
+  The strip's canvas takes a snapshot of those frames, not the object: a canvas redraws only when its captured
+  values change, and read through the object, later batches were never drawn.
 
 ## Picture and sound
 

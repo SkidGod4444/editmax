@@ -80,8 +80,11 @@ final class VoiceIsolationBlocksTests: XCTestCase {
         let plain = try await Loudness.render(doc.project, seconds: 1)
         let plainLeft = stride(from: 0, to: plain.count, by: 2).map { plain[$0] }
         XCTAssertLessThan(zip(plainLeft, a[9 * sr..<10 * sr]).map { abs($0 - $1) }.max() ?? 1, 1e-4, "the original sound")
-        try await IsolatedAudio.shared.ensureAll(doc.project)
+        // The preview's rebuild after the trim starts the render of what is missing, without anyone asking.
+        let started = try XCTUnwrap(IsolatedAudio.shared.scheduleMissing(doc.project, delay: .zero), "block 4 is missing: a render starts")
+        await started.value
         XCTAssertEqual(exists(), [false, false, true, true, true], "only block 4 was added")
+        XCTAssertNil(IsolatedAudio.shared.scheduleMissing(doc.project), "nothing missing: nothing starts")
         XCTAssertTrue(IsolatedAudio.shared.isReady(doc.project.tracks[t].clips[0], in: doc.project))
     }
 }

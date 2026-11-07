@@ -102,6 +102,7 @@ final class PlayerController: ObservableObject {
     private var heldTime: CMTime?
 
     func rebuild(_ project: Project, reason: String = "revision") {
+        IsolatedAudio.shared.scheduleMissing(project)   // a trim or move can reach sound not isolated yet
         rebuildTask?.cancel()
         rebuildTask = Task {
             do {

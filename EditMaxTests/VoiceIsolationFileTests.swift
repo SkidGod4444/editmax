@@ -131,6 +131,47 @@ final class VoiceIsolationFileTests: XCTestCase {
     }
 
     /// A file's samples, both channels.
+    /// Times one 10-minute block of real speech (how long a clip lengthened into a block not yet rendered plays its
+    /// original sound) and measures the seam between two blocks rendered in separate passes against one pass: set
+    /// TEST_RUNNER_EDITMAX_SPEECH_FILE to a speech file of 20 min or more.
+    func testTimeOneBlockOfSpeechAndTheSeamBetweenSeparatePasses() async throws {
+        guard IsolatedAudio.isAvailable else { throw XCTSkip(IsolatedAudio.unavailableMessage) }
+        guard let path = ProcessInfo.processInfo.environment["EDITMAX_SPEECH_FILE"] else { throw XCTSkip("no speech file given") }
+        let src = URL(fileURLWithPath: path), b = IsolatedAudio.blockSeconds
+        let url = { (name: String) -> URL in let u = S.scratch.appendingPathComponent(name); try? FileManager.default.removeItem(at: u); return u }
+        let a0 = url("seam-a0.caf"), a1 = url("seam-a1.caf"), p0 = url("seam-p0.caf"), p1 = url("seam-p1.caf")
+        defer { for u in [a0, a1, p0, p1] { try? FileManager.default.removeItem(at: u) } }
+        let run = { (pieces: [IsolatedAudio.Piece]) -> Double in
+            let t = Date()
+            try await IsolatedAudio.render(source: src, pieces: pieces, pct: 100, cancel: IsolatedAudio.CancelFlag(), progress: { _ in })
+            return Date().timeIntervalSince(t)
+        }
+        let first = try await run([.init(start: 0, end: b, url: a0)])
+        let later = try await run([.init(start: b, end: 2 * b, url: a1)])   // warmed on the 8 s before it
+        let both = try await run([.init(start: 0, end: b, url: p0), .init(start: b, end: 2 * b, url: p1)])
+        // 50 ms either side of the seam: the step across it, against the sound's own sample-to-sample steps there.
+        let w = 2_400
+        func seam(_ x: URL, _ y: URL) throws -> (jump: Float, p99: Float, top: Float) {
+            let s = try Self.readWindow(x, from: -w, count: w) + Self.readWindow(y, from: 0, count: w)
+            var steps = (1..<s.count).filter { $0 != w }.map { abs(s[$0] - s[$0 - 1]) }
+            steps.sort()
+            return (abs(s[w] - s[w - 1]), steps[steps.count * 99 / 100], steps.last ?? 0)
+        }
+        let apart = try seam(a0, a1), one = try seam(p0, p1)
+        print(String(format: "ISO-BLOCK %.0f s of speech: first block %.1f s (%.0fx real time), a later block on its own %.1f s, two in one pass %.1f s; seam step, separate passes %.5f (sound's own steps there: 99th pct %.5f, top %.5f); one pass %.5f",
+                     b, first, b / first, later, both, apart.jump, apart.p99, apart.top, one.jump))
+        XCTAssertLessThanOrEqual(apart.jump, max(apart.top, 1e-4), "no step at the seam bigger than the sound makes on its own")
+    }
+
+    /// Left channel, `count` frames from `from` (negative: from the end).
+    static func readWindow(_ url: URL, from: Int, count: Int) throws -> [Float] {
+        let f = try AVAudioFile(forReading: url, commonFormat: .pcmFormatFloat32, interleaved: false)
+        f.framePosition = from < 0 ? max(0, f.length + AVAudioFramePosition(from)) : AVAudioFramePosition(from)
+        let buf = AVAudioPCMBuffer(pcmFormat: f.processingFormat, frameCapacity: AVAudioFrameCount(count))!
+        try f.read(into: buf, frameCount: AVAudioFrameCount(count))
+        return Array(UnsafeBufferPointer(start: buf.floatChannelData![0], count: Int(buf.frameLength)))
+    }
+
     static func readFile(_ url: URL) throws -> (frames: Int, l: [Float], r: [Float]) {
         let f = try AVAudioFile(forReading: url, commonFormat: .pcmFormatFloat32, interleaved: false)
         let buf = AVAudioPCMBuffer(pcmFormat: f.processingFormat, frameCapacity: AVAudioFrameCount(max(1, f.length)))!

@@ -6,7 +6,7 @@ import Combine
 /// Voice isolation (dialogue cleanup) rendered ahead of time: an asset's sound is run through Apple's
 /// `AUSoundIsolation` audio unit offline (AVAudioEngine in manual rendering mode) and kept in Application Support,
 /// keyed by the file's path, size and modification date plus the amount (10 % steps). Only the parts of the source the
-/// timeline reads are rendered, in 10-minute blocks (`blockSeconds`); a clip plays its blocks joined on the source's
+/// timeline reads are rendered, in 2-minute blocks (`blockSeconds`); a clip plays its blocks joined on the source's
 /// timeline once every one it reads is there (`readySource`), and the export renders what is missing first
 /// (`ensureAll`). A whole-file render from an older version is still used. Nothing runs inside the real-time audio tap.
 @MainActor
@@ -24,6 +24,7 @@ final class IsolatedAudio: ObservableObject {
 
     private var inFlight: [String: Task<Void, Error>] = [:]
     private var scheduled: [UUID: Task<Void, Never>] = [:]
+    private var missingTask: Task<Void, Never>?
 
     nonisolated static let sampleRate = 48_000.0
 
@@ -75,13 +76,16 @@ final class IsolatedAudio: ObservableObject {
 
     /// Renders cover what the timeline uses, in blocks of the source this long (the last one shorter), each its own file.
     /// One render pass covers a run of neighbouring blocks with one calibration, so they join seamlessly; a run that
-    /// starts after the beginning of the file first plays `prerollFrames` of the sound before it.
-    nonisolated(unsafe) static var blockSeconds = 600.0   // tests set a few seconds
+    /// starts after the beginning of the file first plays `prerollFrames` of the sound before it. Two minutes: a clip
+    /// trimmed into a block not rendered yet plays its original sound for about 8 s (measured on speech: a 2-minute block
+    /// 7 s, 11 s for the first pass, which loads the model; 10-minute blocks took 21–27 s), and a short clip renders little
+    /// more than it reads. Each pass costs some 4 s on its own, so neighbouring blocks share one.
+    nonisolated(unsafe) static var blockSeconds = 120.0   // tests set a few seconds
     nonisolated static func blockCount(_ duration: Double) -> Int { max(1, Int((duration / blockSeconds).rounded(.up))) }
     nonisolated static func blockRange(_ k: Int, duration: Double) -> (start: Double, end: Double) {
         (Double(k) * blockSeconds, min(duration, Double(k + 1) * blockSeconds))
     }
-    /// `<key>-b600s-<k>.caf`: the block length is part of the name, so files of another length are never read as these.
+    /// `<key>-b120s-<k>.caf`: the block length is part of the name, so files of another length are never read as these.
     nonisolated static func blockURL(for asset: Asset, amount: Double, block k: Int) -> URL {
         directory.appendingPathComponent("\(key(for: asset, amount: amount))-b\(Int(blockSeconds))s-\(k).caf")
     }
@@ -257,6 +261,29 @@ final class IsolatedAudio: ObservableObject {
         }
     }
 
+    /// Renders, after a quiet period, what the timeline reads now that no render has covered: a trim, a move or a J/L cut
+    /// can reach a block of the file not rendered yet, and until it is there the clip plays its original sound. The
+    /// preview calls this on every rebuild. A key whose last render failed waits for the amount to change (the inspector
+    /// shows the failure), so a full disk is not retried on every edit.
+    @discardableResult
+    func scheduleMissing(_ project: Project, delay: Duration = .milliseconds(800)) -> Task<Void, Never>? {
+        guard Self.isAvailable else { return nil }
+        let needs = Self.needs(project).filter { k, n in
+            failed[k] == nil && Self.readyURL(for: n.asset, amount: n.amount) == nil
+                && n.blocks.contains { !FileManager.default.fileExists(atPath: Self.blockURL(for: n.asset, amount: n.amount, block: $0).path) }
+        }.sorted { $0.key < $1.key }
+        missingTask?.cancel()   // a render already started carries on; the next call finds its blocks there
+        guard !needs.isEmpty else { missingTask = nil; return nil }
+        missingTask = Task { [weak self] in
+            try? await Task.sleep(for: delay)
+            for (_, n) in needs {
+                guard !Task.isCancelled, let self else { return }
+                try? await self.ensure(n.asset, amount: n.amount, blocks: n.blocks)
+            }
+        }
+        return missingTask
+    }
+
     /// Renders the isolated sound every clip that asks for it reads (the export and loudness call this first).
     func ensureAll(_ project: Project) async throws {
         for (_, n) in Self.needs(project).sorted(by: { $0.key < $1.key }) {
@@ -279,7 +306,10 @@ final class IsolatedAudio: ObservableObject {
         let amount = clip.audio.voiceIsolation
         guard let asset = Self.audioAsset(of: clip, in: project), Self.pct(amount) > 0 else { return base }
         let k = Self.key(for: asset, amount: amount)
-        if rendering.contains(k) { let f = progress[k] ?? 0; return base + " Rendering… \(Int((f * 100).rounded()))%" }
+        if rendering.contains(k) {
+            let f = progress[k] ?? 0
+            return base + " Rendering… \(Int((f * 100).rounded()))%" + (isReady(clip, in: project) ? "" : ": this clip plays its original sound until it is done.")
+        }
         if isReady(clip, in: project) { return base + " Ready: the preview and the export play the isolated sound." }
         if let e = failed[k] { return base + " Failed: \(e)" }
         if !Self.isAvailable { return base + " " + Self.unavailableMessage }

@@ -107,7 +107,7 @@ that track's strip. Clip volume is one envelope per
 clip (keyframes × fades × transition crossfade × ducking) emitted as back-to-back ramps.
 
 Voice isolation renders Apple's on-device `AUSoundIsolation` over only the parts of a source the timeline reads, in
-10-minute blocks of the source (`IsolatedAudio.blockSeconds`; `<key>-b600s-<k>.caf` in
+2-minute blocks of the source (`IsolatedAudio.blockSeconds`; `<key>-b120s-<k>.caf` in
 `Application Support/EditMax/isolated/`, 16-bit Apple Lossless). What a clip reads (`IsolatedAudio.span`): its sound
 (J/L cuts included, via `soundClip()`), the tail a transition or crossfade into the next clip reads, and a second either
 side; `needs` collects the blocks per asset and amount from `Project.playedClips(on:)`, the same list the builder plays.
@@ -117,9 +117,13 @@ block; a run that starts after the file's beginning warms the model on the 8 s b
 isolator dry every block is its stretch of the source sample for sample (VoiceIsolationFileTests). The builder and
 `SplitEditAudio` play a clip isolated only when every block it reads is there (`readySource`, never partly), joined on
 the source's timeline by a small composition that the timeline's composition reads like a file (`stitched`, cached).
-A whole-file `<key>.caf` from an older version is still used. The unit is not repeatable run to run (two whole renders
-differ by about −40 to −60 dB against the signal), so a block rendered in a later pass than its neighbour can join it
-with a slight change. Disk: up to 1.27 GB per hour of stereo rendered, refused before it starts when the disk lacks that
+A whole-file `<key>.caf` from an older version is still used. A trim, move or J/L cut that reaches a block not rendered
+yet starts its render from the preview's rebuild (`scheduleMissing`, after 0.8 s quiet); the clip plays its original
+sound meanwhile, and the inspector says so. The unit is not repeatable run to run (two whole renders differ by about −40
+to −60 dB against the signal), yet the step across a seam between blocks rendered in separate passes stays within the speech's own sample-to-sample
+steps (measured at two seams: 0.073 and 0.020, against 99th percentiles of 0.19 and 0.023; not checked by ear). A block
+renders in about 7 s (11 s for the first pass, which loads the model), so that is how long a trimmed clip plays its
+original sound. Disk: up to 1.27 GB per hour of stereo rendered, refused before it starts when the disk lacks that
 plus 0.5 GB (`diskNeeded`, `checkDisk`).
 
 Loudness (`Loudness.measure`, used by measure and normalize) renders the mix as the export does and meters each buffer

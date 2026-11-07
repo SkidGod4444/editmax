@@ -113,16 +113,40 @@ final class LongTimelineTests: XCTestCase {
         XCTAssertLessThan(long, max(short * 3, 0.05), "18 h: \(Int(long * 1000)) ms a tick, 1 min: \(Int(short * 1000)) ms")
     }
 
+    /// Real edits cut a long recording up (silence removal on an 18-hour stream leaves thousands of pieces).
+    func testAPlayheadTickWithTwoThousandClipsCostsWhatItDoesWithOne() throws {
+        func perTick(clips: Int) throws -> Double {
+            let (doc, _) = project(seconds: long, loud: 10, clips: clips)
+            let t = Timeline(doc, pps: 60)
+            t.player.seek(to: 32_400)
+            _ = try t.draw(passes: 3)
+            let start = Date()
+            for i in 0..<8 { t.player.seek(to: 32_405 + Double(i) / 30); _ = try t.draw(passes: 1) }
+            return Date().timeIntervalSince(start) / 8
+        }
+        _ = try perTick(clips: 1)   // warm-up
+        let one = try perTick(clips: 1), many = try perTick(clips: 2000)
+        print("LONG-TIMELINE per tick at 9 h: 1 clip \(Int(one * 1000)) ms, 2000 clips \(Int(many * 1000)) ms")
+        XCTAssertLessThan(many, max(one * 3, 0.05), "2000 clips: \(Int(many * 1000)) ms a tick, 1 clip: \(Int(one * 1000)) ms")
+    }
+
     // MARK: Helpers
 
-    /// One clip of `seconds` on V1. Its waveform is quiet except one loud second at `loud`; its 240 frames are solid
-    /// red, green, blue in turn, so a tile shows which frame it drew.
-    private func project(seconds: Double, loud: Double) -> (EditMaxDocument, Asset) {
+    /// `seconds` of one file on V1, as one clip or cut into `clips` back-to-back pieces. Its waveform is quiet except one
+    /// loud second at `loud`; its 240 frames are solid red, green, blue in turn, so a tile shows which frame it drew.
+    private func project(seconds: Double, loud: Double, clips: Int = 1) -> (EditMaxDocument, Asset) {
         let doc = EditMaxDocument()
         let asset = Asset(name: "stream.mp4", path: "/tmp/long-timeline-\(UUID().uuidString).mp4", kind: .video, duration: seconds, width: 1920, height: 1080)
         doc.project.assets = [asset]
         doc.apply("Set up", origin: .agent) { p in
-            if let i = p.tracks.firstIndex(where: { $0.name == "V1" }) { p.tracks[i].clips = [Clip(assetID: asset.id, name: "Stream", start: 0, duration: seconds)] }
+            let len = seconds / Double(clips)
+            if let i = p.tracks.firstIndex(where: { $0.name == "V1" }) {
+                p.tracks[i].clips = (0..<clips).map { k in
+                    var c = Clip(assetID: asset.id, name: clips == 1 ? "Stream" : "Part \(k + 1)", start: Double(k) * len, duration: len)
+                    c.sourceIn = Double(k) * len
+                    return c
+                }
+            }
         }
         var peaks = [Float](repeating: 0.06, count: Int(seconds) * WaveformStore.peaksPerSecond)
         let l = Int(loud) * WaveformStore.peaksPerSecond

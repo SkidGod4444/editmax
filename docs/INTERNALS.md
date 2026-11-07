@@ -63,6 +63,9 @@ within 1.5 s (a slider drag) into one undo step and one version. Analysis caches
   timeline body itself never reads it, so a tick does not rebuild every clip.
 - Measured at 18 h, 60 px/s: a playhead update went from 1.7 s to 37 ms (a 1-minute project: 38 ms); memory
   from about 3 GB to about 400 MB.
+- Clips and texts get views only inside the drawn span, plus the selected ones (a drag keeps its bar). An 18-hour
+  stream cut into 2000 clips cost 321 ms a playhead update before this, 48 ms after (one clip: 47 ms). Off-screen
+  clips are therefore not in the UI driver's hidden list until the timeline scrolls to them.
 
 ## Picture and sound
 

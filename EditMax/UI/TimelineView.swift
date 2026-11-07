@@ -330,15 +330,23 @@ struct TimelineView: View {
         document.apply(kind == .video ? "Add video track" : "Add audio track", origin: .user) { p in _ = p.addTrack(kind: kind) }
     }
 
+    /// Clips and texts get views only inside the drawn span (and when selected, so a drag keeps its bar): an 18-hour
+    /// stream cut by silence removal is thousands of clips, and every view costs layout on each playhead tick.
+    /// Reading `viewport.drawn` here rebuilds the lanes once per 2048-pt tile crossed, not per scroll step.
+    private func inDrawnSpan(_ start: Double, _ end: Double, _ span: ClosedRange<CGFloat>) -> Bool {
+        CGFloat(end) * pps >= span.lowerBound && CGFloat(start) * pps <= span.upperBound
+    }
+
     private var tracksArea: some View {
-        VStack(spacing: 0) {
+        let span = viewport.drawn
+        return VStack(spacing: 0) {
             Color.clear.frame(height: rulerHeight)   // the ruler itself is pinned above the lanes (rulerStrip)
             ForEach(document.project.rows) { row in
                 switch row {
                 case .track(let track):
                     ZStack(alignment: .leading) {
                         Color.clear.contentShape(Rectangle()).onTapGesture { location in seek(x: location.x); state.selectedClipIDs = []; state.selectedTextID = nil }
-                        ForEach(track.clips) { clip in clipView(clip, track: track) }
+                        ForEach(track.clips.filter { inDrawnSpan($0.start, $0.end, span) || state.selectedClipIDs.contains($0.id) }) { clip in clipView(clip, track: track) }
                         if track.kind == .video, track.clips.contains(where: \.hasSplitEdit) { SplitEditLane(clips: track.clips, project: document.project, pps: pps, rowHeight: rowHeight, barHeight: rowHeight - 10, peaks: waveforms.peaks) }
                     }
                     .frame(height: rowHeight)
@@ -350,7 +358,7 @@ struct TimelineView: View {
                         Color.clear.contentShape(Rectangle()).onTapGesture { location in seek(x: location.x); state.selectedClipIDs = []; state.selectedTextID = nil }
                         let rows = TextLayout.laneRows(document.project.texts)
                         let stacked = rows.values.contains(1)
-                        ForEach(document.project.texts) { t in
+                        ForEach(document.project.texts.filter { inDrawnSpan($0.start, $0.end, span) || state.selectedTextID == $0.id }) { t in
                             // Concurrent texts take two sub-rows so neither bar covers the other; alone, a bar sits centred.
                             textView(t).offset(y: stacked ? (rows[t.id] == 1 ? 16.5 : -16.5) : 0)
                         }

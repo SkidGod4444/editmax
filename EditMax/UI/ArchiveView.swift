@@ -1,63 +1,94 @@
 import SwiftUI
 import AppKit
 
-/// The Archive window (Window ▸ Archive, or Settings ▸ General ▸ Show Archive): every file deleted in EditMax, with
-/// Restore to put it back where it was and use it again, until it is erased for good.
-@MainActor
-final class ArchiveWindow {
-    static let shared = ArchiveWindow()
-    private var window: NSWindow?
-
-    func show() {
-        if window == nil {
-            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 460), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-            w.title = "Archive"
-            w.contentMinSize = NSSize(width: 440, height: 300)
-            w.isReleasedWhenClosed = false
-            w.contentView = NSHostingView(rootView: ArchiveView())
-            w.center()
-            w.setFrameAutosaveName("EditMaxArchive")
-            window = w
-        }
-        window?.makeKeyAndOrderFront(nil)
-    }
-}
-
-struct ArchiveView: View {
+/// Home ▸ Archive: every file deleted in EditMax (EditMax's copies of Assets items, projects, fonts, templates), with
+/// Restore to put it back where it was and use it again, until it is erased for good. Laid out like Home's Projects and
+/// Assets pages: a title with its count, actions on the right, a kind filter, then the items. Window ▸ Archive and
+/// Settings ▸ General ▸ Show Archive open Home here.
+struct ArchivePane: View {
+    @ObservedObject var model: HomeModel
     @ObservedObject private var archive = AppArchive.shared
-    @ObservedObject private var settings = AppSettings.shared
     @State private var erasing: AppArchive.Entry?
     @State private var confirmEmpty = false
-    @State private var notice: String?
-    @State private var problem: String?
+    @State private var message: String?
 
-    private var shown: [AppArchive.Entry] { archive.entries.sorted { $0.archivedAt > $1.archivedAt } }
+    enum Filter: String, CaseIterable, Identifiable {
+        case all = "All", media = "Media", projects = "Projects", fonts = "Fonts", templates = "Templates"
+        var id: String { rawValue }
+        func matches(_ e: AppArchive.Entry) -> Bool {
+            switch self {
+            case .all: true
+            case .media: [.asset, .file].contains(e.kind ?? .file)
+            case .projects: e.kind == .project
+            case .fonts: e.kind == .font
+            case .templates: e.kind == .template
+            }
+        }
+    }
+
+    private var shown: [AppArchive.Entry] {
+        archive.entries.filter(model.archiveFilter.matches).sorted { $0.archivedAt > $1.archivedAt }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            Divider()
-            if shown.isEmpty {
-                VStack(spacing: 8) {
-                    Image(systemName: "archivebox").font(.system(size: 30, weight: .light)).foregroundStyle(.tertiary)
-                    Text("Nothing in the Archive").font(.headline)
-                    Text("Files you delete in EditMax (Assets items, projects, fonts, templates) wait here so you can put them back.")
-                        .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center).frame(maxWidth: 320)
+            HStack(spacing: 10) {
+                Text("Archive").font(.system(size: 22, weight: .bold, design: .rounded))
+                Text("\(shown.count)").font(.system(size: 12, weight: .semibold).monospacedDigit()).foregroundStyle(.secondary)
+                    .padding(.horizontal, 7).padding(.vertical, 2).background(Color.primary.opacity(0.08), in: Capsule())
+                Spacer()
+                Button { archive.revealInFinder() } label: { Label("Show in Finder", systemImage: "folder") }
+                    .pointer().uiFrame("archive.reveal").uiTap("archive.reveal") { archive.revealInFinder() }
+                Button { confirmEmpty = true } label: { Label("Empty Archive…", systemImage: "trash") }
+                    .disabled(archive.entries.isEmpty)
+                    .pointer().uiFrame("archive.empty").uiTap("archive.empty") { if !archive.entries.isEmpty { confirmEmpty = true } }
+            }
+            .padding(.horizontal, 26).padding(.top, 40).padding(.bottom, 10)
+            HStack {
+                Picker("Kind", selection: $model.archiveFilter) {
+                    ForEach(Filter.allCases) { Text($0.rawValue).tag($0) }
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .pickerStyle(.segmented).labelsHidden().fixedSize()
+                .pointer().uiFrame("archive.kind")
+                .background { ForEach(Filter.allCases) { f in Color.clear.uiTap("archive.kind.\(f.rawValue.lowercased())") { model.archiveFilter = f } } }
+                Spacer()
+                HStack(spacing: 4) {
+                    Text("Erased for good after \(archive.periodText).").foregroundStyle(.secondary)
+                    SettingsLink { Text("Change…") }.buttonStyle(.link).pointer().uiFrame("archive.period")
+                }
+                .font(.caption)
+            }
+            .padding(.horizontal, 26).padding(.bottom, 14)
+            if shown.isEmpty {
+                Spacer()
+                VStack(spacing: 10) {
+                    Image(systemName: "archivebox").font(.system(size: 44)).foregroundStyle(.tertiary)
+                    Text(archive.entries.isEmpty ? "Nothing in the Archive" : "No \(model.archiveFilter.rawValue.lowercased()) in the Archive").font(.headline)
+                    if archive.entries.isEmpty {
+                        Text("Files you delete in EditMax (media, projects, fonts, templates) wait here\nfor \(archive.periodText), so you can restore them.")
+                            .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    }
+                }
+                .padding(.horizontal, 30)
+                Spacer()
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 2) { ForEach(shown) { row($0) } }.padding(8)
+                    LazyVStack(spacing: 8) {
+                        ForEach(shown) { e in ArchiveRow(entry: e, onRestore: { restore(e) }, onErase: { erasing = e }) }
+                    }
+                    .padding(.horizontal, 26).padding(.bottom, 26)
                 }
             }
-            if let line = problem ?? notice {
-                Divider()
-                Text(line).font(.callout).foregroundStyle(problem == nil ? Color.secondary : Color.red)
-                    .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 14).padding(.vertical, 8)
+        }
+        .overlay(alignment: .bottom) {
+            if let m = message {
+                Text(m).font(.system(size: 12, weight: .medium)).padding(.horizontal, 14).padding(.vertical, 8)
+                    .liquidGlass().padding(.bottom, 18)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .frame(minWidth: 440, minHeight: 300)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .animation(.snappy, value: message)
+        .animation(.snappy, value: archive.entries)
         .confirmationDialog("Erase “\(erasing?.name ?? "")” for good?", isPresented: Binding(get: { erasing != nil }, set: { if !$0 { erasing = nil } }), titleVisibility: .visible) {
             Button("Erase", role: .destructive) { if let e = erasing { archive.erase(e.id); say("Erased \(e.name)") }; erasing = nil }
             Button("Cancel", role: .cancel) { erasing = nil }
@@ -68,60 +99,72 @@ struct ArchiveView: View {
         } message: { Text("This can't be undone.") }
     }
 
-    private var header: some View {
-        HStack(alignment: .center, spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(archive.entries.isEmpty ? "Empty" : "\(archive.entries.count) item\(archive.entries.count == 1 ? "" : "s") · \(ByteCountFormatter.string(fromByteCount: archive.totalBytes, countStyle: .file))")
-                    .font(.headline).monospacedDigit()
-                Text("Erased for good after \(archive.periodText). Change this in Settings ▸ General.").font(.caption).foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 8)
-            Button("Show in Finder") { archive.revealInFinder() }.controlSize(.small).pointer().uiFrame("archive.reveal")
-            Button("Empty Archive…") { confirmEmpty = true }.controlSize(.small).disabled(archive.entries.isEmpty).pointer().uiFrame("archive.empty")
-        }
-        .padding(.horizontal, 14).padding(.vertical, 10)
-    }
-
-    private func row(_ e: AppArchive.Entry) -> some View {
-        let kind = e.kind ?? .file
-        let left = archive.daysLeft(e)
-        return HStack(spacing: 10) {
-            Image(systemName: kind.symbol).font(.system(size: 15)).foregroundStyle(.secondary).frame(width: 26)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(e.name).font(.system(size: 13, weight: .medium)).lineLimit(1).truncationMode(.middle)
-                Text("\(kind.label) · deleted \(e.archivedAt.formatted(.relative(presentation: .named))) · \(ByteCountFormatter.string(fromByteCount: e.bytes, countStyle: .file))")
-                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
-            }
-            Spacer(minLength: 6)
-            Text(left == 0 ? "Erased soon" : "\(left) day\(left == 1 ? "" : "s") left").font(.caption).foregroundStyle(left <= 3 ? Color.orange : Color.secondary).monospacedDigit()
-            Button("Restore") { restore(e) }
-                .controlSize(.small).help("Put it back where it was (\(Self.place(of: e)))").pointer().uiFrame("archive.\(e.id.short).restore")
-            Button { erasing = e } label: { Image(systemName: "trash").frame(width: 22, height: 22).contentShape(Rectangle()) }
-                .buttonStyle(.borderless).foregroundStyle(.secondary).help("Erase for good now").pointer().uiFrame("archive.\(e.id.short).erase")
-        }
-        .padding(.horizontal, 8).frame(height: 46)
-        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.primary.opacity(0.035)))
-        .contextMenu {
-            Button("Restore", systemImage: "arrow.uturn.backward") { restore(e) }
-            Button("Erase Now…", systemImage: "trash", role: .destructive) { erasing = e }
-        }
-        .uiFrame("archive.\(e.id.short)")
-    }
-
     private func restore(_ e: AppArchive.Entry) {
         do { _ = try archive.restore(e.id); say("Restored \(e.name) to \(Self.place(of: e))") }
-        catch { problem = error.localizedDescription; notice = nil }
+        catch { say(error.localizedDescription) }
     }
 
-    private func say(_ line: String) { notice = line; problem = nil }
+    /// A line at the foot of the page for a few seconds, as on the Assets page.
+    private func say(_ line: String) {
+        message = line
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            if message == line { message = nil }
+        }
+    }
 
     static func place(of e: AppArchive.Entry) -> String {
         switch e.kind ?? .file {
         case .asset: "Assets"
-        case .project: "Home"
+        case .project: "Projects"
         case .font: "your fonts"
         case .template: "templates"
         case .file: URL(fileURLWithPath: e.original).deletingLastPathComponent().lastPathComponent
         }
+    }
+}
+
+/// One archived file: what it is, when it was deleted, the days left, and Restore. Hover lights it as Home's cards do.
+private struct ArchiveRow: View {
+    let entry: AppArchive.Entry
+    let onRestore: () -> Void
+    let onErase: () -> Void
+    @ObservedObject private var archive = AppArchive.shared
+    @State private var hover = false
+
+    var body: some View {
+        let kind = entry.kind ?? .file
+        let left = archive.daysLeft(entry)
+        HStack(spacing: 12) {
+            Image(systemName: kind.symbol).font(.system(size: 16, weight: .medium)).foregroundStyle(.secondary)
+                .frame(width: 38, height: 38)
+                .background(Color.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            VStack(alignment: .leading, spacing: 3) {
+                Text(entry.name).font(.system(size: 13, weight: .semibold)).lineLimit(1).truncationMode(.middle)
+                Text("\(kind.label) · Deleted \(entry.archivedAt.formatted(.relative(presentation: .named))) · \(ByteCountFormatter.string(fromByteCount: entry.bytes, countStyle: .file))")
+                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            Text(left == 0 ? "Erased soon" : "\(left) day\(left == 1 ? "" : "s") left")
+                .font(.caption.monospacedDigit()).foregroundStyle(left <= 3 ? Color.orange : Color.secondary)
+            Button { onRestore() } label: { Label("Restore", systemImage: "arrow.uturn.backward") }
+                .controlSize(.small)   // the page's own button style (Show in Finder, Empty Archive)
+                .help("Put it back in \(ArchivePane.place(of: entry)), where it was")
+                .pointer().uiFrame("archive.\(entry.id.short).restore").uiTap("archive.\(entry.id.short).restore") { onRestore() }
+            Button { onErase() } label: { Image(systemName: "trash").frame(width: 24, height: 24).contentShape(Rectangle()) }
+                .buttonStyle(.borderless).foregroundStyle(.secondary).help("Erase for good now")
+                .pointer().uiFrame("archive.\(entry.id.short).erase").uiTap("archive.\(entry.id.short).erase") { onErase() }
+        }
+        .padding(.horizontal, 12).padding(.vertical, 9)
+        .background(Color.primary.opacity(hover ? 0.08 : 0.045), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(hover ? Color.accentColor.opacity(0.9) : Color.clear, lineWidth: 1.5))
+        .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .onHover { hover = $0 }
+        .animation(.snappy(duration: 0.18), value: hover)
+        .contextMenu {
+            Button("Restore", systemImage: "arrow.uturn.backward") { onRestore() }
+            Button("Erase Now…", systemImage: "trash", role: .destructive) { onErase() }
+        }
+        .uiFrame("archive.\(entry.id.short)")
     }
 }

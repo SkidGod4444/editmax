@@ -102,7 +102,7 @@ struct GeneralSettings: View {
                     HStack(spacing: 8) {
                         Text(archive.entries.isEmpty ? "Empty" : "\(archive.entries.count) item\(archive.entries.count == 1 ? "" : "s"), \(ByteCountFormatter.string(fromByteCount: archive.totalBytes, countStyle: .file))")
                             .foregroundStyle(.secondary).monospacedDigit()
-                        Button("Show Archive…") { ArchiveWindow.shared.show() }.controlSize(.small).pointer().uiFrame("settings.general.archive.show")
+                        Button("Show Archive…") { HomeWindow.shared.show(place: .archive) }.controlSize(.small).pointer().uiFrame("settings.general.archive.show")
                         Button("Empty Now…") { confirmEmpty = true }.controlSize(.small).disabled(archive.entries.isEmpty)
                             .pointer().uiFrame("settings.general.archive.empty")
                     }
@@ -110,7 +110,7 @@ struct GeneralSettings: View {
             } header: {
                 Text("Deleted files")
             } footer: {
-                Text("Files you delete in EditMax (Assets items, projects, fonts, templates) wait in the Archive for this long, so you can restore them from Window ▸ Archive; then they are erased for good. EditMax checks at launch and about every hour.")
+                Text("Files you delete in EditMax (Assets items, projects, fonts, templates) wait in the Archive for this long, so you can restore them from Home ▸ Archive; then they are erased for good. EditMax checks at launch and about every hour.")
             }
             .confirmationDialog(pendingTitle, isPresented: Binding(get: { pendingDays != nil }, set: { if !$0 { pendingDays = nil } }), titleVisibility: .visible) {
                 Button("Erase and Keep \(pendingDays.map(Self.daysText) ?? "")", role: .destructive) { if let d = pendingDays { s.archiveDays = d }; pendingDays = nil }

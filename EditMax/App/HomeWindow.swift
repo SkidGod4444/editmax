@@ -25,7 +25,8 @@ final class HomeWindow {
             .store(in: &bag)
     }
 
-    func show() {
+    /// `place`: open on that page (Window ▸ Archive and Settings open the Archive page).
+    func show(place: HomeModel.Place? = nil) {
         if window == nil {
             let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 660), styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
             w.title = "EditMax"
@@ -45,6 +46,7 @@ final class HomeWindow {
         if let w = window {
             let frame = savedFrame ?? w.frame   // hide() empties the window, which can collapse its frame; keep the real one
             let model = HomeModel()
+            if let place { model.place = place }
             let split = NSSplitViewController()
             let sideVC = NSHostingController(rootView: HomeView(part: .sidebar, model: model))
             let mainVC = NSHostingController(rootView: HomeView(part: .projects, model: model))
@@ -136,6 +138,7 @@ struct HomeView: View {
     @ObservedObject var model: HomeModel
     @ObservedObject private var library = ProjectLibrary.shared
     @ObservedObject private var assets = AssetLibrary.shared
+    @ObservedObject private var archive = AppArchive.shared
 
     private var filtered: [ProjectLibrary.Entry] {
         let q = model.search.trimmingCharacters(in: .whitespaces).lowercased()
@@ -151,6 +154,7 @@ struct HomeView: View {
                     switch model.place {
                     case .projects: projects
                     case .assets: LibraryAssetsPane(model: model)
+                    case .archive: ArchivePane(model: model)
                     }
                 }
                 .background(BehindWindowMaterial(material: .underWindowBackground).ignoresSafeArea())
@@ -159,7 +163,7 @@ struct HomeView: View {
         .confirmationDialog("Delete “\(model.trashing?.name ?? "")”?", isPresented: Binding(get: { model.trashing != nil }, set: { if !$0 { model.trashing = nil } }), titleVisibility: .visible) {
             Button("Delete", role: .destructive) { if let e = model.trashing { do { try library.trash(e) } catch { model.problem = error.localizedDescription } }; model.trashing = nil }
             Button("Cancel", role: .cancel) { model.trashing = nil }
-        } message: { Text("The project goes to the Archive: restore it from Window ▸ Archive within \(AppArchive.shared.periodText). Its media stays where it is.") }
+        } message: { Text("The project goes to the Archive: restore it from Home ▸ Archive within \(AppArchive.shared.periodText). Its media stays where it is.") }
         .alert("EditMax", isPresented: Binding(get: { model.problem != nil }, set: { if !$0 { model.problem = nil } })) { Button("OK") { model.problem = nil } } message: { Text(model.problem ?? "") }
         .onAppear { library.refresh() }
     }
@@ -198,7 +202,7 @@ struct HomeView: View {
                             .uiFrame("home.template.\(slug(t))").uiTap("home.template.\(slug(t))") { model.template = t }
                     }
                 }
-                Text("\(model.template.width)×\(model.template.height) · \(Int(model.template.fps)) fps").font(.caption).foregroundStyle(.secondary)
+                Text(verbatim: "\(model.template.width)×\(model.template.height) · \(Int(model.template.fps)) fps").font(.caption).foregroundStyle(.secondary)   // 1920, not 1,920
                 Button { newProject() } label: {
                     Label("New project", systemImage: "plus").frame(maxWidth: .infinity)
                 }
@@ -206,18 +210,19 @@ struct HomeView: View {
                 .pointer().uiFrame("home.new").uiTap("home.new") { newProject() }
             }
 
-            VStack(alignment: .leading, spacing: 6) {
-                Button { openPanel() } label: { Label("Open…", systemImage: "folder").frame(maxWidth: .infinity, alignment: .leading) }
+            // Rows with the same icon column, height and inset as Projects and Assets above, so every icon in the
+            // sidebar lines up.
+            VStack(alignment: .leading, spacing: 2) {
+                Button { openPanel() } label: { HomeSidebarRowLabel(title: "Open…", symbol: "folder") }
                     .buttonStyle(.plain).focusable(false).pointer().uiFrame("home.open").uiTap("home.open") { openPanel() }
-                Button { NSWorkspace.shared.activateFileViewerSelecting([ProjectLibrary.directory]) } label: { Label("Show library in Finder", systemImage: "arrow.up.forward.square").frame(maxWidth: .infinity, alignment: .leading) }
+                Button { NSWorkspace.shared.activateFileViewerSelecting([ProjectLibrary.directory]) } label: { HomeSidebarRowLabel(title: "Show library in Finder", symbol: "arrow.up.forward.square") }
                     .buttonStyle(.plain).focusable(false).pointer().uiFrame("home.finder")
-                SettingsLink { Label("Settings…", systemImage: "gearshape").frame(maxWidth: .infinity, alignment: .leading) }
+                SettingsLink { HomeSidebarRowLabel(title: "Settings…", symbol: "gearshape") }
                     .buttonStyle(.plain).focusable(false).pointer().uiFrame("home.settings")
             }
-            .font(.system(size: 13))
 
             Spacer()
-            HomeArchiveRow()
+            place(.archive, "Archive", "archivebox", count: archive.entries.count)
             Text("Projects live in Movies ▸ EditMax Projects. A draft is a project you have not named yet.\nEditMax by Saidev Dhal.")
                 .font(.caption2).foregroundStyle(.tertiary).fixedSize(horizontal: false, vertical: true)
         }
@@ -285,8 +290,8 @@ struct HomeView: View {
 
 @MainActor
 final class HomeModel: ObservableObject {
-    /// The sidebar's places: the user's projects (the default) and the Assets library.
-    enum Place: String, CaseIterable { case projects, assets }
+    /// The sidebar's places: the user's projects (the default), the Assets library, and the Archive (at the foot).
+    enum Place: String, CaseIterable { case projects, assets, archive }
     @Published var place: Place = .projects
     @Published var search = ""
     @Published var template: Templates.Info = Templates.list().first!
@@ -297,30 +302,32 @@ final class HomeModel: ObservableObject {
     @Published var assetSearch = ""
     @Published var removing: LibraryItem?
     @Published var assetMessage: String?
+    // Archive (ArchiveView.swift)
+    @Published var archiveFilter: ArchivePane.Filter = .all
 }
 
-/// Home's sidebar foot: the Archive (deleted files, with Restore), with how many items wait there. Opens its window.
-struct HomeArchiveRow: View {
-    @ObservedObject private var archive = AppArchive.shared
+/// A sidebar row's inside: a 20 pt icon column, the title, an optional count, 28 pt tall and inset 8 pt, shared by the
+/// places (Projects, Assets, Archive) and the links (Open…, Finder, Settings…) so they line up.
+struct HomeSidebarRowLabel: View {
+    let title: String
+    let symbol: String
+    var count: Int = 0
+    var selected = false
 
     var body: some View {
-        Button { ArchiveWindow.shared.show() } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "archivebox").font(.system(size: 13, weight: .medium)).foregroundStyle(.secondary).frame(width: 20)
-                Text("Archive").font(.system(size: 13))
-                Spacer()
-                if !archive.entries.isEmpty { Text("\(archive.entries.count)").font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary) }
-            }
-            .padding(.horizontal, 8).frame(height: 28)
-            .contentShape(Rectangle())
+        HStack(spacing: 8) {
+            Image(systemName: symbol).font(.system(size: 13, weight: .medium)).foregroundStyle(selected ? Color.accentColor : .secondary).frame(width: 20)
+            Text(title).font(.system(size: 13, weight: selected ? .semibold : .regular))
+            Spacer()
+            if count > 0 { Text("\(count)").font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary) }
         }
-        .buttonStyle(.plain).focusable(false).pointer()
-        .help(archive.entries.isEmpty ? "Deleted files wait here for \(archive.periodText) so you can restore them" : "\(archive.entries.count) deleted file\(archive.entries.count == 1 ? "" : "s") you can restore")
-        .uiFrame("home.archive").uiTap("home.archive") { ArchiveWindow.shared.show() }
+        .padding(.horizontal, 8).frame(height: 28)
+        .background(selected ? Color.primary.opacity(0.1) : Color.clear, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .contentShape(Rectangle())
     }
 }
 
-/// One place in Home's sidebar (Projects, Assets): a row like the Finder's sidebar, highlighted when chosen.
+/// One place in Home's sidebar (Projects, Assets, Archive): a row like the Finder's sidebar, highlighted when chosen.
 struct HomePlaceRow: View {
     let place: HomeModel.Place
     let title: String
@@ -330,17 +337,7 @@ struct HomePlaceRow: View {
 
     var body: some View {
         let on = model.place == place
-        Button { model.place = place } label: {
-            HStack(spacing: 8) {
-                Image(systemName: symbol).font(.system(size: 13, weight: .medium)).foregroundStyle(on ? Color.accentColor : .secondary).frame(width: 20)
-                Text(title).font(.system(size: 13, weight: on ? .semibold : .regular))
-                Spacer()
-                if count > 0 { Text("\(count)").font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary) }
-            }
-            .padding(.horizontal, 8).frame(height: 28)
-            .background(on ? Color.primary.opacity(0.1) : Color.clear, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-            .contentShape(Rectangle())
-        }
+        Button { model.place = place } label: { HomeSidebarRowLabel(title: title, symbol: symbol, count: count, selected: on) }
         .buttonStyle(.plain).focusable(false).pointer()
         .uiFrame("home.place.\(place.rawValue)").uiTap("home.place.\(place.rawValue)") { model.place = place }
     }

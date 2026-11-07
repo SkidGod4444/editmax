@@ -246,7 +246,7 @@ struct ViewCommands: Commands {
     var body: some Commands {
         CommandGroup(after: .windowList) {
             Button("Home") { HomeWindow.shared.show() }.keyboardShortcut("p", modifiers: [.command, .shift])
-            Button("Archive") { ArchiveWindow.shared.show() }   // deleted files, with Restore
+            Button("Archive") { HomeWindow.shared.show(place: .archive) }   // deleted files, with Restore (a Home page)
         }
         CommandGroup(after: .toolbar) {
             Button("Full Screen Preview") { NotificationCenter.default.post(name: .editmaxFullScreenPreview, object: nil) }.keyboardShortcut("f", modifiers: [.command, .shift])

@@ -83,7 +83,7 @@ final class AppArchiveTests: XCTestCase {
         try Data(repeating: 1, count: 300).write(to: dir2.appendingPathComponent("Inter-Regular.ttf"))
         try AppArchive.shared.archive(dir2, kind: .font, name: "Inter", now: Date().addingTimeInterval(-86_400 * 28))
         for dark in [true, false] {
-            let h = OffscreenHost(ArchiveView(), size: CGSize(width: 560, height: 300), dark: dark)
+            let h = OffscreenHost(ArchivePane(model: HomeModel()), size: CGSize(width: 760, height: 420), dark: dark)
             for e in AppArchive.shared.entries {
                 XCTAssertNotNil(h.frame("archive.\(e.id.short).restore"), e.name)
                 XCTAssertNotNil(h.frame("archive.\(e.id.short).erase"), e.name)
@@ -94,22 +94,34 @@ final class AppArchiveTests: XCTestCase {
         XCTAssertEqual(AppArchive.shared.entries.first { $0.name == "Inter" }?.bytes, 300, "a folder counts what is in it")
     }
 
-    /// Home's sidebar ends with an Archive row (with the count), above the footnote.
+    /// Home's sidebar ends with the Archive (a place like Projects and Assets, with its count), and every row in the
+    /// sidebar (places and links) has the same inset and height, so the icons line up.
     func testHomeSidebarHasTheArchiveAtTheBottom() throws {
         try AppArchive.shared.archive(try file("Old cut.emx"), kind: .project, name: "Old cut")
+        GlassCompat.forceFallback = true   // glass does not draw offscreen; its stand-in does
+        defer { GlassCompat.forceFallback = false }
         for dark in [true, false] {
-            let h = OffscreenHost(HomeView(part: .sidebar, model: HomeModel()).background(Color(nsColor: .windowBackgroundColor)).environment(\.colorScheme, dark ? .dark : .light),
-                                  size: CGSize(width: 260, height: 640), dark: dark)
-            let row = try XCTUnwrap(h.frame("home.archive"))
+            let model = HomeModel(); model.place = .archive
+            let h = OffscreenHost(HomeView(part: .sidebar, model: model), size: CGSize(width: 250, height: 660), dark: dark)
+            let archive = try XCTUnwrap(h.frame("home.place.archive"))
             let settings = try XCTUnwrap(h.frame("home.settings"))
-            XCTAssertGreaterThan(row.minY, settings.maxY + 40, "at the foot, not with the other links")
-            XCTAssertGreaterThanOrEqual(row.height, 28)
+            XCTAssertGreaterThan(archive.minY, settings.maxY + 40, "at the foot, not with the other links")
+            let rows = try ["home.place.projects", "home.place.assets", "home.open", "home.finder", "home.settings", "home.place.archive"].map { try XCTUnwrap(h.frame($0), $0) }
+            for r in rows {
+                XCTAssertEqual(r.minX, rows[0].minX, accuracy: 0.5, "same inset")
+                XCTAssertEqual(r.width, rows[0].width, accuracy: 0.5, "same width")
+                XCTAssertEqual(r.height, 28, accuracy: 0.5, "same height")
+            }
+            h.save("home-sidebar-\(dark ? "dark" : "light")")
             h.close()
-            // The row on its own, for the eye (the whole sidebar's glass does not draw offscreen).
-            let r = OffscreenHost(HomeArchiveRow().padding(12).frame(width: 236).background(Color(nsColor: .windowBackgroundColor)), size: CGSize(width: 236, height: 52), dark: dark)
-            r.save("home-sidebar-archive-row-\(dark ? "dark" : "light")")
-            r.close()
         }
+    }
+
+    func testTheArchivePageWhenEmpty() throws {
+        let h = OffscreenHost(ArchivePane(model: HomeModel()), size: CGSize(width: 760, height: 420), dark: true)
+        XCTAssertNotNil(h.frame("archive.reveal")); XCTAssertNotNil(h.frame("archive.kind"))
+        h.save("archive-page-empty-dark")
+        h.close()
     }
 
     /// Settings asks before a shorter period erases anything: it needs the count first, and that count erases nothing.

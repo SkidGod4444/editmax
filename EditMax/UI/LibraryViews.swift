@@ -287,7 +287,7 @@ struct LibraryAssetsPane: View {
 
     private func removeNote(_ item: LibraryItem) -> String {
         if item.kind == .font, let f = FontLibrary.shared.installedFamily(ofFile: item.path) {
-            return "\(f.family) is uninstalled from EditMax and its files go to the Archive (restore within \(AppArchive.shared.periodText) from Window ▸ Archive). Titles that use it switch to their preset font."
+            return "\(f.family) is uninstalled from EditMax and its files go to the Archive (restore within \(AppArchive.shared.periodText) from Home ▸ Archive). Titles that use it switch to their preset font."
         }
         return LibraryActions.deleteNote(item, from: nil)
     }
@@ -597,7 +597,7 @@ enum LibraryActions {
         let mine = document?.libraryProjectID?.uuidString
         let others = item.usedIn.filter { $0.key != mine }.values.sorted()
         if AssetLibrary.shared.isCopy(item) {
-            lines.append("EditMax's copy goes to the Archive: restore it from Window ▸ Archive within \(AppArchive.shared.periodText).")
+            lines.append("EditMax's copy goes to the Archive: restore it from Home ▸ Archive within \(AppArchive.shared.periodText).")
             if !others.isEmpty { lines.append("\(others.joined(separator: ", ")) use\(others.count == 1 ? "s" : "") it too and will show it as missing.") }
         } else {
             lines.append("The file itself stays where it is on your Mac" + (others.isEmpty ? "." : "; \(others.joined(separator: ", ")) keep\(others.count == 1 ? "s" : "") using it."))

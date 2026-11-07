@@ -109,6 +109,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return false
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+    /// Quitting while an export renders asks first (QuitGuard); otherwise quits as before.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        MainActor.assumeIsolated { QuitGuard.shared.shouldTerminate() }
+    }
     /// Set once the app is quitting, so windows closing on the way out do not bring Home back up.
     static var quitting = false
     func applicationWillTerminate(_ notification: Notification) { Self.quitting = true }

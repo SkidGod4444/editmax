@@ -107,7 +107,11 @@ building it yourself? See [Build](#build).
 background, then asks: **Install Now** (EditMax saves your projects and restarts) or **Remind Me Later** (it asks again
 the next day, and installs the next time you quit either way). Settings ▸ General can make it ask before downloading or check only when you
 choose EditMax ▸ Check for Updates…. Updates are signed: EditMax installs only a release signed with the project's
-update key and Developer ID. 0.1.1 and older have no updater; download the next version once by hand.
+update key and Developer ID. 0.1.1 and older have no updater; download the next version once by hand. The popup
+never appears during an export or an agent reply, and never takes the keyboard.
+
+**Quitting during an export** asks first: **Quit When Done** (Return; EditMax quits by itself once the export ends,
+and the export bar offers Don't Quit), **Keep Working** (Esc) or **Quit Now** (the export stops unfinished).
 
 ## First edit
 

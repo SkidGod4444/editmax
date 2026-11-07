@@ -301,6 +301,11 @@ would "update" to the release) or under XCTest; `EDITMAX_UPDATES=1` starts it in
 Sparkle's `Installer.xpc`, `Downloader.xpc` (keeping its entitlements), `Autoupdate` and `Updater.app` before the
 framework and the app, and ships Sparkle's MIT text as `Licenses/Sparkle-LICENSE`.
 
+Quitting during an export: `AppDelegate.applicationShouldTerminate` asks `QuitGuard`, which quits at once unless
+`BusyWork` counts an export (`ExportService.export` / `exportMaster`, so agent exports too). Then an `NSAlert`: Quit When
+Done returns `.terminateCancel` and polls every 0.5 s until no export runs, then calls `NSApp.terminate` again (the export
+pill shows "EditMax quits when it's done" with Don't Quit); Keep Working cancels; Quit Now quits and the export stops.
+
 The menu bar extra is a SwiftUI `MenuBarExtra` (`.menu` style) bound to `@AppStorage("showMenuBarIcon")`. Its icon is
 drawn in code (`MenuBarIcon`, a template image of the app icon's striped triangle with wider gaps) so it follows the
 menu bar's light, dark and highlighted states.

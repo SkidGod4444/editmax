@@ -147,14 +147,9 @@ struct EditorRootView: View {
         .modifier(DriveNotices(document: document, state: state, player: player))
         .overlay(alignment: .top) {
             if let s = state.exportStatus {
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text(s).font(.caption.monospacedDigit()).lineLimit(1)
-                }
-                .padding(.horizontal, 14).padding(.vertical, 8)
-                .liquidGlass()
-                .padding(.top, 10)
-                .transition(.move(edge: .top).combined(with: .opacity))
+                ExportStatusPill(status: s)
+                    .padding(.top, 10)
+                    .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
     }

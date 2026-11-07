@@ -7,8 +7,10 @@ import Sparkle
 /// Where it looks: `SUFeedURL`, the `appcast.xml` that `scripts/release.sh` attaches to every GitHub release, read
 /// through `releases/latest/download/`. An update is the release's notarized zip, checked against `SUPublicEDKey` (the
 /// matching private key is in the login keychain under the account `editmax`) and against the app's Developer ID
-/// signature before it is installed. By default it checks once a day and downloads in the background, then installs
-/// the next time EditMax quits; with automatic installs off it asks first. Check for Updates… asks right away.
+/// signature before it is installed. By default it checks once a day and downloads in the background; once the update
+/// is ready, `UpdatePrompt` offers Install Now or Remind Me Later, and it installs the next time EditMax quits either
+/// way. With automatic installs off, Sparkle's own window asks first. Check for Updates… asks right away (or shows the
+/// waiting update's popup again).
 ///
 /// Off in Debug builds and in the unit tests: a Debug build would offer to "update" itself to the published release.
 /// `EDITMAX_UPDATES=1` turns it on in a Debug build to try the flow.
@@ -25,6 +27,7 @@ final class AppUpdater: ObservableObject {
         #endif
     }
 
+    private let sparkleDelegate = AppUpdaterDelegate()   // Sparkle holds it weakly
     private let controller: SPUStandardUpdaterController
     private var bag = Set<AnyCancellable>()
     var updater: SPUUpdater { controller.updater }
@@ -36,7 +39,7 @@ final class AppUpdater: ObservableObject {
     @Published var installsAutomatically: Bool { didSet { updater.automaticallyDownloadsUpdates = installsAutomatically } }
 
     private init() {
-        controller = SPUStandardUpdaterController(startingUpdater: Self.isEnabled, updaterDelegate: nil, userDriverDelegate: nil)
+        controller = SPUStandardUpdaterController(startingUpdater: Self.isEnabled, updaterDelegate: sparkleDelegate, userDriverDelegate: nil)
         checksAutomatically = controller.updater.automaticallyChecksForUpdates
         installsAutomatically = controller.updater.automaticallyDownloadsUpdates
         lastCheck = controller.updater.lastUpdateCheckDate
@@ -49,10 +52,11 @@ final class AppUpdater: ObservableObject {
     }
 
     /// Starts the updater (called once at launch); the checks then run on Sparkle's schedule.
-    func start() {}
+    func start() { UpdatePrompt.shared.startDemoIfAsked() }
 
     /// Check now and show the result, whatever the automatic settings say.
     func checkForUpdates() {
+        if UpdatePrompt.shared.offer != nil { UpdatePrompt.shared.present(); return }   // one is downloaded and waiting
         guard Self.isEnabled else { return }
         DebugLog.event("app-update-check", ["by": "user"])
         controller.checkForUpdates(nil)

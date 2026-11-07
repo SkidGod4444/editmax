@@ -290,7 +290,12 @@ redirects to the newest release's asset, so a release without `appcast.xml` woul
 public half of the key in the login keychain (backed up outside the repo, in `~/.editmax-sparkle`); a lost key means a
 key rotation before any installed copy can update again. Defaults: daily checks (`SUEnableAutomaticChecks`) and
 background download with install on quit (`SUAutomaticallyUpdate`); Settings ▸ General binds to the updater's own
-`automaticallyChecksForUpdates` / `automaticallyDownloadsUpdates`. The updater does not start in Debug builds (they
+`automaticallyChecksForUpdates` / `automaticallyDownloadsUpdates`. When a background download is ready, Sparkle calls
+`updater(_:willInstallUpdateOnQuit:immediateInstallationBlock:)` on `AppUpdaterDelegate`, which returns true and hands
+the block to `UpdatePrompt`: a glass popup (a borderless `NSPanel` that hides while EditMax is in the background and
+waits for it to come to the front) with Install Now (autosaves every open project, then calls the block: quit, install,
+relaunch) and Remind Me Later (24 h timer; install on quit still stands). Debug builds show it with
+`-EditMaxUpdatePromptDemo YES`. The updater does not start in Debug builds (they
 would "update" to the release) or under XCTest; `EDITMAX_UPDATES=1` starts it in a Debug build. `package.sh` signs
 Sparkle's `Installer.xpc`, `Downloader.xpc` (keeping its entitlements), `Autoupdate` and `Updater.app` before the
 framework and the app, and ships Sparkle's MIT text as `Licenses/Sparkle-LICENSE`.

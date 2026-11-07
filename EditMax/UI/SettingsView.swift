@@ -97,7 +97,7 @@ struct GeneralSettings: View {
         guard AppUpdater.isEnabled else { return "Updates are off in development builds." }
         if !updates.checksAutomatically { return "EditMax checks only when you ask (Check Now, or EditMax ▸ Check for Updates…)." }
         return updates.installsAutomatically
-            ? "Once a day; a new version downloads in the background and installs the next time you quit."
+            ? "Once a day. A new version downloads in the background, then EditMax asks: install now, or the next time you quit."
             : "Once a day; EditMax asks before downloading a new version."
     }
 

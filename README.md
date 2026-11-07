@@ -104,7 +104,8 @@ Every release also ships a zip and a `SHA256SUMS` file (`shasum -a 256 -c SHA256
 building it yourself? See [Build](#build).
 
 **Updates.** Every release after 0.1.1 updates itself: once a day it checks for a new release, downloads it in the
-background and installs it the next time you quit. Settings ▸ General can make it ask first or check only when you
+background, then asks: **Install Now** (EditMax saves your projects and restarts) or **Remind Me Later** (it asks again
+the next day, and installs the next time you quit either way). Settings ▸ General can make it ask before downloading or check only when you
 choose EditMax ▸ Check for Updates…. Updates are signed: EditMax installs only a release signed with the project's
 update key and Developer ID. 0.1.1 and older have no updater; download the next version once by hand.
 

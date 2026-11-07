@@ -14,7 +14,20 @@ enum Relink {
     /// A file that is not at its path. Nested sequences (renders in the cache) are never missing.
     nonisolated static func isMissing(_ a: Asset) -> Bool {
         guard a.sequenceID == nil else { return false }
-        return !FileManager.default.fileExists(atPath: a.path)
+        return isLeaving(a.path) || !FileManager.default.fileExists(atPath: a.path)
+    }
+
+    /// Drives being ejected right now (DriveWatcher): their files count as offline at once, so nothing opens them again
+    /// while the drive goes.
+    private static let leavingLock = NSLock()
+    nonisolated(unsafe) private static var leavingDrives = Set<String>()
+    nonisolated static func setLeaving(_ volume: String, _ on: Bool) {
+        leavingLock.lock(); defer { leavingLock.unlock() }
+        if on { leavingDrives.insert(volume) } else { leavingDrives.remove(volume) }
+    }
+    nonisolated static func isLeaving(_ path: String) -> Bool {
+        leavingLock.lock(); defer { leavingLock.unlock() }
+        return leavingDrives.contains { path.hasPrefix($0 + "/") }
     }
 
     static func missing(_ p: Project) -> [Asset] { p.assets.filter(isMissing) }
@@ -219,6 +232,61 @@ enum Relink {
             }
             return total
         }.value
+    }
+}
+
+// MARK: - Offline media (a drive that is not plugged in)
+
+extension Relink {
+    /// The drive a file is on ("OSMO", "T7"), for messages; nil for the Mac's own disk.
+    nonisolated static func driveName(of path: String) -> String? {
+        let c = URL(fileURLWithPath: path).standardizedFileURL.pathComponents   // ["/", "Volumes", "<name>", …]
+        return c.count > 3 && c[1] == "Volumes" ? c[2] : nil
+    }
+
+    /// Every file a clip plays: its picture, its sound from another file, and a multicam clip's angles.
+    nonisolated static func assetIDs(of clip: Clip, in p: Project) -> Set<UUID> {
+        var ids: Set<UUID> = [clip.assetID]
+        if let a = clip.audioAssetID { ids.insert(a) }
+        if clip.multicam != nil { for piece in clip.multicamPieces(in: p) { ids.insert(piece.assetID); if let a = piece.audioAssetID { ids.insert(a) } } }
+        return ids
+    }
+
+    /// Files the project points at that are not there now (on a drive that is unplugged, or deleted).
+    nonisolated static func offline(_ p: Project) -> Set<UUID> { Set(p.assets.filter(isMissing).map(\.id)) }
+
+    /// How many clips play one of these files.
+    nonisolated static func clipCount(using ids: Set<UUID>, in p: Project) -> Int {
+        ids.isEmpty ? 0 : p.allClips.filter { !assetIDs(of: $0, in: p).isDisjoint(with: ids) }.count
+    }
+
+    /// The project without the clips that play these files, for the preview: the rest of the timeline plays and those
+    /// clips are a gap (black and silent) until their drive is back. Clip positions are absolute, so nothing moves.
+    nonisolated static func removingClips(using ids: Set<UUID>, from p: Project) -> Project {
+        var q = p
+        for i in q.tracks.indices { q.tracks[i].clips.removeAll { !assetIDs(of: $0, in: p).isDisjoint(with: ids) } }
+        return q
+    }
+
+    /// The assets on a drive (paths under its folder in /Volumes).
+    nonisolated static func assets(onDrive path: String, in p: Project) -> [Asset] {
+        let prefix = path.hasSuffix("/") ? path : path + "/"
+        return p.assets.filter { $0.sequenceID == nil && $0.path.hasPrefix(prefix) }
+    }
+
+    /// An export needs every file its clips play: one on an unplugged drive is named with the drive, so the user knows
+    /// what to plug in. Files that are only missing point to Relink.
+    nonisolated static func requireOnline(_ p: Project) throws {
+        let off = offline(p)
+        let used = p.assets.filter { off.contains($0.id) && clipCount(using: [$0.id], in: p) > 0 }
+        guard !used.isEmpty else { return }
+        let n = clipCount(using: Set(used.map(\.id)), in: p)
+        let drives = Array(Set(used.compactMap { driveName(of: $0.path) })).sorted()
+        let clips = "\(n) clip\(n == 1 ? "" : "s")"
+        if !drives.isEmpty, drives.count == Set(used.map { driveName(of: $0.path) }).count {
+            throw EditError.invalid("\(clips) use\(n == 1 ? "s" : "") files on \(drives.joined(separator: " and ")), which \(drives.count == 1 ? "is" : "are") not connected. Plug \(drives.count == 1 ? "it" : "them") in to export.")
+        }
+        throw EditError.invalid("\(clips) use\(n == 1 ? "s" : "") files that are missing (\(used.prefix(3).map(\.name).joined(separator: ", "))). Relink them first (File ▸ Relink Media).")
     }
 }
 

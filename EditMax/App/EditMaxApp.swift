@@ -97,7 +97,7 @@ struct EditorRootView: View {
             }
         }
         .frame(minWidth: 1000, minHeight: 640)
-        .onAppear { document.fileURL = fileURL; DocumentRegistry.shared.register(document); player.bind(to: document); if state.chat == nil { state.chat = ChatSession(document: document) }
+        .onAppear { document.fileURL = fileURL; DocumentRegistry.shared.register(document); player.bind(to: document); DriveWatcher.shared.register(player); if state.chat == nil { state.chat = ChatSession(document: document) }
             FontLibrary.shared.ensureFonts(for: document.project)   // a Google font this Mac lacks downloads now; the picture redraws when it lands
             document.noteLibraryUse()   // the Assets library's "Used in" is right from the moment a project opens
             // Debug affordances (used by automated checks): EDITMAX_INSPECTOR_TAB=chat|agents|history opens that tab;
@@ -144,6 +144,7 @@ struct EditorRootView: View {
             guard DocumentRegistry.shared.activeID == document.id, !state.isExporting else { return }
             DeliveryActions(document: document, state: state).exportTimeline()
         }
+        .modifier(DriveNotices(document: document, state: state, player: player))
         .overlay(alignment: .top) {
             if let s = state.exportStatus {
                 HStack(spacing: 8) {

@@ -3,12 +3,13 @@ import AppKit
 import Combine
 import UniformTypeIdentifiers
 
-// The notch drawer: a black shape over the camera notch (or a small pill at the top of a screen without one) that
+// The notch drawer: a shape over the camera notch (or a small pill at the top of a screen without one) that
 // takes files dropped on it into the Assets library, and offers new downloads. It is an NSPanel that never becomes key
 // or main and never activates EditMax: the user can drop a file on it from any app and stay in that app.
 //
 // Collapsed, the panel is the notch plus 20 pt each side, drawn black so it reads as the notch. A file drag or the
-// pointer makes it grow down into the drawer (a spring); the pointer leaving or the drag exiting folds it back. The
+// pointer makes it grow down into the drawer (a spring), which is Liquid Glass (dark, so its white text reads on any
+// wallpaper); the pointer leaving or the drag exiting folds it back. The pill of a screen without a notch is glass too. The
 // panel's frame is set to the drawer's size before it grows and back to the notch's size after it has folded, so the
 // panel never covers more of the menu bar than it shows.
 
@@ -417,8 +418,8 @@ struct NotchShape: Shape {
     }
 }
 
-/// What the panel shows: the black shape, and inside it when open the drop zone and "New in Downloads", or when
-/// peeking the one new download.
+/// What the panel shows: the shape (black while folded over the notch, glass otherwise), and inside it when open the
+/// drop zone and "New in Downloads", or when peeking the one new download.
 struct NotchDrawerView: View {
     @ObservedObject var drawer: NotchDrawer
     @ObservedObject private var library = AssetLibrary.shared
@@ -438,8 +439,9 @@ struct NotchDrawerView: View {
         let open = drawer.mode != .collapsed
         let ear = g.isPill && !open ? 0 : NotchGeometry.ear   // the pill hangs from the top edge without ears
         let shape = NotchShape(bottomRadius: open ? 22 : (g.isPill ? g.collapsedBody.height / 2 : 9), ear: ear)
+        let asNotch = !open && !g.isPill   // folded over a real notch: black, so it reads as the notch itself
         shape
-            .fill(Color.black)
+            .fill(Color.black.opacity(asNotch ? 1 : 0))
             .frame(width: size.width + 2 * ear, height: size.height)
             .overlay(alignment: .top) {
                 if open {
@@ -453,7 +455,8 @@ struct NotchDrawerView: View {
                 }
             }
             .clipShape(shape)
-            .shadow(color: .black.opacity(open ? 0.35 : 0), radius: 12, y: 4)
+            .liquidGlass(in: shape, tint: Color.black.opacity(0.3), visible: !asNotch)
+            .shadow(color: .black.opacity(open ? 0.3 : 0), radius: 12, y: 4)
             .environment(\.colorScheme, .dark)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .contentShape(Rectangle())
@@ -487,7 +490,7 @@ struct NotchDrawerView: View {
                         Image(systemName: "tray.and.arrow.down.fill").font(.system(size: 18)).foregroundStyle(on ? Color.accentColor : .white.opacity(0.7))
                         VStack(alignment: .leading, spacing: 1) {
                             Text("Drop to add to Assets").font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
-                            Text("Files are copied into EditMax").font(.system(size: 11)).foregroundStyle(.white.opacity(0.55))
+                            Text("Copied into EditMax; footage on a drive stays there").font(.system(size: 11)).foregroundStyle(.white.opacity(0.55))
                         }
                     }
                 }

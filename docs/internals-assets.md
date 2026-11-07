@@ -11,7 +11,12 @@ folder inside the projects folder (`ProjectLibrary.directory`). Under XCTest bot
 and the library tests point them at their own folder in `setUp`, so a test never touches the user's library.
 
 - `add(urls:source:copy:)` takes the kind from the extension (`kind(of:)`), then probes media with
-  `MediaImporter.probe`, so a sound-only `.mp4` is `audio`. With `copy` it copies into the store under a unique name and keeps the source in `original`. A file already
+  `MediaImporter.probe`, so a sound-only `.mp4` is `audio`. With `copy` it copies into the store under a unique name and keeps the source in `original`, except a file on an
+  external, removable or network drive (`keepsInPlace`, volume resource keys), which is always referenced in place.
+  `DriveWatcher` (App/DriveWatcher.swift) follows mounts and unmounts: `drivesChanged` repoints items by bookmark,
+  open projects relink and rebuild the player, the preview drops clips whose files are offline
+  (`Relink.removingClips`), an export throws from `Relink.requireOnline`, and a DiskArbitration unmount-approval callback
+  makes the players release that drive's files (waiting up to 2 s for them to close) so an eject is not refused. A file already
   in the library (same `path`, or same `original` for a copy) is returned as is, never added twice.
 - `addFiles(_:source:copy:)` wraps `add` and returns `LibraryAddResult` with the one-line message the UI shows
   ("Added 2 files to Assets", "Already in Assets", "… 1 could not be added").

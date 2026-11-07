@@ -26,7 +26,7 @@ enum CompositionBuilder {
     /// tracks (A/B): consecutive clips alternate between them, which is what lets a transition overlap the clip before it.
     /// `forPreview` swaps in proxy files where the project asks for them and they exist; the export never does.
     static func build(_ project: Project, forPreview: Bool = false, depth: Int = 0, compositor: AVVideoCompositing.Type = EditMaxCompositor.self) async throws -> Output {
-        let project = Mixer.soloApplied(project)   // solo and muted buses become plain track mutes
+        var project = Mixer.soloApplied(project)   // solo and muted buses become plain track mutes
         var proxies: [UUID: URL] = (forPreview && project.settings.useProxies) ? await MainActor.run { Dictionary(uniqueKeysWithValues: project.assets.compactMap { a in ProxyStore.shared.ready(for: a).map { (a.id, $0) } }) } : [:]
         // Nested sequences play their cached render (rendered now when the cache has none for the current content).
         for a in project.assets where a.sequenceID != nil {
@@ -36,6 +36,12 @@ enum CompositionBuilder {
         let comp = AVMutableComposition()
         let renderSize = CGSize(width: project.settings.width, height: project.settings.height)
         let total = CMTime(seconds: max(project.duration, 0.1), preferredTimescale: timescale)
+        // Files that are not there now (a drive unplugged): the preview plays the rest of the timeline, with a gap where
+        // their clips are, instead of failing; a proxy on this Mac still plays. An export refuses (ExportService).
+        if forPreview {
+            let offline = Relink.offline(project).subtracting(proxies.keys)
+            if !offline.isEmpty { project = Relink.removingClips(using: offline, from: project) }
+        }
         var layerSources: [[LayerSource]] = []    // per visible video track, top row first
         var audioParams: [AVMutableAudioMixInputParameters] = []
         var assetCache: [UUID: AVURLAsset] = [:]

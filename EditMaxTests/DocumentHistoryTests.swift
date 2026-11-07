@@ -99,16 +99,15 @@ final class InteractionLogTests: XCTestCase {
 
     func testNearestRegisteredElementWithinReach() {
         let reg = UIRegistry.shared
-        // Only this test's elements: windows other tests left open still register theirs (a notch drop switches every
-        // open media panel to Assets, whose rows can sit at these points).
-        for id in Array(reg.frames.keys) { reg.remove(id) }
-        reg.set("test.divider", CGRect(x: 100, y: 0, width: 32, height: 300))
-        reg.set("test.far", CGRect(x: 900, y: 0, width: 32, height: 300))
+        // Far from any real window's elements: windows other tests closed but still hold keep their views registered.
+        let o = CGFloat(50_000)
+        reg.set("test.divider", CGRect(x: o + 100, y: o, width: 32, height: 300))
+        reg.set("test.far", CGRect(x: o + 900, y: o, width: 32, height: 300))
         defer { reg.remove("test.divider"); reg.remove("test.far") }
-        let n = reg.nearest(to: CGPoint(x: 90, y: 150), within: 24)
+        let n = reg.nearest(to: CGPoint(x: o + 90, y: o + 150), within: 24)
         XCTAssertEqual(n?.id, "test.divider")
         XCTAssertEqual(n!.distance, 10, accuracy: 0.001)
-        XCTAssertNil(reg.nearest(to: CGPoint(x: 60, y: 150), within: 24), "40 points away is not a near miss")
-        XCTAssertEqual(reg.nearest(to: CGPoint(x: 110, y: 150), within: 24)?.distance, 0, "inside counts as distance 0")
+        XCTAssertNil(reg.nearest(to: CGPoint(x: o + 60, y: o + 150), within: 24), "40 points away is not a near miss")
+        XCTAssertEqual(reg.nearest(to: CGPoint(x: o + 110, y: o + 150), within: 24)?.distance, 0, "inside counts as distance 0")
     }
 }

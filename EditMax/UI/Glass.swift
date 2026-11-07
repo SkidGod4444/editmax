@@ -13,15 +13,17 @@ enum GlassCompat {
 
 extension View {
     /// A glass surface in `shape`. `tint` colours it; `interactive` makes it react to hover/press (macOS 26 only).
+    /// `visible: false` shows no glass while keeping the same view, so a surface can turn into glass and back without
+    /// being rebuilt (the notch drawer is black while folded over the notch, glass once open).
     @ViewBuilder
-    func liquidGlass<S: Shape>(in shape: S, tint: Color? = nil, interactive: Bool = false) -> some View {
+    func liquidGlass<S: Shape>(in shape: S, tint: Color? = nil, interactive: Bool = false, visible: Bool = true) -> some View {
         if #available(macOS 26, *), !GlassCompat.forceFallback {
-            self.glassEffect(Self.glass(tint: tint, interactive: interactive), in: shape)
+            self.glassEffect(visible ? Self.glass(tint: tint, interactive: interactive) : .identity, in: shape)
         } else {
             self
-                .background(.regularMaterial, in: shape)
-                .background { if let tint { shape.fill(tint) } }
-                .overlay(shape.stroke(Color.white.opacity(0.12), lineWidth: 1))
+                .background { shape.fill(.regularMaterial).opacity(visible ? 1 : 0) }
+                .background { if let tint { shape.fill(tint).opacity(visible ? 1 : 0) } }
+                .overlay(shape.stroke(Color.white.opacity(visible ? 0.12 : 0), lineWidth: 1))
         }
     }
 

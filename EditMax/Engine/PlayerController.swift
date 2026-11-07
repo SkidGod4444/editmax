@@ -78,6 +78,29 @@ final class PlayerController: ObservableObject {
         rebuild(document.project)
     }
 
+    /// A drive the project plays files from is being ejected: let go of every file now (the picture goes black until
+    /// the rebuild that follows the eject), so the eject is not refused with "EditMax is using it".
+    /// True when it let go (only when clips on screen play files from that drive). The playhead is kept for the rebuild.
+    @discardableResult func release(drive volume: String) -> Bool {
+        guard let d = boundDocument else { return false }
+        let p = viewingProject ?? d.project
+        let ids = Set(Relink.assets(onDrive: volume, in: p).map(\.id))
+        guard Relink.clipCount(using: ids, in: p) > 0 else { return false }
+        rebuildTask?.cancel()
+        if player.currentItem != nil { heldTime = player.currentTime() }
+        player.replaceCurrentItem(with: nil)
+        lastOutput = nil
+        DebugLog.event("player-released-drive", ["assets": ids.count])
+        return true
+    }
+
+    /// Builds again what the player shows: the live project, or the History version being viewed.
+    func reload(reason: String) {
+        if let p = viewingProject ?? boundDocument?.project { rebuild(p, reason: reason) }
+    }
+    /// Where the playhead was when the player let go of its files (an eject), for the next rebuild.
+    private var heldTime: CMTime?
+
     func rebuild(_ project: Project, reason: String = "revision") {
         rebuildTask?.cancel()
         rebuildTask = Task {
@@ -87,7 +110,8 @@ final class PlayerController: ObservableObject {
                 let item = AVPlayerItem(asset: out.composition)
                 item.videoComposition = out.videoComposition
                 item.audioMix = out.audioMix
-                let keep = player.currentTime()
+                let keep = heldTime ?? player.currentTime()
+                heldTime = nil
                 player.replaceCurrentItem(with: item)
                 DebugLog.event("player-rebuild", ["reason": reason, "audioTracks": out.composition.tracks(withMediaType: .audio).count])
                 renderSize = out.renderSize

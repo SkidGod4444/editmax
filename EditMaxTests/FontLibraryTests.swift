@@ -364,7 +364,12 @@ final class FontLibraryTests: XCTestCase {
         let doc = EditMaxDocument()
         DocumentRegistry.shared.register(doc)
         defer { DocumentRegistry.shared.unregister(doc) }
-        func call(_ name: String, _ a: [String: Value]) async throws -> String { try await EditMaxTools.call(name, a).text }
+        // Every call names this test's project: the test host's own editor window can become key (when a test's window
+        // closes) and make its untitled project the active one in the middle of the test.
+        func call(_ name: String, _ a: [String: Value]) async throws -> String {
+            var a = a; if EditMaxTools.argumentNames(of: name)?.contains("project") == true { a["project"] = .string(doc.id.uuidString) }
+            return try await EditMaxTools.call(name, a).text
+        }
 
         let listed = try await call("list_fonts", ["source": .string("google"), "search": .string("pla"), "sort": .string("popular")])
         XCTAssertTrue(listed.contains("\"family\" : \"Plaster\""), listed)

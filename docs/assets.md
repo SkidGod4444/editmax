@@ -30,6 +30,15 @@ Files dropped on Assets or on the drawer are **copied** into the Assets folder i
 EditMax Projects ▸ Assets by default). That way they stay when Downloads or the Desktop gets cleaned. Files you import
 into a project are not copied; Assets points at them where they are. Adding the same file twice does nothing.
 
+Footage on an external drive (an SSD, a camera card, a camera that shows up as a drive) is **never copied**, wherever you
+add it: it is used where it is, so it does not fill your Mac's disk. The add says which drive it was left on. A camera
+card (a drive with a `DCIM` folder) is then the only copy of that footage, so the message says to back it up.
+
+When the drive is unplugged, its clips go offline: the preview plays the rest of the timeline with a gap where they are,
+a line at the top of the window says how many clips went offline, and an export says which drive to plug in. Plug it back
+in and they play again, also when the Mac mounts it under another name ("Untitled 1"). Ejecting the drive while EditMax
+plays from it works: EditMax lets go of its files first.
+
 "Used in" is kept right on its own: opening and saving a project records what it uses, a file taken out of a project
 drops that project from its list, and moving a project to the Trash drops it everywhere.
 
@@ -42,7 +51,8 @@ use it, or double-click it to add it to the project. Fonts are not listed there.
 ## The notch drawer
 
 On a Mac with a notch, EditMax puts a drawer in the notch at the top of the screen. On a screen without one it is a
-small bar at the top centre.
+small bar at the top centre. Folded, it is black and reads as part of the notch; open, it is Liquid Glass (a dark
+frosted panel when Liquid Glass is off in Settings ▸ General).
 
 - **Drag files onto the notch** from the Finder, a browser or any app. The drawer opens: drop the files on "Drop to add
   to Assets". It says what happened ("Added 2 files to Assets") and folds back when you move away.

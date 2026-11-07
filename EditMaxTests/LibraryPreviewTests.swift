@@ -118,6 +118,8 @@ final class LibraryPreviewTests: LibraryTestCase {
 
     /// The drawer over a menu bar and wallpaper, in each state, at the MacBook's notch.
     func testPreviewNotchDrawer() throws {
+        GlassCompat.forceFallback = true   // real glass does not draw offscreen; its stand-in does
+        defer { GlassCompat.forceFallback = false }
         let g = NotchDrawerTests.macBook
         let drawer = NotchDrawer.shared
         let size = g.frame(around: g.openBody).size

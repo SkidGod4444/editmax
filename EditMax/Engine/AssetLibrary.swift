@@ -106,7 +106,7 @@ final class AssetLibrary: ObservableObject {
                 continue
             }
             var url = from
-            if copy {
+            if copy && !Self.keepsInPlace(from) {   // footage on an SSD or a camera is used where it is
                 do { url = try Self.copyIntoStore(url) } catch { failures.append("\(src.lastPathComponent): \(error.localizedDescription)"); continue }
             }
             if let existing = all.first(where: { $0.path == url.path }) { out.append(existing); continue }
@@ -234,6 +234,41 @@ final class AssetLibrary: ObservableObject {
         return gone.count
     }
 
+    /// Files on an external, removable or network drive (an SSD, a camera card, a camera that mounts as a drive) are
+    /// used where they are, even where Assets would copy (a drop, Add Files): copying footage onto the Mac only fills its
+    /// disk. Tests stand in their own rule.
+    static var keepsInPlaceOverride: ((URL) -> Bool)?
+    static func keepsInPlace(_ url: URL) -> Bool {
+        if let o = keepsInPlaceOverride { return o(url) }
+        guard let v = try? url.resourceValues(forKeys: [.volumeIsInternalKey, .volumeIsEjectableKey, .volumeIsRemovableKey, .volumeIsLocalKey]) else { return false }
+        return v.volumeIsInternal == false || v.volumeIsEjectable == true || v.volumeIsRemovable == true || v.volumeIsLocal == false
+    }
+
+    /// The camera card a file is on ("OSMO"): a drive with a DCIM folder at its top, as cameras write. Footage there is
+    /// used in place too, so the card is its only copy until it is backed up; the add says so.
+    nonisolated static func cameraCard(of path: String) -> String? {
+        guard let name = Relink.driveName(of: path) else { return nil }
+        var isDir: ObjCBool = false
+        return FileManager.default.fileExists(atPath: "/Volumes/\(name)/DCIM", isDirectory: &isDir) && isDir.boolValue ? name : nil
+    }
+
+    /// A drive was plugged in or removed (DriveWatcher): the lists redraw ("not connected" comes and goes), and on a
+    /// plug-in an item whose drive came back under another name ("Untitled 1") follows its bookmark there.
+    func drivesChanged(mounted: Bool) {
+        if mounted {
+            var moved = 0
+            for i in all.indices where !all[i].exists {
+                guard let data = all[i].bookmark else { continue }
+                var stale = false
+                guard let u = try? URL(resolvingBookmarkData: data, options: [.withoutUI, .withoutMounting], relativeTo: nil, bookmarkDataIsStale: &stale),
+                      u.standardizedFileURL.path != all[i].path, FileManager.default.fileExists(atPath: u.path) else { continue }
+                all[i].path = u.standardizedFileURL.path; moved += 1
+            }
+            if moved > 0 { save(); DebugLog.event("library-relinked-drive", ["items": moved]) }
+        }
+        objectWillChange.send()
+    }
+
     /// On disk, or on a drive that is not connected now (it comes back with the drive).
     nonisolated static func isThere(_ path: String) -> Bool { FileManager.default.fileExists(atPath: path) || onDisconnectedDrive(path) }
 
@@ -304,6 +339,10 @@ struct LibraryAddResult {
         }
         var s = added.isEmpty ? (existing.count == 1 ? "Already in Assets" : "All \(existing.count) are already in Assets")
                               : "Added \(added.count) file\(added.count == 1 ? "" : "s") to Assets"
+        let cards = Set(added.compactMap { AssetLibrary.cameraCard(of: $0.path) }).sorted()
+        let drives = Set(added.compactMap { Relink.driveName(of: $0.path) }).subtracting(cards).sorted()
+        if !cards.isEmpty { s += ", left on \(cards.joined(separator: ", ")). That card is their only copy: back it up" }
+        else if !drives.isEmpty { s += ", left on \(drives.joined(separator: ", "))" }
         if !failures.isEmpty { s += ". \(failures.count) could not be added" }
         return s
     }

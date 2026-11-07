@@ -10,6 +10,16 @@ final class EditorState: ObservableObject {
     @Published var pixelsPerSecond: Double = 60
     @Published var inspectorTab: InspectorTab = .inspector
     @Published var exportStatus: String?
+    /// A short line at the top of the window that goes by itself (a drive plugged in or removed).
+    @Published var notice: String?
+
+    func notify(_ line: String) {
+        notice = line
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(6))
+            if notice == line { notice = nil }
+        }
+    }
     @Published var isExporting = false
     /// Range marked with I and O; "Delete range" ripples it out of every track.
     @Published var inPoint: Double?
@@ -46,6 +56,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         if Self.isTesting { return }
         InteractionLog.install()
+        DriveWatcher.shared.start()   // footage on drives goes offline and comes back with them
         AppSettings.shared.applyAppearance()
         SplashScreen.renderIfRequested()
         if ProcessInfo.processInfo.arguments.contains("-splash-preview") { SplashScreen.shared.show(); SplashScreen.shared.dismissWhenReady() }

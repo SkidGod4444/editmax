@@ -31,6 +31,7 @@ enum ExportService {
 
     static func export(_ project: Project, to url: URL, preset: Preset = .high, progress: ((Double) -> Void)? = nil, depth: Int = 0) async throws -> Result {
         guard project.duration > 0 else { throw EditError.invalid("timeline is empty") }
+        try Relink.requireOnline(project)   // names the drive to plug in, before any render starts
         if preset.isMaster { return try await exportMaster(project, to: url, preset: preset, progress: progress, depth: depth) }
         try await IsolatedAudio.shared.ensureAll(project)   // voice-isolated sound is rendered per asset before the build looks for it
         try await InterpolatedVideo.shared.ensureAll(project)   // smooth slow motion, likewise (FrameInterpolation.swift)
@@ -79,6 +80,7 @@ enum ExportService {
     /// - ProRes 422 HQ / 422 / 4444: 10-bit 4:2:2 (12-bit 4:4:4 for 4444) at Apple's fixed ProRes rates, in a QuickTime
     ///   movie with 24-bit 48 kHz stereo PCM sound, the files Resolve, Final Cut and Premiere edit and grade natively.
     static func exportMaster(_ project: Project, to url: URL, preset: Preset, progress: ((Double) -> Void)? = nil, depth: Int = 0) async throws -> Result {
+        try Relink.requireOnline(project)
         try await IsolatedAudio.shared.ensureAll(project)
         try await InterpolatedVideo.shared.ensureAll(project)
         let out = try await CompositionBuilder.build(project, depth: depth, compositor: EditMaxCompositor10.self)

@@ -34,10 +34,26 @@ final class InterpolatedVideo: ObservableObject {
         return dir
     }
 
-    /// Optical flow can run here: VTFrameRateConversion exists and this Mac supports it.
+    /// Optical flow can run here: VTFrameRateConversion exists, this Mac supports it, and it has not failed here.
     nonisolated static var flowAvailable: Bool {
+        guard flowFailure == nil else { return false }
         if #available(macOS 15.4, *) { return VTFrameRateConversionConfiguration.isSupported }
         return false
+    }
+    /// Why optical flow failed on this Mac although it says it supports it (a virtual Mac: VTFrameProcessorErrorDomain
+    /// -19730). Renders blend from then on, until EditMax quits.
+    nonisolated(unsafe) static var flowFailure: String?
+    /// Tests: optical flow fails the way it does on a virtual Mac.
+    nonisolated(unsafe) static var failFlowForTesting = false
+
+    /// Optical flow itself failed (not the source or the disk): the render is done again with blend.
+    struct FlowFailed: LocalizedError {
+        let reason: String
+        var errorDescription: String? { "optical flow failed on this Mac (\(reason))" }
+        init(_ error: Error) {
+            let ns = error as NSError
+            reason = ns.domain.hasPrefix("VTFrameProcessor") ? "\(ns.domain) \(ns.code)" : error.localizedDescription
+        }
     }
     /// The method a mode really renders with on this Mac.
     nonisolated static func method(_ mode: SlowMotionMode) -> SlowMotionMode { mode == .opticalFlow && !flowAvailable ? .blend : mode }
@@ -91,7 +107,20 @@ final class InterpolatedVideo: ObservableObject {
         inFlight[k] = task
         defer { inFlight[k] = nil; rendering.remove(k); progress[k] = nil }
         do { let u = try await task.value; version += 1; return u }
-        catch { failed[k] = error.localizedDescription; DebugLog.error("smooth-slow-motion-failed", error, ["key": k]); throw error }
+        catch let e as FlowFailed where j.method == .opticalFlow {
+            Self.flowFailure = e.reason
+            try? FileManager.default.removeItem(at: j.url.deletingPathExtension().appendingPathExtension("part.mov"))
+            DebugLog.error("smooth-slow-motion-flow-failed", e, ["key": k])
+            return try await ensure(Self.blending(j))
+        } catch { failed[k] = error.localizedDescription; DebugLog.error("smooth-slow-motion-failed", error, ["key": k]); throw error }
+    }
+
+    /// The same render with blend: the key `job` gives it once flow is not available.
+    nonisolated static func blending(_ j: Job) -> Job {
+        var b = j
+        b.method = .blend
+        b.key = String(j.key.dropLast(SlowMotionMode.opticalFlow.rawValue.count)) + SlowMotionMode.blend.rawValue
+        return b
     }
 
     /// Renders after a quiet period, so a trim or speed drag ends in one render.
@@ -155,7 +184,9 @@ final class InterpolatedVideo: ObservableObject {
         // No colour management: the file must carry the source pixels unchanged (a managed context shifted them ~4 dB).
         let ci = CIContext(options: [.cacheIntermediates: false, .workingColorSpace: NSNull(), .outputColorSpace: NSNull()])
         var flow: Any? = nil
-        if j.method == .opticalFlow, #available(macOS 15.4, *) { flow = try FlowInterpolator(width: w, height: h, context: ci) }
+        if j.method == .opticalFlow, #available(macOS 15.4, *) {
+            do { flow = try FlowInterpolator(width: w, height: h, context: ci) } catch { throw FlowFailed(error) }
+        }
 
         func next() -> (CVPixelBuffer, Double)? {
             while let s = out.copyNextSampleBuffer() {
@@ -186,7 +217,11 @@ final class InterpolatedVideo: ObservableObject {
             if phase < 0.002 || b == nil {
                 image = CIImage(cvPixelBuffer: aa.0)
             } else if let bb = b, #available(macOS 15.4, *), let f = flow as? FlowInterpolator {
-                image = try await f.interpolate(aa.0, at: aa.1, bb.0, at: bb.1, phase: Float(phase))
+                do {
+                    if failFlowForTesting { throw NSError(domain: "VTFrameProcessorErrorDomain", code: -19730) }
+                    image = try await f.interpolate(aa.0, at: aa.1, bb.0, at: bb.1, phase: Float(phase))
+                }
+                catch { f.end(); reader.cancelReading(); writer.cancelWriting(); throw FlowFailed(error) }
             } else {
                 let fade = CIFilter(name: "CIDissolveTransition")!
                 fade.setValue(CIImage(cvPixelBuffer: aa.0), forKey: kCIInputImageKey)

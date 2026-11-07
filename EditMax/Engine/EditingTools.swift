@@ -490,9 +490,15 @@ extension ToolExecutor {
         var out = SlowMotionResult(clip: ref(now), mode: mode.rawValue, speed: r(InterpolatedVideo.slowest(now)), status: "off")
         guard mode != .off, let j = InterpolatedVideo.job(now, a, fps: document.project.settings.fps) else { return out }
         out.method = j.method.rawValue; out.outputFps = j.fps
-        if mode == .opticalFlow, j.method != .opticalFlow { out.note = "optical flow is not available on this Mac (VideoToolbox frame-rate conversion needs macOS 15.4 and a supported Mac); rendering with blend" }
+        let flowNote = { InterpolatedVideo.flowFailure.map { "optical flow failed on this Mac (\($0)); rendering with blend" }
+            ?? "optical flow is not available on this Mac (VideoToolbox frame-rate conversion needs macOS 15.4 and a supported Mac); rendering with blend" }
+        if mode == .opticalFlow, j.method != .opticalFlow { out.note = flowNote() }
         if FileManager.default.fileExists(atPath: j.url.path) { out.status = "ready"; out.file = j.url.path }
-        else if wait { _ = try await InterpolatedVideo.shared.ensure(j); out.status = "ready"; out.file = j.url.path }
+        else if wait {
+            let u = try await InterpolatedVideo.shared.ensure(j)
+            out.status = "ready"; out.file = u.path
+            if u != j.url { out.method = SlowMotionMode.blend.rawValue; out.note = flowNote() }   // flow failed during the render
+        }
         else { InterpolatedVideo.shared.schedule(now, a, fps: document.project.settings.fps, delay: .zero); out.status = "rendering" }
         return out
     }

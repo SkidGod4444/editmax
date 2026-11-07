@@ -53,6 +53,29 @@ final class EditingSlowMotionTests: XCTestCase {
         return ctx.makeImage()!
     }
 
+    /// Optical flow that fails during the render (as on a virtual Mac: VTFrameProcessorErrorDomain -19730, though it says
+    /// it is supported) falls back to blend, says why, and later renders blend straight away.
+    func testOpticalFlowThatFailsFallsBackToBlendAndSaysWhy() async throws {
+        guard InterpolatedVideo.flowAvailable else { throw XCTSkip("optical flow is not available on this Mac") }
+        InterpolatedVideo.failFlowForTesting = true
+        defer { InterpolatedVideo.failFlowForTesting = false; InterpolatedVideo.flowFailure = nil }
+        let src = dir.appendingPathComponent("flowfail30.mp4")
+        try await EditingTestVideo.write(to: src, seconds: 2, fps: 30, width: 320, height: 180, cuts: [], discSpeed: 600)
+        let a = try await MediaImporter.probe(src); doc.project.assets.append(a)
+        doc.project.settings.fps = 30
+        var slow = Clip(assetID: a.id, name: "Slow", start: 0, duration: 2, sourceIn: 0.5); slow.speed = 0.25
+        doc.project.tracks[0].clips.append(slow)
+        let r = try await x.setSmoothSlowMotion("Slow", mode: "optical_flow", wait: true)
+        if let f = r.file { rendered.append(f) }
+        XCTAssertEqual(r.status, "ready")
+        XCTAssertEqual(r.method, "blend")
+        XCTAssertTrue(r.note?.contains("optical flow failed on this Mac (VTFrameProcessorErrorDomain -19730)") == true, r.note ?? "no note")
+        XCTAssertTrue(r.file.map { FileManager.default.fileExists(atPath: $0) && $0.hasSuffix("-blend.mov") } == true, r.file ?? "no file")
+        XCTAssertFalse(InterpolatedVideo.flowAvailable, "flow is not tried again until EditMax quits")
+        let clip = try XCTUnwrap(doc.project.allClips.first { $0.name == "Slow" })
+        XCTAssertEqual(InterpolatedVideo.ready(clip, a, fps: 30)?.url.path, r.file, "the builder plays the blended file")
+    }
+
     func testInterpolatedFramesBeatRepeatedFrames() async throws {
         let src = dir.appendingPathComponent("source30.mp4"), truth = dir.appendingPathComponent("truth120.mp4")
         try await EditingTestVideo.write(to: src, seconds: 2, fps: 30, width: 320, height: 180, cuts: [], discSpeed: 600)
@@ -90,7 +113,9 @@ final class EditingSlowMotionTests: XCTestCase {
             // A frame on a source frame is the source frame: the render must not shift colours or time.
             let onFrame = (0..<120).filter { $0 % 4 == 0 }.map { k in self.psnr(out[k], srcFrames[(60 + k) / 4]) }.reduce(0, +) / 30
             print("SLOWMO-ONFRAME \(mode) \(onFrame)")
-            XCTAssertGreaterThan(onFrame, 40, "frames on a source frame match it")
+            // 53.6 dB here. GitHub's virtual Macs have no hardware encoder, and their software H.264 at the same rate
+            // gives 34.9 dB; a frame shifted in time or colour scores under 27 (the repeated frames do).
+            XCTAssertGreaterThan(onFrame, ProcessInfo.processInfo.environment["CI"] != nil ? 32 : 40, "frames on a source frame match it")
             results[r.method!] = score
             rows.append((r.method == "optical_flow" ? "Optical flow" : "Blend" + (mode == "optical_flow" ? " (flow unavailable)" : ""), (1...4).map { out[$0] }, score))
             if mode == "optical_flow", !InterpolatedVideo.flowAvailable { XCTAssertEqual(r.method, "blend"); XCTAssertNotNil(r.note) }

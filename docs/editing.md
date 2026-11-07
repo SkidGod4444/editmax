@@ -105,7 +105,7 @@ The engine is `Engine/SourceEdits.swift`:
 **README.** For a clip slower than 1×, the inspector's **Smooth slow motion** card chooses how in-between frames are made:
 - **Repeat** shows each frame several times, as before.
 - **Blend** cross-fades the two neighbouring frames.
-- **Optical flow** draws new frames along the motion, using Apple's VideoToolbox frame-rate conversion (macOS 15.4+). Where that is unavailable it falls back to blend and says so.
+- **Optical flow** draws new frames along the motion, using Apple's VideoToolbox frame-rate conversion (macOS 15.4+). Where that is unavailable, or it fails during the render, it falls back to blend and says so.
 
 The clip is rendered once in the background and cached. The preview switches to the render when it is ready, and the export waits for it. The sound is untouched. Agents use `set_smooth_slow_motion` (`off | blend | optical_flow`, with `wait`).
 
@@ -126,6 +126,7 @@ With slow motion (2 px per frame), blend (41.3 dB) and flow (41.0 dB) tie, both 
 - In `CompositionBuilder` the swap is a few lines: when `InterpolatedVideo.ready` has a file, the video segments read from it, shifted by `Segment.reading(from:)`. Audio still comes from the original.
 - Rendering uses a CIContext without colour management. The source's colour tags are copied to the writer and the attachments to each buffer; without this, every frame shifted by about 20 dB.
 - Blend is `CIDissolveTransition`. Flow is `VTFrameRateConversionParameters` with one phase per call (`FlowInterpolator`).
+- Flow can fail on a Mac that says it supports it (GitHub's virtual Macs: `VTFrameProcessorErrorDomain -19730`). The render throws `FlowFailed`, `ensure` notes `flowFailure` and renders the blend job instead (the key with `-blend`), and `flowAvailable` is false until EditMax quits, so later clips go straight to blend. The note says "optical flow failed on this Mac (…)".
 - Speed ramps use their slowest speed for the frame rate.
 
 ## Interchange

@@ -3,11 +3,12 @@ import Foundation
 import AudioToolbox
 import Combine
 
-/// Voice isolation (dialogue cleanup) rendered ahead of time: an asset's sound is run once through Apple's
-/// `AUSoundIsolation` audio unit offline (AVAudioEngine in manual rendering mode) and the result is kept in
-/// Application Support, keyed by the file's path, size and modification date plus the amount (10 % steps).
-/// The composition builder plays the isolated file in place of the original sound when it exists; the export
-/// renders every missing one first (`ensureAll`). Nothing runs inside the real-time audio tap.
+/// Voice isolation (dialogue cleanup) rendered ahead of time: an asset's sound is run through Apple's
+/// `AUSoundIsolation` audio unit offline (AVAudioEngine in manual rendering mode) and kept in Application Support,
+/// keyed by the file's path, size and modification date plus the amount (10 % steps). Only the parts of the source the
+/// timeline reads are rendered, in 10-minute blocks (`blockSeconds`); a clip plays its blocks joined on the source's
+/// timeline once every one it reads is there (`readySource`), and the export renders what is missing first
+/// (`ensureAll`). A whole-file render from an older version is still used. Nothing runs inside the real-time audio tap.
 @MainActor
 final class IsolatedAudio: ObservableObject {
     static let shared = IsolatedAudio()
@@ -21,7 +22,7 @@ final class IsolatedAudio: ObservableObject {
     /// Bumped whenever an isolated file becomes ready, so the preview can rebuild with it.
     @Published private(set) var version = 0
 
-    private var inFlight: [String: Task<URL, Error>] = [:]
+    private var inFlight: [String: Task<Void, Error>] = [:]
     private var scheduled: [UUID: Task<Void, Never>] = [:]
 
     nonisolated static let sampleRate = 48_000.0
@@ -38,7 +39,7 @@ final class IsolatedAudio: ObservableObject {
     /// Refuses a render that could fill the disk: an 18-hour file can need over 12 GB.
     nonisolated static func checkDisk(needed: Int64, free: Int64, name: String) throws {
         guard free < needed else { return }
-        throw EditError.invalid(String(format: "Voice isolation of '%@' needs up to %.1f GB free on the disk that holds Application Support; %.1f GB is free. Free some space, or isolate a shorter file.",
+        throw EditError.invalid(String(format: "Voice isolation of '%@' needs up to %.1f GB free on the disk that holds Application Support; %.1f GB is free. Free some space, or isolate less of it (only the parts on the timeline are rendered).",
                                        name, Double(needed) / 1e9, Double(free) / 1e9))
     }
     nonisolated static let chunk: AVAudioFrameCount = 4096
@@ -70,7 +71,104 @@ final class IsolatedAudio: ObservableObject {
     nonisolated static func eligible(_ asset: Asset) -> Bool { asset.kind != .image && asset.sequenceID == nil }
     nonisolated static let sequenceMessage = "voice isolation does not apply to a nested sequence: unnest it, or isolate the clips inside it"
 
-    func ready(for asset: Asset, amount: Double) -> URL? { Self.readyURL(for: asset, amount: amount) }
+    // MARK: Blocks
+
+    /// Renders cover what the timeline uses, in blocks of the source this long (the last one shorter), each its own file.
+    /// One render pass covers a run of neighbouring blocks with one calibration, so they join seamlessly; a run that
+    /// starts after the beginning of the file first plays `prerollFrames` of the sound before it.
+    nonisolated(unsafe) static var blockSeconds = 600.0   // tests set a few seconds
+    nonisolated static func blockCount(_ duration: Double) -> Int { max(1, Int((duration / blockSeconds).rounded(.up))) }
+    nonisolated static func blockRange(_ k: Int, duration: Double) -> (start: Double, end: Double) {
+        (Double(k) * blockSeconds, min(duration, Double(k + 1) * blockSeconds))
+    }
+    /// `<key>-b600s-<k>.caf`: the block length is part of the name, so files of another length are never read as these.
+    nonisolated static func blockURL(for asset: Asset, amount: Double, block k: Int) -> URL {
+        directory.appendingPathComponent("\(key(for: asset, amount: amount))-b\(Int(blockSeconds))s-\(k).caf")
+    }
+    /// The blocks a span of source seconds reads from.
+    nonisolated static func blocks(covering span: ClosedRange<Double>, duration: Double) -> [Int] {
+        let last = blockCount(duration) - 1
+        let lo = min(last, max(0, Int((span.lowerBound / blockSeconds).rounded(.down))))
+        let hi = min(last, max(lo, Int((span.upperBound / blockSeconds).rounded(.up)) - 1))
+        return Array(lo...hi)
+    }
+
+    /// The source seconds a clip's isolated sound can be read from: its sound (J and L cuts included), the tail that a
+    /// transition or a crossfade into `next` reads past its out point, and a second either side.
+    nonisolated static func span(of clip: Clip, next: Clip?, in project: Project) -> ClosedRange<Double>? {
+        guard let asset = audioAsset(of: clip, in: project), asset.duration > 0 else { return nil }
+        let ends = TimeMap.segments(clip.soundClip(), assetDuration: asset.duration).flatMap { [$0.sourceStart, $0.sourceEnd] }
+        guard let lo = ends.min(), let hi = ends.max() else { return nil }
+        let tail = max(next?.transitionIn?.duration ?? 0, next?.audioCrossfade?.duration ?? 0) * max(1, clip.speed(at: clip.duration))
+        let a = min(asset.duration, max(0, lo - 1))
+        return a...max(a, min(asset.duration, hi + tail + 1))
+    }
+
+    /// What the timeline needs rendered for one cache key (an asset at an amount): the blocks its clips read.
+    struct Need { let asset: Asset; let amount: Double; var blocks: Set<Int> }
+
+    /// Every key's needs, from the clips as the composition plays them (`Project.playedClips`), on `tracks` (all of
+    /// them when nil) and only clip `only` when given.
+    nonisolated static func needs(_ project: Project, tracks: [Track]? = nil, only: UUID? = nil) -> [String: Need] {
+        var out: [String: Need] = [:]
+        for track in tracks ?? project.tracks {
+            let clips = project.playedClips(on: track)
+            for (i, clip) in clips.enumerated() where clip.audio.needsIsolation && (only == nil || clip.id == only) {
+                guard let asset = audioAsset(of: clip, in: project), eligible(asset),
+                      let span = span(of: clip, next: i + 1 < clips.count ? clips[i + 1] : nil, in: project) else { continue }
+                let k = key(for: asset, amount: clip.audio.voiceIsolation)
+                out[k, default: Need(asset: asset, amount: clip.audio.voiceIsolation, blocks: [])].blocks.formUnion(blocks(covering: span, duration: asset.duration))
+            }
+        }
+        return out
+    }
+
+    /// The isolated sound a clip reading `span` of `asset` plays: a whole-file render from an older version when there
+    /// is one, else the blocks covering the span joined on the source's timeline. Nil unless every one of those blocks
+    /// is on disk: a clip never plays partly isolated. `keep` must outlive any composition made from `asset`.
+    nonisolated static func readySource(for asset: Asset, amount: Double, span: ClosedRange<Double>?) async throws -> (asset: AVAsset, keep: [AVAsset])? {
+        guard pct(amount) > 0, eligible(asset), let span else { return nil }
+        if let whole = readyURL(for: asset, amount: amount) { let a = AVURLAsset(url: whole); return (a, [a]) }
+        let ks = blocks(covering: span, duration: asset.duration)
+        let urls = ks.map { blockURL(for: asset, amount: amount, block: $0) }
+        guard urls.allSatisfy({ FileManager.default.fileExists(atPath: $0.path) }) else { return nil }
+        return try await stitched(ks, urls, duration: asset.duration)
+    }
+
+    /// Joined blocks, reused: the preview rebuilds its composition on every edit.
+    private final class Stitches: @unchecked Sendable {
+        let lock = NSLock()
+        var items: [String: (asset: AVAsset, keep: [AVAsset])] = [:]
+    }
+    nonisolated private static let stitches = Stitches()
+
+    /// The blocks as one sound on the source's timeline: block k at k × `blockSeconds`, anything between them silent.
+    /// A block a little short of its length (a source with dropped packets) leaves a few silent milliseconds, never a
+    /// read past the end of its file.
+    nonisolated static func stitched(_ ks: [Int], _ urls: [URL], duration: Double) async throws -> (asset: AVAsset, keep: [AVAsset])? {
+        let id = urls.map(\.lastPathComponent).joined(separator: "|")
+        stitches.lock.lock(); let hit = stitches.items[id]; stitches.lock.unlock()
+        if let hit { return hit }
+        let comp = AVMutableComposition()
+        guard let track = comp.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else { return nil }
+        var keep: [AVAsset] = [comp]
+        let at = { (s: Double) in CMTime(value: CMTimeValue((s * sampleRate).rounded()), timescale: CMTimeScale(sampleRate)) }
+        for (k, u) in zip(ks, urls) {
+            let a = AVURLAsset(url: u)
+            guard let t = try await a.loadTracks(withMediaType: .audio).first else { return nil }
+            let have = try await t.load(.timeRange)
+            let r = blockRange(k, duration: duration)
+            let start = at(r.start), length = CMTimeMinimum(have.duration, at(r.end - r.start))
+            let end = track.timeRange.end
+            if end < start { track.insertEmptyTimeRange(CMTimeRange(start: end, end: start)) }
+            if length > .zero { try track.insertTimeRange(CMTimeRange(start: have.start, duration: length), of: t, at: start) }
+            keep.append(a)
+        }
+        let made = (asset: comp as AVAsset, keep: keep)
+        stitches.lock.lock(); if stitches.items.count >= 32 { stitches.items = [:] }; stitches.items[id] = made; stitches.lock.unlock()
+        return made
+    }
+
     func isRendering(_ asset: Asset, amount: Double) -> Bool { rendering.contains(Self.key(for: asset, amount: amount)) }
 
     /// Whether the AUSoundIsolation unit exists on this Mac (macOS 13+; some virtual-audio setups hide it).
@@ -92,38 +190,53 @@ final class IsolatedAudio: ObservableObject {
 
     // MARK: Rendering
 
-    /// The isolated file for an asset at an amount, rendering it first when the cache has none. Concurrent calls for
-    /// the same key share one render.
-    func ensure(_ asset: Asset, amount: Double) async throws -> URL {
+    /// Renders what is missing of `blocks` (every block of the file when nil) for an asset at an amount; a whole-file
+    /// render from an older version counts as all of them. Calls for the same key take turns, and each renders only
+    /// what is still missing when its turn comes. Finished blocks stay when a later one fails or is cancelled.
+    func ensure(_ asset: Asset, amount: Double, blocks wanted: Set<Int>? = nil) async throws {
         let p = Self.pct(amount)
         guard p > 0 else { throw EditError.invalid("voice isolation amount is 0") }
         guard asset.kind != .image else { throw EditError.invalid("'\(asset.name)' is an image; it has no sound") }
         guard asset.sequenceID == nil else { throw EditError.invalid(Self.sequenceMessage) }
-        let url = Self.url(for: asset, amount: amount)
-        if FileManager.default.fileExists(atPath: url.path) { return url }
         let k = Self.key(for: asset, amount: amount)
-        if let t = inFlight[k] { return try await t.value }
+        while let t = inFlight[k] { _ = try? await t.value }
+        if Self.readyURL(for: asset, amount: amount) != nil { return }
+        let missing = (wanted ?? Set(0..<Self.blockCount(asset.duration)))
+            .filter { !FileManager.default.fileExists(atPath: Self.blockURL(for: asset, amount: amount, block: $0).path) }.sorted()
+        guard !missing.isEmpty else { return }
         guard Self.isAvailable else { throw EditError.invalid(Self.unavailableMessage) }
         guard FileManager.default.fileExists(atPath: asset.path) else { throw EditError.notFound("'\(asset.name)' at \(asset.path)") }
+        // Runs of neighbouring blocks: one render pass (one calibration) each.
+        var runs: [[Piece]] = []
+        for b in missing {
+            let r = Self.blockRange(b, duration: asset.duration)
+            let piece = Piece(start: r.start, end: r.end, url: Self.blockURL(for: asset, amount: amount, block: b))
+            if let last = runs.last?.last, abs(last.end! - r.start) < 1e-9 { runs[runs.count - 1].append(piece) } else { runs.append([piece]) }
+        }
+        let total = runs.joined().reduce(0) { $0 + $1.end! - $1.start }
         rendering.insert(k); progress[k] = 0; failed[k] = nil
         let source = asset.url, name = asset.name
-        let task = Task<URL, Error> {
+        let task = Task<Void, Error> {
             let started = Date()
             let cancel = CancelFlag()
-            let report: @Sendable (Double) -> Void = { f in Task { @MainActor in self.progress[k] = f } }
-            return try await withTaskCancellationHandler {
-                try await Self.render(source: source, to: url, pct: p, cancel: cancel, progress: report)
-                DebugLog.event("voice-isolation", ["asset": name, "key": k, "seconds": (Date().timeIntervalSince(started) * 100).rounded() / 100])
-                return url
+            try await withTaskCancellationHandler {
+                var done = 0.0
+                for run in runs {
+                    let length = run.reduce(0) { $0 + $1.end! - $1.start }, before = done
+                    let report: @Sendable (Double) -> Void = { f in Task { @MainActor in self.progress[k] = (before + f * length) / max(1e-9, total) } }
+                    try await Self.render(source: source, pieces: run, pct: p, cancel: cancel, progress: report)
+                    done += length
+                    self.version += 1   // the clips that read only these blocks can play them now
+                }
+                DebugLog.event("voice-isolation", ["asset": name, "key": k, "blocks": missing.count, "runs": runs.count, "sourceSeconds": total.rounded(),
+                                                   "seconds": (Date().timeIntervalSince(started) * 100).rounded() / 100])
             } onCancel: { cancel.cancelled = true }
         }
         inFlight[k] = task
         defer { inFlight[k] = nil; rendering.remove(k); progress[k] = nil }
         do {
-            let out = try await task.value
-            version += 1
+            try await task.value
             DebugLog.event("voice-isolation-ready", ["key": k, "version": version])
-            return out
         } catch {
             failed[k] = error.localizedDescription
             DebugLog.error("voice-isolation-failed", error, ["asset": name, "key": k])
@@ -131,36 +244,43 @@ final class IsolatedAudio: ObservableObject {
         }
     }
 
-    /// Renders after a short quiet period, so a slider drag (one call per step) ends in one render, not ten.
-    func schedule(_ asset: Asset, amount: Double, delay: Duration = .milliseconds(500)) {
+    /// Renders after a short quiet period, so a slider drag (one call per step) ends in one render, not ten: what the
+    /// timeline reads of this asset at this amount.
+    func schedule(_ asset: Asset, amount: Double, in project: Project, delay: Duration = .milliseconds(500)) {
         scheduled[asset.id]?.cancel()
         guard Self.pct(amount) > 0 else { return }
+        let blocks = Self.needs(project)[Self.key(for: asset, amount: amount)]?.blocks ?? []
         scheduled[asset.id] = Task { [weak self] in
             try? await Task.sleep(for: delay)
             guard !Task.isCancelled, let self else { return }
-            _ = try? await self.ensure(asset, amount: amount)
+            try? await self.ensure(asset, amount: amount, blocks: blocks)
         }
     }
 
-    /// Renders the isolated sound of every clip that asks for it (the export calls this before building).
+    /// Renders the isolated sound every clip that asks for it reads (the export and loudness call this first).
     func ensureAll(_ project: Project) async throws {
-        var done: Set<String> = []
-        for clip in project.tracks.flatMap({ $0.clips.flatMap { $0.multicamPieces(in: project) } }) where clip.audio.needsIsolation {
-            guard let asset = Self.audioAsset(of: clip, in: project), Self.eligible(asset) else { continue }
-            let k = Self.key(for: asset, amount: clip.audio.voiceIsolation)
-            guard !done.contains(k) else { continue }
-            done.insert(k)
-            _ = try await ensure(asset, amount: clip.audio.voiceIsolation)
+        for (_, n) in Self.needs(project).sorted(by: { $0.key < $1.key }) {
+            try await ensure(n.asset, amount: n.amount, blocks: n.blocks)
         }
     }
 
-    /// Caption for the inspector: what the slider does, and this asset's state at the current amount.
-    func caption(for asset: Asset?, amount: Double) -> String {
-        let base = "Keeps the speech and drops room noise and background (Apple's voice isolator). Renders on this Mac once per file and amount."
-        guard let asset, Self.pct(amount) > 0 else { return base }
+    /// Whether everything `clip` reads is rendered.
+    func isReady(_ clip: Clip, in project: Project) -> Bool {
+        guard let asset = Self.audioAsset(of: clip, in: project) else { return false }
+        if Self.readyURL(for: asset, amount: clip.audio.voiceIsolation) != nil { return true }
+        let track = project.tracks.filter { $0.clips.contains { $0.id == clip.id } }
+        guard let need = Self.needs(project, tracks: track, only: clip.id).first?.value, !need.blocks.isEmpty else { return false }
+        return need.blocks.allSatisfy { FileManager.default.fileExists(atPath: Self.blockURL(for: asset, amount: need.amount, block: $0).path) }
+    }
+
+    /// Caption for the inspector: what the slider does, and the state of what this clip reads at its amount.
+    func caption(for clip: Clip, in project: Project) -> String {
+        let base = "Keeps the speech and drops room noise and background (Apple's voice isolator). Renders on this Mac the parts of the file the timeline uses, once per amount."
+        let amount = clip.audio.voiceIsolation
+        guard let asset = Self.audioAsset(of: clip, in: project), Self.pct(amount) > 0 else { return base }
         let k = Self.key(for: asset, amount: amount)
         if rendering.contains(k) { let f = progress[k] ?? 0; return base + " Rendering… \(Int((f * 100).rounded()))%" }
-        if ready(for: asset, amount: amount) != nil { return base + " Ready: the preview and the export play the isolated sound." }
+        if isReady(clip, in: project) { return base + " Ready: the preview and the export play the isolated sound." }
         if let e = failed[k] { return base + " Failed: \(e)" }
         if !Self.isAvailable { return base + " " + Self.unavailableMessage }
         return base + " Waiting to render…"
@@ -169,54 +289,80 @@ final class IsolatedAudio: ObservableObject {
     /// A render cancellation flag shared with the blocking loop.
     final class CancelFlag: @unchecked Sendable { var cancelled = false }
 
-    /// Decodes the asset's sound (48 kHz float, 1 or 2 channels) through an AVAssetReader, runs it through AUSoundIsolation
-    /// in an offline AVAudioEngine and writes an Apple Lossless .caf of exactly the decoded frame count, lined up sample for sample
-    /// with the source. The unit's delay is measured on the very instance that renders (`Calibration`: it changes once
-    /// the model has loaded, at a frame that depends on wall-clock timing), then the first half second of the recording
-    /// warms the model up, then the recording plays from its first frame; everything before that plus the measured delay
-    /// is dropped from the output and the tail is flushed to the exact length. Blocks a utility-queue thread, never the caller's.
+    /// One output file of a render: the source from `start` to `end` seconds (nil: to the end of the sound).
+    struct Piece: Sendable { let start: Double; let end: Double?; let url: URL }
+
+    /// The whole file into one output, as older versions cached it.
     nonisolated static func render(source: URL, to url: URL, pct: Int, cancel: CancelFlag, progress: @escaping @Sendable (Double) -> Void) async throws {
+        try await render(source: source, pieces: [Piece(start: 0, end: nil, url: url)], pct: pct, cancel: cancel, progress: progress)
+    }
+
+    /// Decodes consecutive pieces of the asset's sound (48 kHz float, 1 or 2 channels), each through its own AVAssetReader
+    /// started at the piece's own source time (so a source with dropped packets drifts at most within a piece), runs
+    /// them through AUSoundIsolation in one offline AVAudioEngine and writes one Apple Lossless .caf per piece of exactly
+    /// the frames its reader gave, lined up sample for sample with the source. The unit's delay is measured on the very
+    /// instance that renders (`Calibration`: it changes once the model has loaded, at a frame that depends on wall-clock
+    /// timing). Then the model warms up on the sound just before the first piece (`prerollFrames`), or, when the first
+    /// piece starts the file, on its own first half second, played twice; everything before the first piece plus the
+    /// measured delay is dropped and the tail is flushed to the exact length. Blocks a utility-queue thread, never the caller's.
+    nonisolated static func render(source: URL, pieces: [Piece], pct: Int, cancel: CancelFlag, progress: @escaping @Sendable (Double) -> Void) async throws {
+        guard let first = pieces.first else { return }
         let av = AVURLAsset(url: source)
         guard let track = try await av.loadTracks(withMediaType: .audio).first else { throw EditError.invalid("'\(source.lastPathComponent)' has no audio track") }
         var srcChannels = 2
         if let fd = try await track.load(.formatDescriptions).first, let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(fd) {
             srcChannels = Int(asbd.pointee.mChannelsPerFrame)
         }
-        let seconds = try await track.load(.timeRange).duration.seconds
+        let duration = try await track.load(.timeRange).duration.seconds
+        let seconds = pieces.reduce(0) { $0 + max(0, min(duration, $1.end ?? duration) - $1.start) }
         let channels = AVAudioChannelCount(max(1, min(2, srcChannels)))
-        if let free = try? url.deletingLastPathComponent().resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]).volumeAvailableCapacityForImportantUsage {
+        if let free = try? first.url.deletingLastPathComponent().resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]).volumeAvailableCapacityForImportantUsage {
             try checkDisk(needed: diskNeeded(seconds: seconds, channels: Int(channels)), free: free, name: source.lastPathComponent)
         }
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
             DispatchQueue.global(qos: .utility).async {
-                do { try renderBlocking(asset: av, track: track, channels: channels, seconds: seconds, to: url, pct: pct, cancel: cancel, progress: progress); cont.resume() }
+                do { try renderBlocking(asset: av, track: track, channels: channels, pieces: pieces, seconds: seconds, pct: pct, cancel: cancel, progress: progress); cont.resume() }
                 catch { cont.resume(throwing: error) }
             }
         }
     }
 
-    /// Warm-up: this many frames of the recording's own start are played (and dropped) before the recording itself.
+    /// Warm-up when the first piece starts the file: this many of its own first frames are played (and dropped) before it.
     nonisolated static let warmupFrames = 6 * Int(chunk)
+    /// Warm-up when it starts later: the sound just before it, about 8 s (a whole number of render chunks). Measured, 2 s
+    /// and 8 s land in the same range: the unit's own run-to-run difference is larger than either leaves.
+    nonisolated static let prerollFrames = 96 * Int(chunk)
 
-    nonisolated private static func renderBlocking(asset av: AVURLAsset, track: AVAssetTrack, channels: AVAudioChannelCount, seconds: Double, to url: URL, pct: Int,
+    nonisolated private static func renderBlocking(asset av: AVURLAsset, track: AVAssetTrack, channels: AVAudioChannelCount, pieces: [Piece], seconds: Double, pct: Int,
                                                    cancel: CancelFlag, progress: @escaping @Sendable (Double) -> Void) throws {
         let name = av.url.lastPathComponent
         guard let fmt = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: sampleRate, channels: channels, interleaved: false),
               let readFmt = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: sampleRate, channels: channels, interleaved: true) else { throw EditError.invalid("audio format") }
         let expected = max(1.0, (seconds.isFinite ? seconds : 0) * sampleRate)
+        let time = { (s: Double) in CMTime(value: CMTimeValue((s * sampleRate).rounded()), timescale: CMTimeScale(sampleRate)) }
+        /// A started reader over `start`..<`end` of the source (whole when it is the whole file).
+        func reader(from start: Double, to end: Double?) throws -> (AVAssetReader, AVAssetReaderOutput) {
+            let r = try AVAssetReader(asset: av)
+            if start > 0 || end != nil {
+                r.timeRange = end.map { CMTimeRange(start: time(start), end: time($0)) } ?? CMTimeRange(start: time(start), duration: .positiveInfinity)
+            }
+            let o = AVAssetReaderAudioMixOutput(audioTracks: [track], audioSettings: [
+                AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: sampleRate, AVNumberOfChannelsKey: Int(channels),
+                AVLinearPCMBitDepthKey: 32, AVLinearPCMIsFloatKey: true, AVLinearPCMIsNonInterleaved: false, AVLinearPCMIsBigEndianKey: false])
+            o.alwaysCopiesSampleData = false
+            guard r.canAdd(o) else { throw EditError.invalid("cannot read the sound of '\(name)'") }
+            r.add(o)
+            guard r.startReading() else { throw r.error ?? EditError.invalid("cannot read '\(name)'") }
+            return (r, o)
+        }
+        let start0 = pieces[0].start
+        let preroll = start0 > 0 ? try reader(from: max(0, start0 - Double(prerollFrames) / sampleRate), to: start0) : nil
 
-        let reader = try AVAssetReader(asset: av)
-        let output = AVAssetReaderAudioMixOutput(audioTracks: [track], audioSettings: [
-            AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: sampleRate, AVNumberOfChannelsKey: Int(channels),
-            AVLinearPCMBitDepthKey: 32, AVLinearPCMIsFloatKey: true, AVLinearPCMIsNonInterleaved: false, AVLinearPCMIsBigEndianKey: false])
-        output.alwaysCopiesSampleData = false
-        guard reader.canAdd(output) else { throw EditError.invalid("cannot read the sound of '\(name)'") }
-        reader.add(output)
-        guard reader.startReading() else { throw reader.error ?? EditError.invalid("cannot read '\(name)'") }
-
-        // The source: calibration noise, then the recording's own first frames as a warm-up, then the recording.
-        // Manual rendering runs the block synchronously on this thread, so the decoder is pulled on demand.
-        let feed = Feed(output: output, format: readFmt, channels: Int(channels), headFrames: warmupFrames)
+        // The source: calibration noise, then the warm-up, then the pieces one after another.
+        // Manual rendering runs the block synchronously on this thread, so the decoders are pulled on demand.
+        let feed = Feed(format: readFmt, channels: Int(channels), warmupFrames: preroll == nil ? warmupFrames : prerollFrames, preroll: preroll) { i in
+            i < pieces.count ? try reader(from: pieces[i].start, to: pieces[i].end) : nil
+        }
         let cal = Calibration(channels: Int(channels))
         let sourceNode = AVAudioSourceNode(format: fmt) { _, _, frameCount, abl -> OSStatus in
             let n = Int(frameCount)
@@ -251,11 +397,11 @@ final class IsolatedAudio: ObservableObject {
         let delay = cal.delay ?? reported
         if cal.delay == nil { DebugLog.event("voice-isolation-latency", ["note": "no steady match for the calibration noise; using the reported latency", "reported": reported]) }
 
-        // 2. Warm-up: the requested mix, the recording's first half second (dropped).
+        // 2. Warm-up: the requested mix over the sound before the first piece, or its own first half second (dropped).
         AudioUnitSetParameter(effect.audioUnit, kAUSoundIsolationParam_WetDryMixPercent, kAudioUnitScope_Global, 0, AudioUnitParameterValue(pct), 0)
         cal.phase = .warmup
         var warmed = 0
-        while warmed < warmupFrames {
+        while warmed < feed.warmupFrames {
             if cancel.cancelled { throw CancellationError() }
             let status = try engine.renderOffline(chunk, to: out)
             guard status == .success, out.frameLength > 0 else { throw EditError.invalid("the voice isolator stopped rendering (\(status.rawValue))") }
@@ -263,40 +409,63 @@ final class IsolatedAudio: ObservableObject {
         }
         cal.phase = .audio
 
-        // 3. The recording: drop `delay` frames, write exactly the decoded frame count.
-        let tmp = url.deletingPathExtension().appendingPathExtension("part.caf")
-        try? FileManager.default.removeItem(at: tmp)
-        let file = try AVAudioFile(forWriting: tmp, settings: fileSettings(channels: Int(channels)), commonFormat: .pcmFormatFloat32, interleaved: false)
+        // 3. The pieces: drop `delay` frames, then write each piece's exact frame count to its own file.
+        var current = 0, inPiece = 0
+        var file: AVAudioFile?, tmp: URL?
+        func open(_ i: Int) throws {
+            let t = pieces[i].url.deletingPathExtension().appendingPathExtension("part.caf")
+            try? FileManager.default.removeItem(at: t)
+            file = try AVAudioFile(forWriting: t, settings: fileSettings(channels: Int(channels)), commonFormat: .pcmFormatFloat32, interleaved: false)
+            tmp = t
+        }
+        func close(_ i: Int) throws {
+            file?.close(); file = nil
+            guard let t = tmp else { return }
+            tmp = nil
+            try? FileManager.default.removeItem(at: pieces[i].url)
+            try FileManager.default.moveItem(at: t, to: pieces[i].url)
+        }
+        /// Closes every piece whose reader has finished and whose frames are all written, opening the next.
+        func closeFinished() throws {
+            while current < pieces.count, current < feed.pieceFrames.count, inPiece >= feed.pieceFrames[current] {
+                try close(current); current += 1; inPiece = 0
+                if current < pieces.count { try open(current) }
+            }
+        }
         var skipped = 0, written = 0, lastReport = Date.distantPast
         do {
+            try open(0)
             while true {
                 if cancel.cancelled { throw CancellationError() }
-                if reader.status == .failed { throw reader.error ?? EditError.invalid("reading '\(name)' failed") }
+                if let e = feed.failure { throw e }
                 let status = try engine.renderOffline(chunk, to: out)
                 guard status == .success, out.frameLength > 0 else { throw EditError.invalid("the voice isolator stopped rendering (\(status.rawValue))") }
                 var offset = 0, frames = Int(out.frameLength)
                 if skipped < delay { let s = min(delay - skipped, frames); skipped += s; offset += s; frames -= s }
                 if feed.exhausted { frames = min(frames, feed.inputFrames - written) }
-                if frames > 0 {
-                    for ch in 0..<Int(channels) { slice.floatChannelData![ch].update(from: out.floatChannelData![ch] + offset, count: frames) }
-                    slice.frameLength = AVAudioFrameCount(frames)
-                    try file.write(from: slice)
-                    written += frames
+                try closeFinished()
+                while frames > 0, current < pieces.count {
+                    // A piece still being read takes everything so far; a finished one takes up to its frame count.
+                    let n = min(frames, current < feed.pieceFrames.count ? feed.pieceFrames[current] - inPiece : frames)
+                    for ch in 0..<Int(channels) { slice.floatChannelData![ch].update(from: out.floatChannelData![ch] + offset, count: n) }
+                    slice.frameLength = AVAudioFrameCount(n)
+                    try file?.write(from: slice)
+                    inPiece += n; written += n; offset += n; frames -= n
+                    try closeFinished()
                 }
                 if feed.exhausted && written >= feed.inputFrames { break }
                 if Date().timeIntervalSince(lastReport) > 0.5 { lastReport = Date(); progress(min(0.99, Double(written) / expected)) }
             }
+            try closeFinished()
             guard feed.inputFrames > 0 else { throw EditError.invalid("'\(name)' has no sound to isolate") }
         } catch {
-            reader.cancelReading()
-            file.close()
-            try? FileManager.default.removeItem(at: tmp)
+            feed.cancel()
+            file?.close()
+            if let t = tmp { try? FileManager.default.removeItem(at: t) }
             throw error
         }
-        file.close()
-        try? FileManager.default.removeItem(at: url)
-        try FileManager.default.moveItem(at: tmp, to: url)
-        DebugLog.event("voice-isolation-render", ["file": name, "delay": delay, "reported": reported, "calibrationFrames": cal.emittedFrames, "switched": cal.sawSwitch, "frames": written])
+        DebugLog.event("voice-isolation-render", ["file": name, "pieces": pieces.count, "from": start0, "delay": delay, "reported": reported,
+                                                  "calibrationFrames": cal.emittedFrames, "switched": cal.sawSwitch, "frames": written])
         progress(1)
     }
 
@@ -375,34 +544,63 @@ final class IsolatedAudio: ObservableObject {
         }
     }
 
-    /// Decoded (interleaved) samples from the asset reader, de-interleaved into the source node's buffers a chunk at a
-    /// time. The first `headFrames` are kept, so they can be played once as a warm-up and again as the recording's start.
+    /// Decoded (interleaved) samples, de-interleaved into the source node's buffers a chunk at a time: the warm-up, then
+    /// each piece from its own reader (`open` gives piece i's, nil past the last). The warm-up is the first piece's own
+    /// first `warmupFrames` (kept, so they play again as its start) or, with `preroll`, the last `warmupFrames` of the
+    /// sound before it (played once, padded with silence at its front when shorter).
     final class Feed {
-        let output: AVAssetReaderOutput
         let format: AVAudioFormat
         let channels: Int
-        let headFrames: Int
-        private var head: [Float] = []          // interleaved
-        private var headDone = false
+        let warmupFrames: Int
+        private let open: (Int) throws -> (AVAssetReader, AVAssetReaderOutput)?
+        private let preroll: (AVAssetReader, AVAssetReaderOutput)?
+        private var reader: (AVAssetReader, AVAssetReaderOutput)?
+        private var piece = -1
+        private var warm: [Float] = []          // interleaved
+        private var warmDone = false
         private var headPos = 0, warmPos = 0
         private var pending: AVAudioPCMBuffer?
         private var offset = 0
         private var readerExhausted = false
+        private var pieceFill = 0
         private(set) var inputFrames = 0
-        /// The recording has been played to its end (the source now gives zeros).
-        var exhausted: Bool { headPos >= head.count / channels && readerExhausted }
+        /// Frames each finished piece gave, in order.
+        private(set) var pieceFrames: [Int] = []
+        private(set) var failure: Error?
+        /// Every piece has been played to its end (the source now gives zeros).
+        var exhausted: Bool { headPos >= replayed && readerExhausted }
+        private var replayed: Int { preroll == nil ? warm.count / channels : 0 }
 
-        init(output: AVAssetReaderOutput, format: AVAudioFormat, channels: Int, headFrames: Int) {
-            self.output = output; self.format = format; self.channels = channels; self.headFrames = headFrames
+        init(format: AVAudioFormat, channels: Int, warmupFrames: Int, preroll: (AVAssetReader, AVAssetReaderOutput)?,
+             open: @escaping (Int) throws -> (AVAssetReader, AVAssetReaderOutput)?) {
+            self.format = format; self.channels = channels; self.warmupFrames = warmupFrames; self.preroll = preroll; self.open = open
         }
 
-        private func decodeHead() {
-            guard !headDone else { return }
-            while head.count / channels < headFrames, let b = nextBuffer(), let p = b.floatChannelData?[0] {
-                head.append(contentsOf: UnsafeBufferPointer(start: p, count: Int(b.frameLength) * channels))
+        private func nextPiece() {
+            if let (r, _) = reader, r.status == .failed, failure == nil { failure = r.error ?? EditError.invalid("reading the sound failed") }
+            if piece >= 0 { pieceFrames.append(pieceFill); pieceFill = 0 }
+            piece += 1; pending = nil; offset = 0
+            do {
+                reader = try open(piece)
+                if reader == nil { readerExhausted = true }
+            } catch { failure = error; reader = nil; readerExhausted = true }
+        }
+
+        private func prepareWarm() {
+            guard !warmDone else { return }
+            warmDone = true
+            if let (_, o) = preroll {
+                var all: [Float] = []
+                while let b = nextBuffer(from: o), let p = b.floatChannelData?[0] { all.append(contentsOf: UnsafeBufferPointer(start: p, count: Int(b.frameLength) * channels)) }
+                let keep = min(all.count, warmupFrames * channels)
+                warm = [Float](repeating: 0, count: warmupFrames * channels - keep) + all.suffix(keep)
+                nextPiece()
+            } else {
+                nextPiece()
+                while warm.count / channels < warmupFrames, let (_, o) = reader, let b = nextBuffer(from: o), let p = b.floatChannelData?[0] {
+                    warm.append(contentsOf: UnsafeBufferPointer(start: p, count: Int(b.frameLength) * channels))
+                }
             }
-            if head.count / channels < headFrames { readerExhausted = true }
-            headDone = true
         }
 
         private func zero(_ out: UnsafeMutableAudioBufferListPointer) { for b in out { if let d = b.mData { memset(d, 0, Int(b.mDataByteSize)) } } }
@@ -416,42 +614,42 @@ final class IsolatedAudio: ObservableObject {
             }
         }
 
-        /// The recording's first frames, once; zeros past them.
+        /// The warm-up, once; zeros past it.
         func fillWarmup(_ abl: UnsafeMutablePointer<AudioBufferList>, frames: Int) {
             let out = UnsafeMutableAudioBufferListPointer(abl)
             zero(out)
-            decodeHead()
-            let avail = head.count / channels
-            let n = max(0, min(frames, avail - warmPos))
-            if n > 0 { head.withUnsafeBufferPointer { copy(out, from: $0.baseAddress!, srcFrame: warmPos, to: 0, count: n) } }
+            prepareWarm()
+            let n = max(0, min(frames, min(warm.count / channels, warmupFrames) - warmPos))
+            if n > 0 { warm.withUnsafeBufferPointer { copy(out, from: $0.baseAddress!, srcFrame: warmPos, to: 0, count: n) } }
             warmPos += n
         }
 
-        /// The recording from its first frame: the kept head, then the decoder; zeros once it is over.
+        /// The pieces from the first one's first frame, one after another; zeros once they are over.
         func fill(_ abl: UnsafeMutablePointer<AudioBufferList>, frames: Int) {
             let out = UnsafeMutableAudioBufferListPointer(abl)
             zero(out)
-            decodeHead()
+            prepareWarm()
             var filled = 0
-            let avail = head.count / channels
-            if headPos < avail {
-                let n = min(frames, avail - headPos)
-                head.withUnsafeBufferPointer { copy(out, from: $0.baseAddress!, srcFrame: headPos, to: 0, count: n) }
-                headPos += n; filled += n; inputFrames += n
+            if headPos < replayed {
+                let n = min(frames, replayed - headPos)
+                warm.withUnsafeBufferPointer { copy(out, from: $0.baseAddress!, srcFrame: headPos, to: 0, count: n) }
+                headPos += n; filled += n; inputFrames += n; pieceFill += n
             }
             while filled < frames && !readerExhausted {
                 if pending == nil || offset >= Int(pending!.frameLength) {
-                    guard let next = nextBuffer() else { readerExhausted = true; break }
+                    guard let (_, o) = reader, let next = nextBuffer(from: o) else { nextPiece(); continue }
                     pending = next; offset = 0
                 }
                 guard let p = pending, let src = p.floatChannelData?[0] else { break }
                 let n = min(frames - filled, Int(p.frameLength) - offset)
                 copy(out, from: src, srcFrame: offset, to: filled, count: n)
-                filled += n; offset += n; inputFrames += n
+                filled += n; offset += n; inputFrames += n; pieceFill += n
             }
         }
 
-        private func nextBuffer() -> AVAudioPCMBuffer? {
+        func cancel() { reader?.0.cancelReading(); preroll?.0.cancelReading() }
+
+        private func nextBuffer(from output: AVAssetReaderOutput) -> AVAudioPCMBuffer? {
             while let sb = output.copyNextSampleBuffer() {
                 let n = CMSampleBufferGetNumSamples(sb)
                 guard n > 0, let buf = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(n)) else { continue }

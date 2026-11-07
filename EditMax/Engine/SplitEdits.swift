@@ -149,7 +149,7 @@ enum SplitEditAudio {
 
     /// `kept` collects the source assets: they must outlive the composition (`CompositionBuilder.Output.sources`).
     static func insert(_ items: [Item], into comp: AVMutableComposition, project: Project, proxies: [UUID: URL], total: CMTime,
-                       kept: inout [AVURLAsset]) async throws -> [AVMutableAudioMixInputParameters] {
+                       kept: inout [AVAsset]) async throws -> [AVMutableAudioMixInputParameters] {
         guard !items.isEmpty else { return [] }
         let t = { (s: Double) in CMTime(seconds: s, preferredTimescale: CompositionBuilder.timescale) }
         let end = total.seconds
@@ -173,11 +173,16 @@ enum SplitEditAudio {
             if s.end > end { s.duration = end - s.start }
             guard s.duration > 0.01 else { continue }
 
-            let isolated = clip.audio.needsIsolation ? IsolatedAudio.readyURL(for: audioAsset, amount: clip.audio.voiceIsolation) : nil
-            let url = isolated ?? proxies[audioAsset.id] ?? audioAsset.url
-            let av = cache[url] ?? AVURLAsset(url: url)
-            if cache[url] == nil { kept.append(av) }
-            cache[url] = av
+            let isolated = clip.audio.needsIsolation
+                ? try await IsolatedAudio.readySource(for: audioAsset, amount: clip.audio.voiceIsolation, span: IsolatedAudio.span(of: clip, next: item.next, in: project)) : nil
+            let av: AVAsset
+            if let isolated { av = isolated.asset; kept.append(contentsOf: isolated.keep) }
+            else {
+                let url = proxies[audioAsset.id] ?? audioAsset.url
+                let a = cache[url] ?? AVURLAsset(url: url)
+                if cache[url] == nil { kept.append(a) }
+                cache[url] = a; av = a
+            }
             guard let src = try await av.loadTracks(withMediaType: .audio).first else { continue }
             let lane: Lane
             if let free = lanes.first(where: { $0.owner == item.trackID && $0.end <= s.start + 1e-6 }) { lane = free }

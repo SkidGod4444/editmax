@@ -612,7 +612,7 @@ struct ToolExecutor {
             }
         }
         if let found = project.clip(id)?.clip, found.audio.needsIsolation, let asset = IsolatedAudio.audioAsset(of: found, in: project) {
-            IsolatedAudio.shared.schedule(asset, amount: found.audio.voiceIsolation)
+            IsolatedAudio.shared.schedule(asset, amount: found.audio.voiceIsolation, in: project)
         }
     }
 

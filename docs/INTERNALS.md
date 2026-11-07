@@ -104,11 +104,23 @@ compressor, gain, pan and limiter, then the track's strip (fader, pan, bus, mast
 `MTAudioProcessingTap` per composition track (`AudioTap.swift`, `AudioMixPlan.attachTaps`), attached only when a clip
 or the mixer asks for it. J/L-cut sounds go on lanes of their own (`SplitEditAudio`), one owner track per lane, with
 that track's strip. Clip volume is one envelope per
-clip (keyframes × fades × transition crossfade × ducking) emitted as back-to-back ramps. Voice isolation renders
-Apple's on-device `AUSoundIsolation` over the asset once (cached in `Application Support/EditMax/isolated/`), written
-as 16-bit Apple Lossless: the same samples and exact length as the 16-bit PCM it replaced, about half the size for
-speech. It always covers the whole file, so an 18-hour stereo source can take up to 12.7 GB; a render is refused
-before it starts when the disk has less than that plus 0.5 GB free (`IsolatedAudio.diskNeeded`, `checkDisk`).
+clip (keyframes × fades × transition crossfade × ducking) emitted as back-to-back ramps.
+
+Voice isolation renders Apple's on-device `AUSoundIsolation` over only the parts of a source the timeline reads, in
+10-minute blocks of the source (`IsolatedAudio.blockSeconds`; `<key>-b600s-<k>.caf` in
+`Application Support/EditMax/isolated/`, 16-bit Apple Lossless). What a clip reads (`IsolatedAudio.span`): its sound
+(J/L cuts included, via `soundClip()`), the tail a transition or crossfade into the next clip reads, and a second either
+side; `needs` collects the blocks per asset and amount from `Project.playedClips(on:)`, the same list the builder plays.
+`ensure` renders the missing blocks, one engine pass (one calibration) per run of neighbouring blocks, each block from
+its own AVAssetReader started at the block's source time, so a source with dropped packets drifts at most within a
+block; a run that starts after the file's beginning warms the model on the 8 s before it (`prerollFrames`). With the
+isolator dry every block is its stretch of the source sample for sample (VoiceIsolationFileTests). The builder and
+`SplitEditAudio` play a clip isolated only when every block it reads is there (`readySource`, never partly), joined on
+the source's timeline by a small composition that the timeline's composition reads like a file (`stitched`, cached).
+A whole-file `<key>.caf` from an older version is still used. The unit is not repeatable run to run (two whole renders
+differ by about −40 to −60 dB against the signal), so a block rendered in a later pass than its neighbour can join it
+with a slight change. Disk: up to 1.27 GB per hour of stereo rendered, refused before it starts when the disk lacks that
+plus 0.5 GB (`diskNeeded`, `checkDisk`).
 
 Loudness (`Loudness.measure`, used by measure and normalize) renders the mix as the export does and meters each buffer
 as it is read; nothing is kept, so an 18-hour mix stays at a few MB instead of about 25 GB. A mix of a minute or more

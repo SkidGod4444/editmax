@@ -851,7 +851,7 @@ struct ClipInspector: View {
 
     private var eqCard: some View {
         let au = clip.audio
-        return InspectorCard("EQ & cleanup", footer: isolated.caption(for: IsolatedAudio.audioAsset(of: clip, in: document.project), amount: au.voiceIsolation), trailing: {
+        return InspectorCard("EQ & cleanup", footer: isolated.caption(for: clip, in: document.project), trailing: {
             if clip.audio.hasCleanup || clip.audio.needsIsolation { Button("Reset") { try? x.setClipAudio(clip.id.uuidString, low: nil, mid: nil, high: nil, highPass: nil, gate: nil, reset: true) }.controlSize(.small).pointer().uiFrame("inspector.audio.reset") }
         }) {
             slider("Low", value: au.lowGain, range: -18...18, format: { String(format: "%+.0f dB", $0) }, reset: 0) { try? x.setClipAudio(clip.id.uuidString, low: $0, mid: nil, high: nil, highPass: nil, gate: nil, reset: false) }

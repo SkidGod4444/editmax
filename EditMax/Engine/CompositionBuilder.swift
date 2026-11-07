@@ -45,7 +45,7 @@ enum CompositionBuilder {
         var layerSources: [[LayerSource]] = []    // per visible video track, top row first
         var audioParams: [AVMutableAudioMixInputParameters] = []
         var assetCache: [UUID: AVURLAsset] = [:]
-        var keptSources: [AVURLAsset] = []
+        var keptSources: [AVAsset] = []
         var stillCache: [UUID: CIImage] = [:]
         var splitItems: [SplitEditAudio.Item] = []   // J/L-cut sounds: built on audio lanes of their own after the tracks (SplitEdits.swift)
         let t = { (s: Double) in CMTime(seconds: s, preferredTimescale: timescale) }
@@ -79,7 +79,7 @@ enum CompositionBuilder {
             let params = audio.map { $0.map { AVMutableAudioMixInputParameters(track: $0) } }
             var sources: [LayerSource] = []
             // Multicam clips play as one plain piece per angle interval.
-            let clips = track.clips.flatMap { $0.multicamPieces(in: project) }.map { project.hydrated($0) }.sorted { $0.start < $1.start }
+            let clips = project.playedClips(on: track).map { project.hydrated($0) }
             // Audio crossfades on this track, and each clip's volume envelope for its tap (attached after the loop).
             let xfades = AudioCrossfades.plan(clips, track: track, project: project)
             var envelopes: [UUID: [(Double, Float)]] = [:]
@@ -150,11 +150,16 @@ enum CompositionBuilder {
                 if clip.hasSplitEdit { splitItems.append(.init(clip: clip, trackID: track.id, muted: track.isMuted, duck: duckCurves[track.id], transitionHead: transitionEnd.map { $0 - clip.start }, next: i + 1 < clips.count ? clips[i + 1] : nil)); continue }
                 // Sound may come from another asset (a multicam piece's audio angle); same time map, its own source offset.
                 let audioAsset = clip.audioAssetID.flatMap { project.asset($0) } ?? asset
-                // Voice isolation: the pre-rendered isolated copy of the sound when the cache has one (same timeline, never cached as the asset).
-                let isolated = clip.audio.needsIsolation ? IsolatedAudio.readyURL(for: audioAsset, amount: clip.audio.voiceIsolation) : nil
-                let aav = isolated.map { AVURLAsset(url: $0) } ?? (audioAsset.id == asset.id ? av : (assetCache[audioAsset.id] ?? AVURLAsset(url: proxies[audioAsset.id] ?? audioAsset.url)))
-                if isolated == nil { assetCache[audioAsset.id] = aav } else { keptSources.append(aav) }
-                if clip.audio.needsIsolation { DebugLog.event("audio-source", ["preview": forPreview, "clip": clip.name, "isolation": clip.audio.voiceIsolation, "isolated": isolated != nil, "file": (isolated ?? proxies[audioAsset.id] ?? audioAsset.url).lastPathComponent]) }
+                // Voice isolation: the pre-rendered isolated sound when everything this clip reads of it is rendered (on the
+                // source's timeline, so the same time map; never cached as the asset).
+                let isolated = clip.audio.needsIsolation
+                    ? try await IsolatedAudio.readySource(for: audioAsset, amount: clip.audio.voiceIsolation,
+                                                          span: IsolatedAudio.span(of: clip, next: i + 1 < clips.count ? clips[i + 1] : nil, in: project)) : nil
+                let plain = audioAsset.id == asset.id ? av : (assetCache[audioAsset.id] ?? AVURLAsset(url: proxies[audioAsset.id] ?? audioAsset.url))
+                let aav: AVAsset = isolated?.asset ?? plain
+                if let isolated { keptSources.append(contentsOf: isolated.keep) } else { assetCache[audioAsset.id] = plain }
+                if clip.audio.needsIsolation { DebugLog.event("audio-source", ["preview": forPreview, "clip": clip.name, "isolation": clip.audio.voiceIsolation, "isolated": isolated != nil,
+                                                                               "file": isolated == nil ? (proxies[audioAsset.id] ?? audioAsset.url).lastPathComponent : (isolated?.asset as? AVURLAsset)?.url.lastPathComponent ?? "blocks"]) }
                 var aclip = clip; if let s = clip.audioSourceIn { aclip.sourceIn = s }
                 let asegments = audioAsset.id == asset.id && clip.audioSourceIn == nil ? segments : TimeMap.segments(aclip, assetDuration: audioAsset.duration)
                 if let a = audio[slot], let atr = try await aav.loadTracks(withMediaType: .audio).first, let prm = params[slot] {
@@ -230,7 +235,7 @@ enum CompositionBuilder {
 
         let mix = AVMutableAudioMix()
         mix.inputParameters = audioParams
-        return Output(composition: comp, videoComposition: videoComp, audioMix: mix, renderSize: renderSize, duration: total, sources: Array(assetCache.values) + keptSources)
+        return Output(composition: comp, videoComposition: videoComp, audioMix: mix, renderSize: renderSize, duration: total, sources: assetCache.values.map { $0 as AVAsset } + keptSources)
     }
 
     /// Aspect-fit a source track into the render size, honouring the source's preferred transform (rotation).
@@ -351,4 +356,10 @@ enum OverlayLayerBuilder {
         guard h.count == 6, let v = UInt32(h, radix: 16) else { return CGColor(gray: 1, alpha: 1) }
         return CGColor(srgbRed: CGFloat((v >> 16) & 0xff) / 255, green: CGFloat((v >> 8) & 0xff) / 255, blue: CGFloat(v & 0xff) / 255, alpha: 1)
     }
+}
+
+extension Project {
+    /// The clips the composition plays on `track`, in time order: multicam clips cut into their pieces. The builder and
+    /// voice isolation's render both go by this list, so they agree on each clip's neighbour.
+    func playedClips(on track: Track) -> [Clip] { track.clips.flatMap { $0.multicamPieces(in: self) }.sorted { $0.start < $1.start } }
 }

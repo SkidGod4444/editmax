@@ -64,21 +64,37 @@ struct DeliveryActions {
         let hasMarkers = !document.project.markers.isEmpty
         state.isExporting = true
         state.exportStatus = "Batch export…"
-        Task {
-            do {
-                let items = try await ToolExecutor(document: document, origin: .user).exportBatch(directory: dir.path, templates: [], preset: format.preset, chapters: hasMarkers) { label, p in
-                    Task { @MainActor in state.exportStatus = "Batch export \(label)… \(Int(p * 100))%" }
-                }
-                let total = items.reduce(0) { $0 + $1.seconds }
-                state.exportStatus = "Exported \(items.count) file\(items.count == 1 ? "" : "s") to \(dir.lastPathComponent) in \(Int(total.rounded())) s"
-                NSWorkspace.shared.activateFileViewerSelecting(items.map { URL(fileURLWithPath: $0.path) })
-            } catch {
-                state.exportStatus = "Batch export failed: \(error.localizedDescription)"
+        let preset = format.preset
+        Task { await runBatch(into: dir, preset: preset, chapters: hasMarkers, ignoreDiskEstimate: false) }
+    }
+
+    /// When a file's size estimate does not fit the disk, asks before going past it, as File → Export does.
+    private func runBatch(into dir: URL, preset: ExportService.Preset, chapters: Bool, ignoreDiskEstimate: Bool) async {
+        do {
+            let items = try await ToolExecutor(document: document, origin: .user).exportBatch(directory: dir.path, templates: [], preset: preset, chapters: chapters,
+                                                                                               ignoreDiskEstimate: ignoreDiskEstimate) { label, p in
+                Task { @MainActor in state.exportStatus = "Batch export \(label)… \(Int(p * 100))%" }
             }
-            state.isExporting = false
-            try? await Task.sleep(for: .seconds(6))
-            state.exportStatus = nil
+            let total = items.reduce(0) { $0 + $1.seconds }
+            state.exportStatus = "Exported \(items.count) file\(items.count == 1 ? "" : "s") to \(dir.lastPathComponent) in \(Int(total.rounded())) s"
+            NSWorkspace.shared.activateFileViewerSelecting(items.map { URL(fileURLWithPath: $0.path) })
+        } catch let e as ExportService.DiskTooSmall {
+            let alert = NSAlert()
+            alert.messageText = "This batch may not fit on the disk"
+            alert.informativeText = e.localizedDescription + " Export Anyway renders every file of the batch again."
+            alert.addButton(withTitle: "Cancel")
+            alert.addButton(withTitle: "Export Anyway")
+            if alert.runModal() == .alertSecondButtonReturn {
+                state.exportStatus = "Batch export…"
+                return await runBatch(into: dir, preset: preset, chapters: chapters, ignoreDiskEstimate: true)
+            }
+            state.exportStatus = "Batch export cancelled: the disk may be too small."
+        } catch {
+            state.exportStatus = "Batch export failed: \(error.localizedDescription)"
         }
+        state.isExporting = false
+        try? await Task.sleep(for: .seconds(6))
+        state.exportStatus = nil
     }
 
     /// Save panel with the format picker (FCPXML or EDL), then a sheet that says exactly what went into the file and

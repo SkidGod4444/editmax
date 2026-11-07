@@ -155,8 +155,8 @@ replaces). The estimate: H.264/HEVC presets ask the export session (`estimatedOu
 codec's rate (`masterBytes`: ProRes from Apple's 1080p29.97 rates per pixel, HEVC 10-bit 0.25 bits per pixel, plus the
 sound). On busy 1080p footage High, Medium and HEVC 10-bit write within 1 % of it, ProRes 422 8 % over; it follows the
 preset's rate, not the picture, so a mostly still one writes far less (a still test clip: 83 KB against 9.6 MB). The
-refusal is `DiskTooSmall`: File → Export answers it with an alert offering Export Anyway, an agent passes
-`ignore_disk_estimate`. Whatever the estimate, `watchDisk` looks at the disk every second while the file is written and
+refusal is `DiskTooSmall`: File → Export and Batch Export answer it with an alert offering Export Anyway (a batch then
+renders every file again), an agent passes `ignore_disk_estimate` to `export_video` or `export_batch`. Whatever the estimate, `watchDisk` looks at the disk every second while the file is written and
 stops the export below 0.5 GB free (`stopBelow`): the session's job is cancelled, a master's pumps stop between frames,
 the unfinished file is removed, and `DiskRanLow` says how much had been written. The result carries `estimatedBytes`, and
 `export-size` logs estimate against bytes written.

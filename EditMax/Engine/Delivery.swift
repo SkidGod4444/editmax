@@ -100,7 +100,7 @@ enum BatchExport {
     /// at a time. `progress` gets "k/n Template name" and that export's fraction. With `chapters`, the markers also go
     /// to `<project name>.chapters.txt` in the directory (once; skipped when there are no markers).
     static func export(_ project: Project, to directory: URL, templates: [String], preset: ExportService.Preset, chapters: Bool, reframe: Bool = true,
-                       progress: ((String, Double) -> Void)? = nil) async throws -> [Item] {
+                       ignoreDiskEstimate: Bool = false, progress: ((String, Double) -> Void)? = nil) async throws -> [Item] {
         guard project.duration > 0 else { throw EditError.invalid("timeline is empty") }
         let infos = try resolve(templates)
         guard !infos.isEmpty else { throw EditError.invalid("no templates to export to") }
@@ -144,7 +144,7 @@ enum BatchExport {
             }
             let started = Date()
             await AppArchive.shared.keepBeforeReplacing(url)   // a render of that name from an earlier batch goes to the Archive
-            let r = try await ExportService.export(copy, to: url, preset: preset) { p in progress?(label, p) }
+            let r = try await ExportService.export(copy, to: url, preset: preset, ignoreDiskEstimate: ignoreDiskEstimate) { p in progress?(label, p) }
             let took = (Date().timeIntervalSince(started) * 100).rounded() / 100
             DebugLog.event("batch-export", ["template": t.name, "path": url.lastPathComponent, "bytes": r.bytes, "seconds": took])
             items.append(Item(path: r.path, template: t.name, width: copy.settings.width, height: copy.settings.height, fps: copy.settings.fps,
@@ -190,10 +190,10 @@ extension ToolExecutor {
     /// Batch export of the live project (a copy of it; nothing in the document changes) into a directory.
     /// Files are named after the window (the file name, or the project name while unsaved).
     func exportBatch(directory: String, templates: [String], preset: ExportService.Preset, chapters: Bool, reframe: Bool = true,
-                     progress: ((String, Double) -> Void)? = nil) async throws -> [BatchExport.Item] {
+                     ignoreDiskEstimate: Bool = false, progress: ((String, Double) -> Void)? = nil) async throws -> [BatchExport.Item] {
         let dir = URL(fileURLWithPath: (directory as NSString).expandingTildeInPath, isDirectory: true)
         var copy = document.project
         copy.name = document.displayName
-        return try await BatchExport.export(copy, to: dir, templates: templates, preset: preset, chapters: chapters, reframe: reframe, progress: progress)
+        return try await BatchExport.export(copy, to: dir, templates: templates, preset: preset, chapters: chapters, reframe: reframe, ignoreDiskEstimate: ignoreDiskEstimate, progress: progress)
     }
 }

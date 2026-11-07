@@ -37,6 +37,21 @@ final class ExportDiskTests: XCTestCase {
         XCTAssertGreaterThan(r.bytes, 0)
     }
 
+    /// Batch export: refused the same way, and Export Anyway (the MCP flag) goes past it for every file.
+    func testABatchExportIsRefusedTheSameWayAndGoesPastItWhenAsked() async throws {
+        let doc = try await fixtureProject(), x = ToolExecutor(document: doc, origin: .agent)
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("batch-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        ExportService.volumeFree = { _ in 505_000_000 }
+        do {
+            _ = try await x.exportBatch(directory: dir.path, templates: ["Square 1:1"], preset: .medium, chapters: false, reframe: false)
+            XCTFail("refused before it starts")
+        } catch is ExportService.DiskTooSmall {}
+        let items = try await x.exportBatch(directory: dir.path, templates: ["Square 1:1"], preset: .medium, chapters: false, reframe: false, ignoreDiskEstimate: true)
+        XCTAssertEqual(items.count, 1)
+        XCTAssertGreaterThan(items.first?.bytes ?? 0, 0)
+    }
+
     /// A disk that runs low while the export writes: it stops, removes the unfinished file and says how far it got,
     /// for the export session and for a master alike.
     func testAnExportStopsAndRemovesItsFileWhenTheDiskRunsLow() async throws {

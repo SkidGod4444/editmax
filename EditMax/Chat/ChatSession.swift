@@ -41,7 +41,12 @@ final class ChatSession: ObservableObject {
 
     @Published var items: [Item] = []
     @Published var input = ""
-    @Published var isRunning = false
+    @Published var isRunning = false {
+        didSet {   // an agent reply in progress holds back the update popup's restart
+            guard isRunning != oldValue else { return }
+            if isRunning { BusyWork.begin(BusyWork.agentReply) } else { BusyWork.end(BusyWork.agentReply) }
+        }
+    }
     @Published var backend: Backend {
         didSet {
             UserDefaults.standard.set(backend.rawValue, forKey: "chatBackend")

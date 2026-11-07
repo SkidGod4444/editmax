@@ -10,8 +10,10 @@ import Sparkle
 /// `AppUpdaterDelegate`, which brings it here. Before this popup it was installed silently at the next quit, and the
 /// user never heard about it. With background downloads turned off in Settings, Sparkle's own window asks instead.
 ///
-/// It never pulls EditMax over another app: when EditMax is in the background, the popup waits until it comes to the
-/// front. EditMax ▸ Check for Updates… shows it again while an update is waiting.
+/// It never interrupts: it never pulls EditMax over another app (it waits until EditMax is in front), never takes the
+/// keyboard from what you are typing in (the panel does not become key; Return does not mean Install Now), and waits
+/// while an export or an agent reply is running (`BusyWork`). Install Now pressed while one starts waits for it too.
+/// EditMax ▸ Check for Updates… shows it again while an update is waiting.
 @MainActor
 final class UpdatePrompt: ObservableObject {
     static let shared = UpdatePrompt()
@@ -24,15 +26,20 @@ final class UpdatePrompt: ObservableObject {
     @Published private(set) var offer: Offer?
     var isShowing: Bool { panel?.isVisible == true }
 
-    /// Seams for the tests: whether EditMax is in front, how long Later waits, where the popup goes.
+    /// Seams for the tests: whether EditMax is in front, what work is running, how long Later waits, how often a
+    /// waiting popup looks again, where the popup goes.
     var appIsActive: () -> Bool = { NSApp.isActive }
+    var busy: () -> String? = { BusyWork.current }
     var remindAfter: TimeInterval = 24 * 3600
+    var idleCheck: TimeInterval = 5
     var offscreen = false
+    var window: NSPanel? { panel }
 
     private var install: (() -> Void)?
     private var panel: UpdatePromptPanel?
     private var reminder: Timer?
     private var waitingForFront: NSObjectProtocol?
+    private var waitingForIdle: Timer?
 
     init() {}
 
@@ -44,16 +51,21 @@ final class UpdatePrompt: ObservableObject {
         present()
     }
 
-    /// Shows the popup now if EditMax is in front, otherwise the next time it is.
+    /// Shows the popup now if EditMax is in front and nothing long is running, otherwise once both hold.
     func present() {
         guard offer != nil else { return }
         reminder?.invalidate(); reminder = nil
+        if let what = busy() { waitForIdle(what); return }
         guard appIsActive() else { waitForFront(); return }
         show()
     }
 
     func installNow() {
         guard let install else { return }
+        if let what = busy() {   // an export or agent reply started while the popup was up: never cut it short
+            DebugLog.event("app-update-install-waits", ["for": what])
+            close(); waitForIdle(what); return
+        }
         DebugLog.event("app-update-install-now", ["version": offer?.version ?? "", "projects": DocumentRegistry.shared.documents.count])
         for doc in DocumentRegistry.shared.documents { doc.autosaveNow() }
         close()
@@ -69,6 +81,18 @@ final class UpdatePrompt: ObservableObject {
     }
 
     // MARK: The window
+
+    private func waitForIdle(_ what: String) {
+        guard waitingForIdle == nil else { return }
+        DebugLog.event("app-update-waits", ["for": what])
+        waitingForIdle = Timer.scheduledTimer(withTimeInterval: idleCheck, repeats: true) { [weak self] t in
+            Task { @MainActor in
+                guard let self, self.busy() == nil else { return }
+                t.invalidate(); self.waitingForIdle = nil
+                self.present()
+            }
+        }
+    }
 
     private func waitForFront() {
         guard waitingForFront == nil else { return }
@@ -91,7 +115,7 @@ final class UpdatePrompt: ObservableObject {
         panel.contentView = host
         panel.setFrame(frame(for: host.frame.size), display: true)
         self.panel = panel
-        if offscreen { panel.orderFront(nil) } else { panel.makeKeyAndOrderFront(nil) }
+        panel.orderFront(nil)   // not key: whatever the user is typing in keeps the keyboard
         DebugLog.event("app-update-shown", ["version": offer.version])
     }
 
@@ -140,7 +164,7 @@ final class AppUpdaterDelegate: NSObject, SPUUpdaterDelegate {
 }
 
 /// The popup's window: borderless and clear (the card draws its own glass), floats over EditMax's windows only while
-/// EditMax is in front, and takes the keyboard (Return installs, Esc is Remind Me Later).
+/// EditMax is in front, and never takes the keyboard.
 final class UpdatePromptPanel: NSPanel {
     init() {
         super.init(contentRect: CGRect(x: 0, y: 0, width: 460, height: 200), styleMask: [.borderless, .fullSizeContentView], backing: .buffered, defer: false)
@@ -154,8 +178,8 @@ final class UpdatePromptPanel: NSPanel {
         isReleasedWhenClosed = false
         animationBehavior = .alertPanel
         isExcludedFromWindowsMenu = true
+        becomesKeyOnlyIfNeeded = true   // clicking its buttons leaves the keyboard where it was
     }
-    override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 }
 
@@ -186,17 +210,19 @@ struct UpdatePromptView: View {
                 }
                 Spacer(minLength: 12)
                 Button("Remind Me Later", action: later)
-                    .keyboardShortcut(.cancelAction).glassButtonStyle().controlSize(.large)
+                    .glassButtonStyle().controlSize(.large)
                     .pointer().help("Asks again tomorrow. It still installs when you quit EditMax.")
                     .uiFrame("update.later").uiTap("update.later", later)
+                // No Return shortcut: a stray Return typed into a title must never restart EditMax.
                 Button("Install Now", action: install)
-                    .keyboardShortcut(.defaultAction).glassButtonStyle(prominent: true).controlSize(.large)
+                    .glassButtonStyle(prominent: true).controlSize(.large)
                     .pointer().uiFrame("update.install").uiTap("update.install", install)
             }
         }
         .padding(22)
         .frame(width: 480)
         .liquidGlass(in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+        .environment(\.controlActiveState, .key)   // the panel is never key; Install Now still draws blue, not grey
         .padding(24)   // room for the window shadow
     }
 }

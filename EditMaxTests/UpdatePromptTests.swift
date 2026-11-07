@@ -12,6 +12,8 @@ final class UpdatePromptTests: XCTestCase {
         let p = UpdatePrompt()
         p.offscreen = true
         p.appIsActive = { active }
+        p.busy = { nil }
+        p.idleCheck = 0.05
         return p
     }
 
@@ -76,9 +78,69 @@ final class UpdatePromptTests: XCTestCase {
         p.remindAfter = 3600; p.later()
     }
 
+    /// The side agent's catch: the popup took the keyboard and Return meant Install Now, so a Return typed into a title
+    /// could restart EditMax. Now the panel never becomes key, and Install Now has no key equivalent.
+    func testThePopupNeverTakesTheKeyboard() throws {
+        let p = prompt()
+        p.offer(version: "0.1.2", notes: nil) {}
+        let panel = try XCTUnwrap(p.window)
+        XCTAssertTrue(p.isShowing)
+        XCTAssertFalse(panel.canBecomeKey, "typing stays where it was")
+        XCTAssertFalse(panel.isKeyWindow)
+        let source = try String(contentsOfFile: #filePath.replacingOccurrences(of: "EditMaxTests/UpdatePromptTests.swift", with: "EditMax/App/UpdatePrompt.swift"), encoding: .utf8)
+        XCTAssertFalse(source.contains(".keyboardShortcut("), "no Return / Esc shortcuts in the popup")
+        p.later()
+    }
+
+    func testThePopupWaitsWhileAnExportRuns() {
+        var running: String? = BusyWork.export
+        let p = prompt(); p.busy = { running }
+        p.offer(version: "0.1.2", notes: nil) {}
+        XCTAssertFalse(p.isShowing, "never pops up mid-export")
+        spin(0.2)
+        XCTAssertFalse(p.isShowing)
+        running = nil
+        spin(0.3)
+        XCTAssertTrue(p.isShowing, "shows once the export is done")
+        p.later()
+    }
+
+    func testInstallNowWaitsForAnExportThatStartedMeanwhile() {
+        var running: String?
+        let p = prompt(); p.busy = { running }
+        var installs = 0
+        p.offer(version: "0.1.2", notes: nil) { installs += 1 }
+        XCTAssertTrue(p.isShowing)
+        running = BusyWork.agentReply
+        p.installNow()
+        XCTAssertEqual(installs, 0, "an agent reply is never cut short")
+        XCTAssertFalse(p.isShowing)
+        running = nil
+        spin(0.3)
+        XCTAssertTrue(p.isShowing, "asks again when it is done")
+        XCTAssertEqual(installs, 0, "and still waits for the click")
+        p.installNow()
+        XCTAssertEqual(installs, 1)
+    }
+
+    /// Exports really count as busy while they render, and stop counting when they end.
+    func testAnExportIsBusyWhileItRenders() async throws {
+        let doc = EditMaxDocument(), x = ToolExecutor(document: doc, origin: .agent)
+        let fixture = Bundle(for: Self.self).url(forResource: "base", withExtension: "mp4")!
+        _ = try await x.importMedia(paths: [fixture.path])
+        _ = try x.insertClip(asset: "base.mp4")
+        let out = FileManager.default.temporaryDirectory.appendingPathComponent("busy-\(UUID().uuidString).mp4")
+        defer { try? FileManager.default.removeItem(at: out) }
+        XCTAssertNil(BusyWork.current)
+        var seen: String?
+        _ = try await ExportService.export(doc.project, to: out, preset: .low) { _ in if seen == nil { seen = BusyWork.current } }
+        XCTAssertEqual(seen, BusyWork.export)
+        XCTAssertNil(BusyWork.current, "done: nothing holds the popup back")
+    }
+
     func testCheckForUpdatesShowsTheWaitingUpdateAgain() {
         let p = UpdatePrompt.shared
-        p.offscreen = true; p.appIsActive = { true }; p.remindAfter = 3600
+        p.offscreen = true; p.appIsActive = { true }; p.busy = { nil }; p.remindAfter = 3600
         p.offer(version: "0.1.2", notes: nil) {}
         p.later()
         XCTAssertFalse(p.isShowing)

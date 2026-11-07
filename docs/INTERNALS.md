@@ -292,8 +292,9 @@ key rotation before any installed copy can update again. Defaults: daily checks 
 background download with install on quit (`SUAutomaticallyUpdate`); Settings ▸ General binds to the updater's own
 `automaticallyChecksForUpdates` / `automaticallyDownloadsUpdates`. When a background download is ready, Sparkle calls
 `updater(_:willInstallUpdateOnQuit:immediateInstallationBlock:)` on `AppUpdaterDelegate`, which returns true and hands
-the block to `UpdatePrompt`: a glass popup (a borderless `NSPanel` that hides while EditMax is in the background and
-waits for it to come to the front) with Install Now (autosaves every open project, then calls the block: quit, install,
+the block to `UpdatePrompt`: a glass popup (a borderless `NSPanel` that never becomes key and has no Return shortcut,
+so typing is never taken over; it hides while EditMax is in the background, waits for it to come to the front, and
+waits while `BusyWork` counts an export or an agent reply, even after Install Now is clicked) with Install Now (autosaves every open project, then calls the block: quit, install,
 relaunch) and Remind Me Later (24 h timer; install on quit still stands). Debug builds show it with
 `-EditMaxUpdatePromptDemo YES`. The updater does not start in Debug builds (they
 would "update" to the release) or under XCTest; `EDITMAX_UPDATES=1` starts it in a Debug build. `package.sh` signs

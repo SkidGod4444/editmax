@@ -540,11 +540,13 @@ final class FontLibrary: ObservableObject {
         case .system: return
         }
         guard !files.isEmpty else { return }
-        for f in files { Self.unregister(f) }
-        if source == .google, let dir = files.first?.deletingLastPathComponent() { Self.discard(dir, family: family) }
-        else { for f in files { Self.discard(f, family: family) } }
         let paths = Set(files.map(\.standardizedFileURL.path))
-        AssetLibrary.shared.remove(Set(AssetLibrary.shared.items(kind: .font).filter { paths.contains(URL(fileURLWithPath: $0.path).standardizedFileURL.path) }.map(\.id)))
+        let listed = AssetLibrary.shared.items(kind: .font).filter { paths.contains(URL(fileURLWithPath: $0.path).standardizedFileURL.path) }
+        func itemsAt(_ url: URL) -> [LibraryItem] { listed.filter { URL(fileURLWithPath: $0.path).standardizedFileURL.path == url.standardizedFileURL.path } }
+        for f in files { Self.unregister(f) }
+        if source == .google, let dir = files.first?.deletingLastPathComponent() { Self.discard(dir, family: family, items: listed) }
+        else { for f in files { Self.discard(f, family: family, items: itemsAt(f)) } }
+        AssetLibrary.shared.remove(Set(listed.map(\.id)))
         recent.removeAll { $0.caseInsensitiveCompare(family) == .orderedSame }
         fontsChanged()
         DebugLog.event("fonts-removed", ["files": files.count, "source": source.rawValue])
@@ -559,9 +561,16 @@ final class FontLibrary: ObservableObject {
     }
 
     /// To EditMax's Archive (erased for good after the period in Settings); tests delete their temporary copies instead.
-    private static func discard(_ url: URL, family: String) {
+    private static func discard(_ url: URL, family: String, items: [LibraryItem]) {
         if AppDelegate.isTesting && AppArchive.directoryOverride == nil { try? FileManager.default.removeItem(at: url); return }
-        _ = try? AppArchive.shared.archive(url, kind: .font, name: family)
+        _ = try? AppArchive.shared.archive(url, kind: .font, name: family, items: items)
+    }
+
+    /// A font file or family folder put back from the Archive: registered with Core Text again and listed in the picker.
+    func restored(at url: URL) {
+        let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+        for f in isDir ? Self.fontFiles(in: url) : [url] { _ = Self.register(f) }
+        fontsChanged()
     }
 
     // MARK: Lists

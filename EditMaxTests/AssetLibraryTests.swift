@@ -89,6 +89,26 @@ final class AssetLibraryFontRoutingTests: LibraryTestCase {
         XCTAssertFalse(TextFont.available("Plaster-Regular"))
         XCTAssertFalse(AssetLibrary.shared.all.contains { $0.id == item.id })
     }
+
+    /// Delete a font, then Restore it from the Archive: usable in titles again at once and back in Assets ▸ Fonts.
+    func testADeletedFontComesBackFromTheArchive() async throws {
+        AppArchive.directoryOverride = dir.appendingPathComponent("Archive", isDirectory: true); AppArchive.shared.load()
+        defer { AppArchive.directoryOverride = nil; AppArchive.shared.load() }
+        let fixture = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "Plaster-Regular", withExtension: "ttf"))
+        let dropped = dir.appendingPathComponent("Plaster-Regular.ttf")
+        try FileManager.default.copyItem(at: fixture, to: dropped)
+        let added = await AssetLibrary.shared.add(urls: [dropped], source: .drawer, copy: true)
+        let item = try XCTUnwrap(added.items.first)
+        let f = try XCTUnwrap(FontLibrary.shared.installedFamily(ofFile: item.path))
+        FontLibrary.shared.remove(family: f.family, source: f.source)
+        XCTAssertFalse(TextFont.available("Plaster-Regular"))
+        let entry = try XCTUnwrap(AppArchive.shared.entries.last)
+        XCTAssertEqual(entry.kind, .font); XCTAssertEqual(entry.items?.count, 1)
+        try AppArchive.shared.restore(entry.id)
+        XCTAssertTrue(TextFont.available("Plaster-Regular"), "registered again, no relaunch")
+        XCTAssertNotNil(FontLibrary.shared.installedFamily(ofFile: item.path))
+        XCTAssertTrue(AssetLibrary.shared.items(kind: .font).contains { $0.id == item.id }, "back in Assets ▸ Fonts")
+    }
 }
 
 /// An Assets tile is the size its card gives it, whatever the shape of the picture in it (a 16:9 or portrait video

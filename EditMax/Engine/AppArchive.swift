@@ -25,6 +25,8 @@ final class AppArchive: ObservableObject {
         var bytes: Int64
         /// For an Assets item: the item as it was (source, the projects that used it), so Restore lists it as before.
         var item: LibraryItem? = nil
+        /// For a font: its Assets items (a family can be several files), listed again on Restore.
+        var items: [LibraryItem]? = nil
         var fileName: String { URL(fileURLWithPath: original).lastPathComponent }
     }
 
@@ -67,7 +69,7 @@ final class AppArchive: ObservableObject {
     /// Moves a file or folder into the archive and returns where it went ("Clip.mp4", then "Clip 2.mp4" for a second
     /// file of that name). Throws when it cannot be moved; the caller says why.
     @discardableResult
-    func archive(_ url: URL, kind: Entry.Kind = .file, name: String? = nil, item: LibraryItem? = nil, now: Date = Date()) throws -> URL {
+    func archive(_ url: URL, kind: Entry.Kind = .file, name: String? = nil, item: LibraryItem? = nil, items: [LibraryItem]? = nil, now: Date = Date()) throws -> URL {
         let fm = FileManager.default
         try fm.createDirectory(at: Self.directory, withIntermediateDirectories: true)
         let base = url.deletingPathExtension().lastPathComponent, ext = url.pathExtension
@@ -77,7 +79,7 @@ final class AppArchive: ObservableObject {
             dest = Self.directory.appendingPathComponent("\(base) \(n)" + (ext.isEmpty ? "" : ".\(ext)")); n += 1
         }
         try fm.moveItem(at: url, to: dest)
-        entries.append(Entry(kind: kind, name: name ?? url.lastPathComponent, original: url.path, path: dest.path, archivedAt: now, bytes: Self.size(of: dest), item: item))
+        entries.append(Entry(kind: kind, name: name ?? url.lastPathComponent, original: url.path, path: dest.path, archivedAt: now, bytes: Self.size(of: dest), item: item, items: items))
         save()
         DebugLog.event("archive-add", ["name": url.lastPathComponent])
         return dest
@@ -129,7 +131,13 @@ final class AppArchive: ObservableObject {
             if var item = e.item { item.path = dest.path; AssetLibrary.shared.restore(item, from: e.original) }
             else { Task { _ = await AssetLibrary.shared.add(urls: [dest], source: .drawer, copy: false) } }
         case .project: ProjectLibrary.shared.refresh()
-        case .font: FontLibrary.shared.reload()
+        case .font:
+            FontLibrary.shared.restored(at: dest)   // registered again, so titles draw with it now
+            for var it in e.items ?? [] {
+                let was = it.path
+                if was.hasPrefix(e.original) { it.path = dest.path + was.dropFirst(e.original.count) }
+                AssetLibrary.shared.restore(it, from: was)
+            }
         case .template, .file: break
         }
         DebugLog.event("archive-restore", ["name": e.fileName, "kind": (e.kind ?? .file).rawValue])

@@ -250,7 +250,10 @@ style) or `Menu` has no `NSPopUpButton` behind it; on mouse-down it builds an NS
 pop-up methods for the length of one driver gesture with one that records the menu and shows nothing, then puts them
 back (a menu that still starts tracking is closed at once). `ui_select {target, option}` presses the control that way
 and runs the chosen item (`performActionForItem`), sets an AppKit `NSPopUpButton` or `NSSegmentedControl` directly,
-and with no option lists the choices. In the background `ui_click` on a picker turns the caught menu into an error that
+and with no option lists the choices. A menu caught with its items not built yet (built by a delegate as it opens; a
+SwiftUI menu button on macOS 26 came back empty on CI) is filled first the way NSMenu would at the start of tracking
+(`UIDriver.fill`: `menuNeedsUpdate`, `numberOfItems(in:)`); one still empty says its control, menu and delegate classes
+in the error and the `ui-select-empty-menu` log. In the background `ui_click` on a picker turns the caught menu into an error that
 points at `ui_select` and lists the options. (A SwiftUI segmented picker bound to an `@Published` value logs SwiftUI's
 "Publishing changes from within view updates" for a real click too; it is not the driver's.)
 

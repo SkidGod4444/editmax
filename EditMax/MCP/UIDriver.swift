@@ -492,8 +492,32 @@ enum UIDriver {
     }
     private static func choices(_ p: NSPopUpButton) -> [Choice] {
         guard let menu = p.menu else { return [] }
-        menu.update()   // validation, and a delegate's lazily built items
+        fill(menu)
         return choices(menu, skipFirst: p.pullsDown)
+    }
+
+    /// A menu whose items are built only as it opens (a delegate's `menuNeedsUpdate` or `numberOfItems(in:)`): build
+    /// them now, as NSMenu would at the start of tracking. On macOS 26 a SwiftUI menu button was caught with no items.
+    static func fill(_ menu: NSMenu) {
+        if let d = menu.delegate {
+            d.menuNeedsUpdate?(menu)
+            if let n = d.numberOfItems?(in: menu), n > 0, menu.items.count != n {
+                menu.removeAllItems()
+                for i in 0..<n {
+                    let item = NSMenuItem()
+                    menu.addItem(item)
+                    if d.menu?(menu, update: item, at: i, shouldCancel: false) == false { break }
+                }
+            }
+        }
+        menu.update()   // validation
+    }
+
+    /// What an empty menu came from, so a report from another macOS says what it was.
+    static func emptyMenuDetail(_ menu: NSMenu?, control: Any?) -> String {
+        guard let menu, menu.items.filter({ !$0.isSeparatorItem && !$0.isHidden }).isEmpty else { return "" }
+        let delegate = menu.delegate.map { String(describing: type(of: $0)) } ?? "none"
+        return " (no items: \(control.map { String(describing: type(of: $0)) } ?? "no control"), menu \(String(describing: type(of: menu))), delegate \(delegate), \(menu.items.count) hidden or separator items)"
     }
 
     private static func label(_ s: NSSegmentedControl, _ i: Int) -> String {
@@ -529,8 +553,9 @@ enum UIDriver {
             if let p = c as? NSPopUpButton {
                 let list = choices(p)
                 titles = list.map(\.title)
-                guard let option, !option.isEmpty else { return "\(name) is a \(what); its options are: \(titles.joined(separator: ", "))" }
-                guard let i = match(option, in: titles) else { throw EditError.invalid("\(name) has no option '\(option)'; its options are: \(titles.joined(separator: ", "))") }
+                let empty = emptyMenuDetail(p.menu, control: p)
+                guard let option, !option.isEmpty else { return "\(name) is a \(what); its options are: \(titles.joined(separator: ", "))\(empty)" }
+                guard let i = match(option, in: titles) else { throw EditError.invalid("\(name) has no option '\(option)'; its options are: \(titles.joined(separator: ", "))\(empty)") }
                 let item = list[i].item
                 guard c.isEnabled, item.isEnabled, let menu = item.menu else { throw EditError.invalid("'\(titles[i])' cannot be chosen in \(name) now (disabled)") }
                 pick = (titles[i], what, {
@@ -563,10 +588,13 @@ enum UIDriver {
             }
             guard let menu else { throw EditError.invalid("\(name) is not a pop-up menu, menu button or segmented control (no menu comes from it); use ui_click") }
             flashed = MenuCapture.opened
+            fill(menu)
             let list = choices(menu, skipFirst: false)
             titles = list.map(\.title)
-            guard let option, !option.isEmpty else { return "\(name) is a menu; its options are: \(titles.joined(separator: ", "))" }
-            guard let i = match(option, in: titles) else { throw EditError.invalid("\(name) has no option '\(option)'; its options are: \(titles.joined(separator: ", "))") }
+            let empty = emptyMenuDetail(menu, control: nil)   // a SwiftUI control: no AppKit control under the point
+            if !empty.isEmpty { DebugLog.event("ui-select-empty-menu", ["name": name, "detail": empty]) }
+            guard let option, !option.isEmpty else { return "\(name) is a menu; its options are: \(titles.joined(separator: ", "))\(empty)" }
+            guard let i = match(option, in: titles) else { throw EditError.invalid("\(name) has no option '\(option)'; its options are: \(titles.joined(separator: ", "))\(empty)") }
             let item = list[i].item
             guard item.isEnabled, let owner = item.menu else { throw EditError.invalid("'\(titles[i])' cannot be chosen in \(name) now (disabled)") }
             pick = (titles[i], "menu", { owner.performActionForItem(at: owner.index(of: item)) })

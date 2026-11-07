@@ -218,20 +218,35 @@ struct EditorRootView: View {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         state.isExporting = true
         state.exportStatus = "Exporting…"
-        Task {
-            do {
-                let r = try await ToolExecutor(document: document, origin: .user).exportVideo(to: url.path, preset: format.preset) { p in
-                    Task { @MainActor in state.exportStatus = "Exporting… \(Int(p * 100))%" }
-                }
-                state.exportStatus = "Exported \(Timecode.string(r.duration)) to \(url.lastPathComponent)"
-                NSWorkspace.shared.activateFileViewerSelecting([url])
-            } catch {
-                state.exportStatus = "Export failed: \(error.localizedDescription)"
+        let preset = format.preset
+        Task { await runExport(to: url, preset: preset, ignoreDiskEstimate: false) }
+    }
+
+    /// When the size estimate does not fit the disk, asks before going past it: a still picture writes far less.
+    private func runExport(to url: URL, preset: ExportService.Preset, ignoreDiskEstimate: Bool) async {
+        do {
+            let r = try await ToolExecutor(document: document, origin: .user).exportVideo(to: url.path, preset: preset, ignoreDiskEstimate: ignoreDiskEstimate) { p in
+                Task { @MainActor in state.exportStatus = "Exporting… \(Int(p * 100))%" }
             }
-            state.isExporting = false
-            try? await Task.sleep(for: .seconds(6))
-            state.exportStatus = nil
+            state.exportStatus = "Exported \(Timecode.string(r.duration)) to \(url.lastPathComponent)"
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        } catch let e as ExportService.DiskTooSmall {
+            let alert = NSAlert()
+            alert.messageText = "This export may not fit on the disk"
+            alert.informativeText = e.localizedDescription
+            alert.addButton(withTitle: "Cancel")
+            alert.addButton(withTitle: "Export Anyway")
+            if alert.runModal() == .alertSecondButtonReturn {
+                state.exportStatus = "Exporting…"
+                return await runExport(to: url, preset: preset, ignoreDiskEstimate: true)
+            }
+            state.exportStatus = "Export cancelled: the disk may be too small."
+        } catch {
+            state.exportStatus = "Export failed: \(error.localizedDescription)"
         }
+        state.isExporting = false
+        try? await Task.sleep(for: .seconds(6))
+        state.exportStatus = nil
     }
 }
 

@@ -149,6 +149,18 @@ refuses a bitrate for ProRes), 24-bit 48 kHz stereo PCM, QuickTime `.mov`. The c
 `exportVideo` and `BatchExport` set the extension from `Preset.fileExtension`. HDR projects write Rec.2020 HLG or PQ
 masters (PQ HEVC also carries mastering-display and light-level metadata; ProRes does not). Limits: proxies are 8-bit, and untagged 8-bit sources can shift by up to 2 levels on saturated colors versus an 8-bit decode.
 
+Before an export writes anything, `ExportService.checkDisk` refuses it when the destination's disk lacks the estimated
+size plus 10 % and 0.5 GB (`diskNeeded`; free space is `volumeAvailableCapacityForImportantUsage`, counting a file it
+replaces). The estimate: H.264/HEVC presets ask the export session (`estimatedOutputFileLengthInBytes`), masters use the
+codec's rate (`masterBytes`: ProRes from Apple's 1080p29.97 rates per pixel, HEVC 10-bit 0.25 bits per pixel, plus the
+sound). On busy 1080p footage High, Medium and HEVC 10-bit write within 1 % of it, ProRes 422 8 % over; it follows the
+preset's rate, not the picture, so a mostly still one writes far less (a still test clip: 83 KB against 9.6 MB). The
+refusal is `DiskTooSmall`: File → Export answers it with an alert offering Export Anyway, an agent passes
+`ignore_disk_estimate`. Whatever the estimate, `watchDisk` looks at the disk every second while the file is written and
+stops the export below 0.5 GB free (`stopBelow`): the session's job is cancelled, a master's pumps stop between frames,
+the unfinished file is removed, and `DiskRanLow` says how much had been written. The result carries `estimatedBytes`, and
+`export-size` logs estimate against bytes written.
+
 Timeline export (`Interchange.swift`, `export_timeline`) writes an edit list, never pixels:
 - FCPXML 1.10. The bottom video track is the primary storyline (gaps for holes, a `transition` that starts at the cut
   for each clip that dissolves in, as EditMax plays it: the outgoing clip's media past its out point fills it). Every

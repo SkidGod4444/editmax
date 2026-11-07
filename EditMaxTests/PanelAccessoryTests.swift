@@ -12,7 +12,7 @@ final class PanelAccessoryTests: XCTestCase {
         box.onChange = { changed.append($0) }
         let view = PanelAccessory.popUp(label: "Format:", items: ExportFormatBox.items, selected: box.preset) { box.preset = $0 }
         let button = try XCTUnwrap(view.subviews.compactMap { $0 as? ActionPopUpButton }.first, "an NSPopUpButton, not a SwiftUI menu")
-        XCTAssertEqual(button.titleOfSelectedItem, "H.264, 8-bit (plays everywhere)")
+        XCTAssertEqual(button.titleOfSelectedItem, "H.264, 8-bit (plays everywhere; HEVC above 4K)")
         XCTAssertEqual(button.menu?.items.filter(\.isSeparatorItem).count, 1)
 
         let hq = try XCTUnwrap(button.menu?.items.first { $0.title.hasPrefix("ProRes 422 HQ") })

@@ -30,7 +30,6 @@ struct NotchGeometry: Equatable {
     static let drawerWidth: CGFloat = 440
     /// Height of the drawer's content under the notch: the drawer is about 190 pt tall on a MacBook.
     static let contentHeight: CGFloat = 161
-    static let peekContentHeight: CGFloat = 66
     static let pill = CGSize(width: 120, height: 8)
     static let pillHit = CGSize(width: 160, height: 24)
 
@@ -62,7 +61,6 @@ struct NotchGeometry: Equatable {
     /// The black body when collapsed (ears not included).
     var collapsedBody: CGSize { isPill ? Self.pill : CGSize(width: notch.width + 2 * Self.side, height: notch.height) }
     var openBody: CGSize { CGSize(width: Self.drawerWidth, height: contentTop + Self.contentHeight) }
-    var peekBody: CGSize { CGSize(width: Self.drawerWidth, height: contentTop + Self.peekContentHeight) }
 
     /// The panel when collapsed: the notch, 20 pt each side and the ears; a pill gets a menu-bar-high hit area.
     var collapsedFrame: CGRect {
@@ -121,16 +119,15 @@ private final class NotchDrawerHostingView<Content: View>: NSHostingView<Content
 final class NotchDrawer: ObservableObject {
     static let shared = NotchDrawer()
 
-    enum Mode: Equatable { case collapsed, open, peek }
+    enum Mode: Equatable { case collapsed, open }
     @Published private(set) var mode: Mode = .collapsed
     /// A file drag is over the drawer.
     @Published private(set) var dragging = false
     /// The last confirmation ("Added 2 files to Assets"), shown for a few seconds.
     @Published private(set) var message: String?
-    /// New files in Downloads since launch, newest first (at most `maxDownloads`).
+    /// Media downloaded in the last day, newest first (at most `maxDownloads`). Listed only: nothing goes into Assets
+    /// without the user's Add or drag, and the drawer never opens by itself for a download.
     @Published private(set) var downloads: [URL] = []
-    /// The download the drawer is peeking at.
-    @Published private(set) var peeking: URL?
     @Published private(set) var geometry: NotchGeometry?
     /// Downloads is being watched (Settings ▸ Files ▸ Watch Downloads, and macOS let EditMax read it).
     @Published private(set) var watching = false
@@ -138,7 +135,6 @@ final class NotchDrawer: ObservableObject {
     @Published private(set) var downloadsDenied = false
 
     static let maxDownloads = 5
-    static let peekSeconds: Double = 4
     static let spring = Animation.spring(response: 0.36, dampingFraction: 0.78)
 
     private var panel: NotchDrawerPanel?
@@ -152,8 +148,8 @@ final class NotchDrawer: ObservableObject {
 
     // MARK: Lifecycle
 
-    /// Called once the splash has gone (AppDelegate); never under XCTest. Shows the panel and starts the Downloads
-    /// watcher as the two settings say, and follows them from then on.
+    /// Called once the splash has gone (AppDelegate); never under XCTest. Shows the panel as the setting says and
+    /// follows the settings from then on. Downloads is not read until the user first opens the drawer.
     func start() {
         guard !AppDelegate.isTesting, !started else { return }
         started = true
@@ -166,12 +162,14 @@ final class NotchDrawer: ObservableObject {
         applySettings()
     }
 
-    /// Settings ▸ Files changed (or start): show or hide the panel, start or stop watching Downloads.
+    /// Settings ▸ Files changed (or start): show or hide the panel; stop watching Downloads when that is turned off.
+    /// Watching starts when the drawer opens, so macOS asks about Downloads when the user is looking at the drawer,
+    /// not at launch.
     func applySettings() {
         guard started else { return }
         let s = AppSettings.shared
         if s.notchDrawer { showPanel() } else { hidePanel() }
-        if s.notchDrawer && s.watchDownloads { startWatching() } else { stopWatching() }
+        if !(s.notchDrawer && s.watchDownloads) { stopWatching() }
     }
 
     var isShowing: Bool { panel?.isVisible ?? false }
@@ -213,7 +211,6 @@ final class NotchDrawer: ObservableObject {
         switch mode {
         case .collapsed: return g.collapsedFrame
         case .open: return g.frame(around: g.openBody)
-        case .peek: return g.frame(around: g.peekBody)
         }
     }
 
@@ -284,9 +281,9 @@ final class NotchDrawer: ObservableObject {
     /// size, so the drawer slid in from the left instead of growing out from behind the camera.
     private func set(_ new: Mode) {
         guard new != mode else { return }
-        if new != .peek { peeking = nil }
-        // macOS said no to Downloads earlier: try again when the drawer opens, in case the user has since allowed it.
-        if new == .open, downloadsDenied, started, AppSettings.shared.notchDrawer, AppSettings.shared.watchDownloads { startWatching() }
+        // Opened by the pointer or the menu (not by a file drag, where macOS's question would get in the way): Downloads
+        // is read now. The first time, macOS asks; after a no, each opening tries again in case it was allowed since.
+        if new == .open, !dragging, started, AppSettings.shared.notchDrawer, AppSettings.shared.watchDownloads { refreshDownloads() }
         if let p = panel, let g = geometry {
             let target = frame(for: new, in: g)
             let room = p.frame.union(target)
@@ -328,7 +325,6 @@ final class NotchDrawer: ObservableObject {
         let r = await AssetLibrary.shared.addFiles([url], source: .download, copy: true)
         show(r.added.isEmpty && r.failures.isEmpty ? "Already in Assets" : r.message)
         Self.showInLibrary(r)
-        if mode == .peek { scheduleCollapse(after: 1.8) }
         return r
     }
 
@@ -346,15 +342,12 @@ final class NotchDrawer: ObservableObject {
         return AssetLibrary.shared.all.contains { $0.original == path || $0.path == path }
     }
 
-    /// A finished download from the watcher: listed in the drawer, and the drawer peeks at it for a few seconds.
+    /// A finished download from the watcher: put first in the drawer's row, quietly. The drawer does not open for it;
+    /// the user sees it the next time they point at the notch.
     func handleNewDownload(_ url: URL) {
         downloads.removeAll { $0 == url }
         downloads.insert(url, at: 0)
         if downloads.count > Self.maxDownloads { downloads.removeLast(downloads.count - Self.maxDownloads) }
-        guard mode == .collapsed else { return }   // already open: the row shows it
-        set(.peek)
-        peeking = url
-        scheduleCollapse(after: Self.peekSeconds)
     }
 
     private func show(_ text: String) {
@@ -369,11 +362,16 @@ final class NotchDrawer: ObservableObject {
 
     // MARK: Downloads
 
-    private func startWatching() {
+    /// The drawer opened: start watching Downloads (the first time) and list what came in during the last day, so the
+    /// row is right after a relaunch too and drops files deleted since.
+    func refreshDownloads() {
         if watcher == nil { watcher = DownloadsWatcher { [weak self] url in self?.handleNewDownload(url) } }
-        watcher?.start()
-        downloadsDenied = watcher?.denied ?? false
-        watching = watcher?.isRunning ?? false
+        guard let w = watcher else { return }
+        w.start()
+        downloadsDenied = w.denied
+        watching = w.isRunning
+        guard watching else { return }
+        downloads = Array(DownloadsWatcher.recent(in: w.directory).prefix(Self.maxDownloads))
     }
 
     private func stopWatching() {
@@ -384,8 +382,8 @@ final class NotchDrawer: ObservableObject {
 
     #if DEBUG
     /// The offscreen previews put the drawer in a state without a panel.
-    func preview(mode: Mode, geometry: NotchGeometry, downloads: [URL] = [], peeking: URL? = nil, message: String? = nil, dragging: Bool = false, watching: Bool = true) {
-        self.mode = mode; self.geometry = geometry; self.downloads = downloads; self.peeking = peeking; self.message = message; self.dragging = dragging
+    func preview(mode: Mode, geometry: NotchGeometry, downloads: [URL] = [], message: String? = nil, dragging: Bool = false, watching: Bool = true) {
+        self.mode = mode; self.geometry = geometry; self.downloads = downloads; self.message = message; self.dragging = dragging
         self.watching = watching; downloadsDenied = false
     }
     #endif
@@ -419,7 +417,7 @@ struct NotchShape: Shape {
 }
 
 /// What the panel shows: the shape (black while folded over the notch, glass otherwise), and inside it when open the
-/// drop zone and "New in Downloads", or when peeking the one new download.
+/// drop zone and "New in Downloads".
 struct NotchDrawerView: View {
     @ObservedObject var drawer: NotchDrawer
     @ObservedObject private var library = AssetLibrary.shared
@@ -430,7 +428,6 @@ struct NotchDrawerView: View {
         switch drawer.mode {
         case .collapsed: return g.collapsedBody
         case .open: return g.openBody
-        case .peek: return g.peekBody
         }
     }
 
@@ -446,7 +443,7 @@ struct NotchDrawerView: View {
             .overlay(alignment: .top) {
                 if open {
                     Group {
-                        if drawer.mode == .peek, let url = drawer.peeking { peek(url) } else { openContent }
+                        openContent
                     }
                     .padding(.top, g.contentTop)
                     .padding(.horizontal, ear + 18)
@@ -525,22 +522,6 @@ struct NotchDrawerView: View {
     private func inLibrary(_ url: URL) -> Bool {
         _ = library.all.count   // re-evaluated as the library changes
         return drawer.isInLibrary(url)
-    }
-
-    // MARK: Peek
-
-    private func peek(_ url: URL) -> some View {
-        HStack(spacing: 12) {
-            DownloadIcon(url: url).frame(width: 52, height: 40)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(drawer.message ?? "New in Downloads").font(.system(size: 10, weight: .semibold)).foregroundStyle(drawer.message == nil ? .white.opacity(0.55) : .green)
-                Text(url.lastPathComponent).font(.system(size: 13, weight: .semibold)).foregroundStyle(.white).lineLimit(1).truncationMode(.middle)
-            }
-            Spacer(minLength: 8)
-            AddButton(drawer: drawer, url: url, inLibrary: inLibrary(url), id: "drawer.peek.add")
-        }
-        .padding(.top, 10)
-        .onDrag { NSItemProvider(object: url as NSURL) } preview: { Label(url.lastPathComponent, systemImage: "doc").padding(6) }
     }
 
     private struct Drop: DropDelegate {

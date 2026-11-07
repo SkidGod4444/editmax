@@ -944,7 +944,7 @@ extension Project {
 enum ProjectFormat {
     struct Size: Hashable { var width: Int, height: Int; var label: String }
     static let sizes: [[Size]] = [
-        [Size(width: 3840, height: 2160, label: "4K UHD"), Size(width: 2560, height: 1440, label: "1440p"),
+        [Size(width: 6144, height: 3456, label: "6K"), Size(width: 3840, height: 2160, label: "4K UHD"), Size(width: 2560, height: 1440, label: "1440p"),
          Size(width: 1920, height: 1080, label: "1080p HD"), Size(width: 1280, height: 720, label: "720p")],
         [Size(width: 1080, height: 1920, label: "Vertical 9:16"), Size(width: 1080, height: 1350, label: "Portrait 4:5"),
          Size(width: 1080, height: 1080, label: "Square 1:1")],

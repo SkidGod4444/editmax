@@ -64,10 +64,10 @@ area with `.activeAlways` reports hover.
 1352×878 MacBook screen (tested in `NotchDrawerTests`): notch x 593.5, width 165, height 28.5; collapsed panel 217 wide
 (notch + 20 each side + ears); open drawer 440×189.5. It is recomputed on `didChangeScreenParametersNotification`.
 
-States are `collapsed`, `open` and `peek`. The panel is resized to the open size before the shape grows and back to
+States are `collapsed` and `open`. The panel is resized to the open size before the shape grows and back to
 the collapsed size after it has folded (420 ms), so the collapsed panel covers only the notch and never blocks clicks
 on the menu bar. Hover opens after 140 ms; leaving folds after 0.45 s, postponed while a drag is over it or a mouse
-button is down. A new download peeks for 4 s.
+button is down. A new download never opens the drawer: `handleNewDownload` only puts it first in the row.
 
 `handleDrop` and `addDownload` only call `AssetLibrary.addFiles` (copy, source `.drawer` / `.download`) and set the
 drawer's message. They touch no document, `EditorState` or window; `testADropChangesNoProjectAndNoView` holds that.
@@ -80,26 +80,32 @@ both off under XCTest) call `NotchDrawer.applySettings()`.
 
 The drawer's frames are not registered with the UI driver (`FrameProbe` skips `NotchDrawerPanel`): its coordinates are
 screen coordinates, not the editor window's. Its controls are handler-only ids instead: `drawer.open` (also the menu
-bar item "Open the drawer"), `drawer.close`, `drawer.add.<file name>` and `drawer.peek.add`.
+bar item "Open the drawer"), `drawer.close`, and `drawer.add.<file name>`.
 
 ## Downloads (`App/DownloadsWatcher.swift`)
 
-A `DispatchSource` vnode watch (`O_EVTONLY`; write, rename, delete, extend) on `~/Downloads`. `start()` lists the
-folder once; only names that appear after that are considered. `isCandidate` skips dotfiles, `~$` files, folders
+Nothing reads `~/Downloads` until the drawer first opens by the pointer or the menu (not by a file drag): `set(.open)`
+calls `refreshDownloads()`, which starts the watcher and fills the row from `DownloadsWatcher.recent(in:)`, the
+candidates added in the last day (`addedToDirectoryDate`, else creation), newest first, skipping empty files and files
+written in the last 2 s. Each opening refreshes that list.
+
+The watch is a `DispatchSource` vnode watch (`O_EVTONLY`; write, rename, delete, extend) on `~/Downloads`. `start()`
+lists the folder once; only names that appear after that are reported, each put first in the open row. `isCandidate` skips dotfiles, `~$` files, folders
 (Safari's `.download` package), partial extensions (`crdownload`, `download`, `part`, `partial`, `tmp`, `temp`,
 `opdownload`, `filepart`, `aria2`, `!ut`, `dtapart`) and any kind `AssetLibrary.kind(of:)` does not take. A candidate
 is reported once its size is above zero and the same on two checks a second apart, so a file still being written
 waits. A browser's rename from `.crdownload` to the final name counts as a new file.
 
 Reading `~/Downloads` triggers macOS's Files and Folders prompt the first time. If the listing fails, `denied` is set
-and the drawer says how to allow it; opening the drawer tries again.
+and the drawer says how to allow it; each opening tries again.
 
 ## Tests
 
 - `LibraryHookTests`: an import registers; save records and drops; reopening keeps one entry per project; trash
   forgets; copies are made once; `list_library` / `add_to_library` with and without a project, and bad arguments.
 - `NotchDrawerTests`: geometry; a drop with real video, PNG, WAV and text files; a drop changes no project or view;
-  the Downloads filter, size settling, the real folder watch, and the peek and Downloads list.
+  the Downloads filter, size settling, the real folder watch, the last day's list, and that a download never opens the
+  drawer.
 - `LibraryPreviewTests`: PNGs of Assets, the editor Library tab, the drawer states and Settings, written to
   `$EDITMAX_PREVIEW_DIR/library` (skipped without it). Liquid Glass does not draw in an offscreen `cacheDisplay`, so
   the glass toast shows only its text there.

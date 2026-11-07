@@ -45,6 +45,22 @@ final class DownloadsWatcher {
         return AssetLibrary.kind(of: url) != nil
     }
 
+    /// Media that came into a folder within `window` (a day), newest first: finished files only (not partial, not
+    /// empty, not written to in the last 2 s, as Firefox keeps an empty file under the final name while it downloads).
+    /// The drawer lists these when it opens, so what came in while EditMax was not running or not watching shows too.
+    static func recent(in directory: URL, within window: TimeInterval = 86_400, now: Date = Date()) -> [URL] {
+        let keys: [URLResourceKey] = [.addedToDirectoryDateKey, .creationDateKey, .contentModificationDateKey, .fileSizeKey]
+        guard let urls = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles]) else { return [] }
+        var found: [(URL, Date)] = []
+        for u in urls where isCandidate(u) {
+            guard let v = try? u.resourceValues(forKeys: Set(keys)), (v.fileSize ?? 0) > 0 else { continue }
+            if let m = v.contentModificationDate, now.timeIntervalSince(m) < 2 { continue }   // still being written
+            guard let added = v.addedToDirectoryDate ?? v.creationDate, now.timeIntervalSince(added) <= window, added <= now.addingTimeInterval(60) else { continue }
+            found.append((u, added))
+        }
+        return found.sorted { $0.1 > $1.1 }.map(\.0)
+    }
+
     func start() {
         guard !isRunning else { return }
         guard let names = list() else { denied = true; DebugLog.event("downloads-watch-denied"); return }

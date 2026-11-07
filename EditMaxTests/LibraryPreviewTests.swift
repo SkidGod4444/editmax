@@ -139,8 +139,6 @@ final class LibraryPreviewTests: LibraryTestCase {
         try save(scene(), "drawer-open-dragging", size: size, dark: true)
         drawer.preview(mode: .open, geometry: g, downloads: downloads, message: "Added 2 files to Assets")
         try save(scene(), "drawer-open-added", size: size, dark: true)
-        drawer.preview(mode: .peek, geometry: g, downloads: downloads, peeking: downloads[1])
-        try save(scene(), "drawer-peek", size: size, dark: true)
         let pill = NotchGeometry.pill(on: CGRect(x: 0, y: 0, width: 1920, height: 1080))
         drawer.preview(mode: .collapsed, geometry: pill)
         try save(scene(), "drawer-pill-collapsed", size: CGSize(width: 300, height: 60), dark: true)

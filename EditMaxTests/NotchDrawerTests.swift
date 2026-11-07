@@ -102,7 +102,6 @@ final class NotchDrawerTests: LibraryTestCase {
         let open = g.frame(around: g.openBody)
         XCTAssertEqual(open.midX, 676)
         XCTAssertEqual(open.maxY, 878)
-        XCTAssertLessThan(g.peekBody.height, g.openBody.height)
     }
 
     func testTheNotchFollowsTheScreenWhereverItSits() throws {
@@ -177,12 +176,15 @@ final class NotchDrawerTests: LibraryTestCase {
 
     // MARK: Downloads
 
-    func testNewDownloadsAreListedAndPeekedAt() async throws {
+    /// A download is listed, quietly: the drawer stays folded, and nothing goes into Assets until Add.
+    func testNewDownloadsWaitInTheRowWithoutOpeningTheDrawer() async throws {
         let drawer = NotchDrawer.shared
         let files = try (0..<7).map { try LibraryFixtures.png(dir, "shot\($0).png", hue: Double($0) / 7) }
+        let before = AssetLibrary.shared.all.count
         drawer.handleNewDownload(files[0])
-        XCTAssertEqual(drawer.mode, .peek, "a new download makes the closed drawer peek")
-        XCTAssertEqual(drawer.peeking, files[0])
+        XCTAssertEqual(drawer.mode, .collapsed, "a download never opens the drawer")
+        XCTAssertEqual(drawer.downloads.first, files[0])
+        XCTAssertEqual(AssetLibrary.shared.all.count, before, "listed, not added")
         for f in files.dropFirst() { drawer.handleNewDownload(f) }
         XCTAssertEqual(drawer.downloads.first, files[6], "newest first")
         XCTAssertEqual(drawer.downloads.count, NotchDrawer.maxDownloads)
@@ -192,6 +194,22 @@ final class NotchDrawerTests: LibraryTestCase {
         XCTAssertEqual(r.added.first?.source, .download)
         XCTAssertTrue(r.added.first.map { AssetLibrary.shared.isCopy($0) } ?? false, "copied: Downloads gets cleaned")
         XCTAssertTrue(drawer.isInLibrary(files[6]), "the row now shows it is in Assets")
+    }
+
+    /// The row when the drawer opens: what came in during the last day, newest first, finished files only.
+    func testTheLastDaysDownloadsAreListed() throws {
+        let folder = dir.appendingPathComponent("Downloads", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let a = try LibraryFixtures.video(folder, "Interview.mov")
+        let b = try LibraryFixtures.png(folder, "shot.png", hue: 0.4)
+        try Data().write(to: folder.appendingPathComponent("Firefox placeholder.mp4"))   // empty: still downloading
+        try Data([1, 2, 3]).write(to: folder.appendingPathComponent("clip.mp4.crdownload"))
+        try Data([1, 2, 3]).write(to: folder.appendingPathComponent("notes.txt"))
+        let later = Date().addingTimeInterval(5)   // past the 2 s "still being written" guard
+        let names = DownloadsWatcher.recent(in: folder, now: later).map(\.lastPathComponent)
+        XCTAssertEqual(Set(names), Set([a.lastPathComponent, b.lastPathComponent]))
+        XCTAssertEqual(DownloadsWatcher.recent(in: folder, now: later.addingTimeInterval(2 * 86_400)), [], "older than a day: not listed")
+        XCTAssertFalse(DownloadsWatcher.recent(in: folder, now: Date()).contains(b), "written a moment ago: not finished yet")
     }
 
     func testDownloadsFilterSkipsPartialHiddenAndOtherFiles() throws {

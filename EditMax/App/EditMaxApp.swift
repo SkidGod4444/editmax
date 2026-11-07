@@ -322,7 +322,7 @@ final class ExportFormatBox {
     var onChange: ((ExportService.Preset) -> Void)?
 
     static let items: [PanelAccessory.Item<ExportService.Preset>?] = [
-        .init(title: "H.264, 8-bit (plays everywhere)", value: .high),
+        .init(title: "H.264, 8-bit (plays everywhere; HEVC above 4K)", value: .high),
         .init(title: "HEVC 10-bit, Main 10 (for grading)", value: .hevc10),
         nil,
         .init(title: "ProRes 422 HQ (edit and grade in Resolve, Final Cut)", value: .prores422hq),

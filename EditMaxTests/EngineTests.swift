@@ -68,6 +68,30 @@ final class EngineTests: XCTestCase {
         XCTAssertEqual(Int(n.width), 1920)
     }
 
+    /// A 6K project (6144×3456, the Project card's largest size) exports at 6K in every format the Export sheet offers
+    /// at full size (High quality as HEVC: H.264 would shrink it to 3840×2160), and a frame renders at that size.
+    func testA6KProjectExportsAt6K() async throws {
+        XCTAssertTrue(ExportService.fitsH264(width: 3840, height: 2160)); XCTAssertTrue(ExportService.fitsH264(width: 2160, height: 3840))
+        XCTAssertFalse(ExportService.fitsH264(width: 4096, height: 2160), "H.264 shrinks DCI 4K to 3840×2024")
+        XCTAssertEqual(ProjectFormat.sizeText(width: 6144, height: 3456), "6144×3456 (6K)")
+        try requireRendering()
+        doc.project.settings.width = 6144; doc.project.settings.height = 3456
+        _ = try x.insertClip(asset: "base.mp4", duration: 1)
+        let (_, size) = try await x.renderFrame(at: 0.5)
+        XCTAssertEqual(size, CGSize(width: 6144, height: 3456))
+        for preset in [ExportService.Preset.high, .hevc10, .prores422] {
+            let out = FileManager.default.temporaryDirectory.appendingPathComponent("editmax-6k-\(UUID().uuidString).\(preset.fileExtension)")
+            defer { try? FileManager.default.removeItem(at: out) }
+            let t0 = Date()
+            let r = try await x.exportVideo(to: out.path, preset: preset)
+            let v = try await AVURLAsset(url: out).loadTracks(withMediaType: .video)
+            let n = try await XCTUnwrap(v.first).load(.naturalSize)
+            print("6K-EXPORT \(preset.rawValue): \(Int(n.width))x\(Int(n.height)) \(r.bytes / 1024) KB in \(String(format: "%.1f", Date().timeIntervalSince(t0))) s")
+            XCTAssertEqual(Int(n.width), 6144, preset.rawValue)
+            XCTAssertEqual(Int(n.height), 3456, preset.rawValue)
+        }
+    }
+
     func testExportRefusesAnEmptyTimeline() async {
         let out = FileManager.default.temporaryDirectory.appendingPathComponent("editmax-empty.mp4")
         do { _ = try await x.exportVideo(to: out.path); XCTFail("expected an error") } catch {}

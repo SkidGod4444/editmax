@@ -27,6 +27,11 @@ enum ExportService {
         }
     }
 
+    /// The H.264 export keeps a frame only up to 3840×2160 (either way round): above that, 4096×2160 and 6K and 8K
+    /// included, it scales the picture down without saying so. High quality then writes HEVC, which keeps the project's
+    /// size up to 8K and plays on any recent Mac, phone, TV and on YouTube.
+    static func fitsH264(width: Int, height: Int) -> Bool { max(width, height) <= 3840 && min(width, height) <= 2160 }
+
     struct Result: Codable { var path: String; var duration: Double; var bytes: Int; var chapters: String? = nil }   // chapters: the sidecar written beside the file, when asked for
 
     static func export(_ project: Project, to url: URL, preset: Preset = .high, progress: ((Double) -> Void)? = nil, depth: Int = 0) async throws -> Result {
@@ -40,7 +45,7 @@ enum ExportService {
 
         let presetName: String = {
             switch preset {
-            case .high: return AVAssetExportPresetHighestQuality
+            case .high: return Self.fitsH264(width: project.settings.width, height: project.settings.height) ? AVAssetExportPresetHighestQuality : AVAssetExportPresetHEVCHighestQuality
             case .medium: return AVAssetExportPreset1280x720
             case .low: return AVAssetExportPreset640x480
             default: return AVAssetExportPresetHighestQuality   // masters are handled above

@@ -151,7 +151,7 @@ struct FilesSettings: View {
                 .pointer().uiFrame("settings.files.notchDrawer")
                 Toggle(isOn: $s.watchDownloads) {
                     Text("Watch Downloads")
-                    Text("New video, audio, images and fonts in Downloads show up in the drawer. macOS asks once.")
+                    Text("The drawer lists video, audio, images and fonts downloaded in the last day, to add with a click. macOS asks once, the first time you open the drawer.")
                 }
                 .pointer().disabled(!s.notchDrawer).uiFrame("settings.files.watchDownloads")
             } header: {

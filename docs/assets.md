@@ -57,10 +57,11 @@ frosted panel when Liquid Glass is off in Settings ▸ General).
 - **Drag files onto the notch** from the Finder, a browser or any app. The drawer opens: drop the files on "Drop to add
   to Assets". It says what happened ("Added 2 files to Assets") and folds back when you move away.
 - **Point at the notch** to open it without dragging.
-- **New in Downloads**: when a video, sound, picture or font finishes downloading, the drawer peeks out for a few
-  seconds with its name and an **Add** button. The open drawer lists the last few downloads; scroll sideways for more.
-  Add copies one into Assets, or drag it straight into a project or the Finder. Files still downloading, and files
-  that were in Downloads before EditMax started, are not shown.
+- **New in Downloads**: the open drawer lists the videos, sounds, pictures and fonts you downloaded in the last day,
+  newest first; scroll sideways for more. Nothing goes into Assets until you click **Add** (it copies the file in) or
+  drag one into a project or the Finder, and the drawer never opens by itself for a download: a new one is first in the
+  row the next time you point at the notch. Files still downloading are not shown. macOS asks whether EditMax may see
+  Downloads the first time you open the drawer (not at launch, and not while you drag a file onto it).
 - **Open the drawer** in the EditMax menu bar menu opens it too.
 
 Adding from the drawer only adds to Assets. It never changes the project you have open, what is selected, or which
@@ -71,8 +72,8 @@ panel you are looking at, and it never brings EditMax to the front.
 In **Settings ▸ Files**:
 
 - **Notch drawer** (on by default) shows or hides the drawer.
-- **Watch Downloads** (on by default) lists new downloads in the drawer. The first time, macOS asks whether EditMax may
-  see your Downloads folder. If you say no, the drawer says so; you can allow it later in System Settings ▸ Privacy &
+- **Watch Downloads** (on by default) lists the last day's downloads in the drawer. The first time you open the drawer,
+  macOS asks whether EditMax may see your Downloads folder. If you say no, the drawer says so; you can allow it later in System Settings ▸ Privacy &
   Security ▸ Files and Folders.
 
 ## For agents (MCP)

@@ -10,6 +10,10 @@ if (projectToken && host) {
     posthog.init(projectToken, {
       api_host: host,
       defaults: "2026-01-30",
+      // Nothing on the visitor's device (no cookie, no storage), so the site needs no consent banner: Vercel Analytics
+      // already counts visitors without cookies, and PostHog is here for downloads, copies and errors. Each page load
+      // is a new anonymous visitor to PostHog.
+      persistence: "memory",
       capture_exceptions: true,
       debug: process.env.NODE_ENV === "development",
       logs: {

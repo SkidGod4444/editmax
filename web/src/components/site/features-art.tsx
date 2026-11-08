@@ -76,3 +76,53 @@ export function HistoryArt() {
     </ul>
   );
 }
+
+/** A still with a face blur on the surfer and a lower third that wipes in, holds and wipes out. At rest (reduced
+ *  motion) the title is simply on. */
+export function EffectsArt() {
+  return (
+    <div className="w-full max-w-[340px]">
+      <div className="frame relative aspect-[16/9] rounded-xl">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/stills/s16.webp" alt="" loading="lazy" className="absolute inset-0 size-full object-cover" />
+        <div className="absolute top-[33%] left-[44%] size-[12%] -translate-x-1/2 -translate-y-1/2 rounded-full border border-dashed border-white/60 backdrop-blur-[5px]" />
+        <div className="absolute bottom-[11%] left-[6%]">
+          <div className="lt-bar origin-left rounded-[5px] bg-white px-2 py-0.5 shadow-[0_6px_18px_-6px_rgb(0_0_0/0.6)]">
+            <span className="lt-text block text-[12px] font-semibold tracking-[-0.01em] text-black">Kai Mahoe</span>
+          </div>
+          <span className="lt-text mt-1 inline-block rounded bg-black/60 px-1.5 py-0.5 text-[10px] text-white/85">Big-wave surfer</span>
+        </div>
+      </div>
+      <p className="mt-3 px-1 text-center font-mono text-[11px] text-muted-foreground">face blur · lower third · 19 blend modes</p>
+    </div>
+  );
+}
+
+const assets = [["surf-ride.mov", "in 2 projects"], ["Inter Display", "font"], ["voiceover.wav", "in 1 project"]] as const;
+
+/** The top of a screen: a file flies up into the notch, the drawer opens under it to take the file, and the file shows
+ *  at the top of Assets. At rest (reduced motion) the drawer is open and the new file is listed. */
+export function AssetsArt() {
+  return (
+    <div className="w-full max-w-[320px]">
+      <div className="relative h-[86px] overflow-hidden rounded-t-xl border-x border-t border-white/10 bg-white/[0.03]">
+        <div className="absolute top-0 left-1/2 h-[18px] w-[34%] -translate-x-1/2 rounded-b-[10px] bg-black shadow-[0_0_0_1px_rgb(255_255_255/0.08)]" />
+        <div className="notch-drawer glass-sm absolute top-[22px] left-1/2 flex w-[58%] -translate-x-1/2 origin-top items-center justify-center rounded-xl py-2 text-[11px] text-white/75">
+          Drop to add to Assets
+        </div>
+        <span className="notch-file absolute top-[30px] left-1/2 z-10 rounded-md border border-white/25 bg-[#26282c] px-2 py-1 font-mono text-[10px] text-white opacity-0 shadow-[0_8px_20px_-8px_rgb(0_0_0/0.8)]">drone.mp4</span>
+      </div>
+      <ul className="space-y-1 rounded-b-xl border border-white/10 bg-black/30 p-2">
+        <li className="notch-new flex items-center justify-between rounded-md bg-white/[0.06] px-2 py-1 font-mono text-[11px] text-white">
+          <span className="flex items-center gap-1.5"><span className="size-1.5 rounded-full bg-sky shadow-[0_0_6px_var(--sky)]" />drone.mp4</span>
+          <span className="text-white/50">just added</span>
+        </li>
+        {assets.map(([name, use]) => (
+          <li key={name} className="flex items-center justify-between px-2 py-1 font-mono text-[11px] text-white/70">
+            <span>{name}</span><span className="text-white/40">{use}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}

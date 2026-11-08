@@ -12,6 +12,7 @@ import { ScrollTimecode } from "./scroll-ruler";
 const items = [
   { href: "#features", label: "Features" },
   { href: "#agents", label: "Agents" },
+  { href: "#faq", label: "FAQ" },
   { href: docs, label: "Docs" },
   { href: "#license", label: "License" },
 ];
@@ -30,7 +31,7 @@ function useActiveSection(ids: string[]) {
   return active;
 }
 
-const sections = ["#features", "#agents", "#license"];
+const sections = ["#features", "#agents", "#faq", "#license"];
 
 /** The navbar: one floating pill of liquid glass. A lozenge slides to the link under the pointer, and rests on the
  *  section being read. */

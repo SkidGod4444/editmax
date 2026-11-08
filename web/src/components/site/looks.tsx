@@ -72,7 +72,7 @@ export function Looks() {
               One clip. <span className="font-heading tracking-[-0.02em] italic">Every</span> look.
             </h2>
             <p className="mt-5 max-w-sm text-[15px] leading-relaxed text-pretty text-white/72">
-              Six built-in looks, your own LUTs, a five-point curve and wheels. Or ask: &ldquo;make it teal and orange, keep the skin warm.&rdquo;
+              Six built-in looks, your own LUTs, wheels, curves, scopes and shot match. Or ask: &ldquo;make it teal and orange, keep the skin warm.&rdquo;
             </p>
           </Reveal>
           <div aria-hidden className="inline-flex w-fit items-center gap-2 rounded-full bg-black/35 px-3 py-1.5 font-mono text-[11px] tracking-wider text-white/75 shadow-[inset_0_0_0_1px_rgb(255_255_255/0.1)] backdrop-blur-md">

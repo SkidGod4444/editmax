@@ -12,10 +12,10 @@ export function Hero() {
       <div aria-hidden className="light-hero pointer-events-none absolute inset-x-0 top-0 -z-10 h-[1100px]" />
       <div className="mx-auto max-w-6xl px-5 text-center sm:px-6">
         <div className="rise flex justify-center">
-          <a href="#agents" className="btn btn-glass group gap-2.5 py-1 pr-3.5 pl-1 text-[13px] text-white/90">
+          <a href="#features" className="btn btn-glass group gap-2.5 py-1 pr-3.5 pl-1 text-[13px] text-white/90">
             <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-black">New</span>
-            <span className="sm:hidden">Chat with any MCP agent</span>
-            <span className="hidden sm:inline">Chat with Claude, Codex or any MCP agent</span>
+            <span className="sm:hidden">0.2.0: color, effects, 115 tools</span>
+            <span className="hidden sm:inline">0.2.0: color grading, effects, a mixer and 115 MCP tools</span>
             <span aria-hidden className="text-white/60 transition-transform duration-300 group-hover:translate-x-0.5">→</span>
           </a>
         </div>

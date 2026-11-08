@@ -1,5 +1,6 @@
 import { Agents } from "@/components/site/agents";
 import { Closing } from "@/components/site/closing";
+import { Faq } from "@/components/site/faq";
 import { Features } from "@/components/site/features";
 import { Hero } from "@/components/site/hero";
 import { Looks } from "@/components/site/lazy";
@@ -16,6 +17,7 @@ export default function Home() {
           <Looks />
           <Features />
           <Agents />
+          <Faq />
         </main>
         <Closing />
       </div>

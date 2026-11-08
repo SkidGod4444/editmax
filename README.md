@@ -50,9 +50,10 @@ no backend, nothing leaves your Mac unless you ask a cloud model.
 - **Private by default.** The MCP server listens on loopback only and requires a bearer token. Transcription runs
   on-device. Prompts and keys never reach the logs.
 
-## New on main, in the next release
+## New in 0.2.0
 
-The current download (0.1.1) does not have these yet. They are on `main` and ship with the next release:
+On 0.1.1? It has no updater, so download 0.2.0 once from the [latest release](https://github.com/SkidGod4444/editmax/releases/latest);
+from then on EditMax updates itself.
 
 - **Color:** lift/gamma/gain/offset wheels, RGB and hue-vs-saturation curves, grade layers with shape, color and AI
   subject masks, shot match, RGB parade and vectorscope, grain, glow, vignette, sharpen and noise reduction.
@@ -72,6 +73,12 @@ The current download (0.1.1) does not have these yet. They are on `main` and shi
   show up there too, ready to add. [docs/assets.md](docs/assets.md)
 - **Fonts:** all of Google Fonts, sorted by trending or popular, plus your own .ttf and .otf files. Pick a font and
   weight for any title; a project that uses a Google font fetches it on another Mac. [docs/fonts.md](docs/fonts.md)
+- **Welcome demo:** the first launch shows EditMax being used, read aloud: importing, cutting, playing, a chat with
+  the agent and an export, in about half a minute. Esc or Skip ends it.
+- **Long projects:** thousands of clips stay smooth, hour-long files get thumbnails for what is on screen, transcription
+  and loudness show progress, and export checks the disk before and while it writes.
+- **Updates and crash reports:** EditMax updates itself from now on (see [Install](#install)), and sends a report when
+  it crashes, after you agree on first launch (see [Privacy](#privacy)).
 - 115 MCP tools (63 in 0.1.1).
 
 ## Highlights
@@ -108,7 +115,7 @@ background, then asks: **Install Now** (EditMax saves your projects and restarts
 again every 2 hours while you use EditMax, a Mac notification every 6 hours while it runs in the background; it installs
 the next time you quit either way, and the next open says it is installed). Settings ▸ General can make it ask before downloading or check only when you
 choose EditMax ▸ Check for Updates…. Updates are signed: EditMax installs only a release signed with the project's
-update key and Developer ID. 0.1.1 and older have no updater; download the next version once by hand. The popup
+update key and Developer ID. 0.1.1 and older have no updater; download 0.2.0 once by hand. The popup
 never appears during an export or an agent reply, and never takes the keyboard.
 
 **Quitting during an export** asks first: **Quit When Done** (Return; EditMax quits by itself once the export ends,

@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { LoopVideo } from "./loop-video";
-import { ExportArt, HistoryArt } from "./features-art";
+import { AssetsArt, EffectsArt, ExportArt, HistoryArt } from "./features-art";
 import { Reveal, RevealGroup, RevealItem } from "./motion";
 import { OnScreen } from "./on-screen";
 import { Stats } from "./stats";
@@ -137,20 +137,26 @@ export function Features() {
               </p>
             </div>
           </RevealItem>
-          <Card className="md:col-span-2" title="A real timeline" body="Video and audio tracks, ripple edits across every track, snapping, markers, multicam synced by audio, nested sequences and proxies.">
+          <Card className="md:col-span-2" title="A real timeline" body="Video and audio tracks, ripple edits across every track, roll, slip and slide trims, J and L cuts, insert and overwrite from a source viewer, scene detection, multicam synced by audio, nested sequences and proxies.">
             <TimelineArt />
           </Card>
-          <Card className="md:col-span-3" title="Keyframes and speed ramps" body="Keyframes on every transform, color, opacity, volume and speed value, freeze frames, auto-reframe for vertical cuts and stabilization.">
+          <Card className="md:col-span-3" title="Keyframes and speed ramps" body="Keyframes on every transform, color, opacity, volume and speed value, freeze frames, smooth slow motion, auto-reframe for vertical cuts and stabilization.">
             <MotionArt />
           </Card>
-          <Card className="md:col-span-3" title="Sound that sits right" body="Three-band EQ, high-pass, noise gate, voice isolation, and music that ducks under speech by itself.">
+          <Card className="md:col-span-3" title="Sound that sits right" body="EQ, compressor, limiter, de-esser, hum removal, voice isolation, a mixer with buses, one-click loudness for YouTube, and music that ducks under speech by itself.">
             <SoundArt />
           </Card>
-          <Card className="md:col-span-3" title="Deliver for every format" body="H.264 MP4, ProRes and 10-bit HEVC masters, FCPXML and EDL to hand the cut to Resolve or Final Cut, templates for every social format, YouTube chapters from markers.">
+          <Card className="md:col-span-3" title="Deliver for every format" body="H.264 MP4, ProRes and 10-bit HEVC masters in SDR or HDR, FCPXML and EDL to hand the cut to Resolve or Final Cut, templates for every social format, YouTube chapters from markers.">
             <ExportArt />
           </Card>
           <Card className="md:col-span-3" title="Every agent edit can be undone" body="Each change lands in History with who made it. Point at an older step to see what going back to it would undo.">
             <HistoryArt />
+          </Card>
+          <Card className="md:col-span-3" title="Titles, keys and effects" body="Animated titles and lower thirds, a green-screen key, 19 blend modes, face blur that follows faces, and transitions from dissolves to iris wipes.">
+            <EffectsArt />
+          </Card>
+          <Card className="md:col-span-3" title="Assets, fonts and the notch" body="Drag a file to the notch at the top of your screen and it lands in Assets, ready for any project. All of Google Fonts for titles, and deleted files wait in the Archive.">
+            <AssetsArt />
           </Card>
         </RevealGroup>
         </OnScreen>

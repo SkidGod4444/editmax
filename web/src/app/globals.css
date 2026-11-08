@@ -293,6 +293,24 @@
 .strike { background: linear-gradient(currentColor, currentColor) left 55% / 0% 1px no-repeat; animation: strike 4s ease-in-out infinite; }
 @keyframes drift { to { transform: translateX(-50%); } }
 .drift { animation: drift 9s linear infinite; }
+/* Lower third: the bar wipes in from the left, the words follow, both hold, then leave. */
+@keyframes lt-bar { 0%, 10% { transform: scaleX(0); } 20%, 78% { transform: scaleX(1); } 88%, 100% { transform: scaleX(0); } }
+.lt-bar { animation: lt-bar 6s cubic-bezier(0.2, 0.7, 0.2, 1) infinite; }
+@keyframes lt-text { 0%, 18% { opacity: 0; transform: translateY(4px); } 26%, 74% { opacity: 1; transform: none; } 82%, 100% { opacity: 0; } }
+.lt-text { animation: lt-text 6s ease-out infinite; }
+/* The notch: a file rises into it, the drawer opens to take it, and it is listed first in Assets. */
+@keyframes notch-file { 0% { opacity: 0; transform: translate(70px, 60px) scale(1); } 10% { opacity: 1; } 38% { opacity: 1; transform: translate(-50%, -6px) scale(1); } 48%, 100% { opacity: 0; transform: translate(-50%, -14px) scale(0.6); } }
+.notch-file { animation: notch-file 6s cubic-bezier(0.3, 0.7, 0.2, 1) infinite; }
+/* Centred by Tailwind's own translate property, so the keyframes only scale. */
+@keyframes notch-drawer { 0%, 18% { opacity: 0; transform: scaleY(0.3); } 30%, 56% { opacity: 1; transform: scaleY(1); } 68%, 100% { opacity: 0; transform: scaleY(0.3); } }
+.notch-drawer { animation: notch-drawer 6s cubic-bezier(0.2, 0.7, 0.2, 1) infinite; }
+@keyframes notch-new { 0%, 50% { opacity: 0; transform: translateY(-4px); } 58%, 92% { opacity: 1; transform: none; } 100% { opacity: 0; } }
+.notch-new { animation: notch-new 6s ease-out infinite; }
+
+/* FAQ rows open by easing their height where the browser can animate to auto (Chrome); elsewhere they open at once. */
+.faq { interpolate-size: allow-keywords; }
+.faq::details-content { block-size: 0; overflow: hidden; transition: block-size 0.35s cubic-bezier(0.2, 0.7, 0.2, 1), content-visibility 0.35s allow-discrete; }
+.faq[open]::details-content { block-size: auto; }
 
 
 /* The hero rises in by CSS from the first paint (no JavaScript to wait for); --d staggers it. */

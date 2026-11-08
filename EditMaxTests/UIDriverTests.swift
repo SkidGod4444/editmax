@@ -263,9 +263,18 @@ final class UIDriverTests: XCTestCase {
         let built = Built()
         let w = host(Lazy(built: built).frame(width: 120, height: 24).uiFrame("t.lazy"), size: CGSize(width: 200, height: 60), ordered: true)
         pump(w)
+        var stacks: [String] = []
+        let token = NotificationCenter.default.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: nil) { _ in
+            stacks.append(Thread.callStackSymbols.dropFirst(7).prefix(22).map { l in
+                let parts = l.split(separator: " ", omittingEmptySubsequences: true).dropFirst(3)
+                return parts.prefix { $0 != "+" }.joined(separator: " ")
+            }.joined(separator: "\n"))
+        }
+        defer { NotificationCenter.default.removeObserver(token) }
         let said = try await UIDriver.select(try UIDriver.target(.string("t.lazy"), dx: 0, dy: 0, in: w), option: "Lower third")
         pump(w)
         XCTAssertEqual(built.picked, ["Lower third"], said)
+        XCTAssertEqual(stacks, [], "no menu was opened: \(said)")
     }
 
     func testSelectSetsPickersAndMenusWithoutOpeningAMenu() async throws {

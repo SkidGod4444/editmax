@@ -882,6 +882,11 @@ enum MenuCapture {
         "_popUpMenuAtLocation:view:selectedItemIndexProvider:minimumWidth:font:flags:options:",
         "_popUpMenuWithContext:forView:", "_popUpMenuWithEvent:forView:"]
     private static let classSelectors = ["popUpContextMenu:withEvent:forView:", "popUpContextMenu:withEvent:forView:withFont:"]
+    /// An AppKit pop-up button (macOS 26 draws a SwiftUI menu button as one, `SwiftUIPopupButton`) pops its menu up from
+    /// `NSPopUpButtonCell.trackMouse` through the menu's implementation object, not NSMenu. The menu is the first argument.
+    private static let implClass = "NSCocoaMenuImpl"
+    private static let implSelectors = ["popUpMenu:atLocation:width:forView:withSelectedItem:withFont:withFlags:withOptions:",
+                                        "popUpMenu:atLocation:width:view:selectedItemIndexProvider:font:positioningRect:flags:options:"]
 
     /// Runs `body` (a press) with menus caught; returns the menu it tried to open, if any.
     static func catching(_ body: () async throws -> Void) async throws -> NSMenu? {
@@ -907,6 +912,11 @@ enum MenuCapture {
         }
         replace(NSMenu.self, instanceSelectors, record)
         if let meta = object_getClass(NSMenu.self) { replace(meta, classSelectors, recordArgument) }
+        let recordFirst: @convention(block) (AnyObject, AnyObject?) -> Bool = { _, menu in
+            MainActor.assumeIsolated { if caught == nil { caught = menu as? NSMenu } }
+            return false   // nothing chosen (nil, if it returns an object)
+        }
+        if let impl = NSClassFromString(implClass) { replace(impl, implSelectors, recordFirst) }
         let token = NotificationCenter.default.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: nil) { n in
             guard let menu = n.object as? NSMenu else { return }
             MainActor.assumeIsolated { if caught == nil { caught = menu }; opened = true }

@@ -72,7 +72,7 @@ final class TelemetryTests: XCTestCase {
         XCTAssertFalse(TelemetryPrompt.shared.isShowing)
     }
 
-    func testAgreeOnTheCardClosesItAndRemembers() throws {
+    func testTheCardHoldsTheAppUntilAgree() throws {
         let suite = "telemetry-card-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
@@ -82,10 +82,21 @@ final class TelemetryTests: XCTestCase {
         let p = TelemetryPrompt.shared
         p.offscreen = true
         defer { p.offscreen = false }
-        p.show()
-        XCTAssertTrue(p.isShowing)
-        XCTAssertFalse(p.window?.isKeyWindow ?? true, "it never takes the keyboard")
-        p.agree()
+        // A session that Agree failed to end fails the test here instead of hanging the run.
+        let watchdog = Timer(timeInterval: 10, repeats: false) { _ in MainActor.assumeIsolated { NSApp.abortModal() } }
+        RunLoop.main.add(watchdog, forMode: .common)
+        defer { watchdog.invalidate() }
+        var during: (showing: Bool, modal: Bool, key: Bool)?
+        DispatchQueue.main.async {   // runs inside the card's session, as the in-process ui tap does
+            during = (p.isShowing, NSApp.modalWindow != nil && NSApp.modalWindow === p.window, p.window?.isKeyWindow ?? false)
+            p.agree()
+        }
+        p.show()   // returns once Agree ends the session
+        let d = try XCTUnwrap(during, "the card's session never ran")
+        XCTAssertTrue(d.showing)
+        XCTAssertTrue(d.modal, "the rest of EditMax waits for Agree")
+        XCTAssertFalse(d.key, "it never takes the keyboard")
+        XCTAssertNil(NSApp.modalWindow)
         XCTAssertFalse(p.isShowing)
         XCTAssertTrue(Telemetry.shared.agreed)
     }

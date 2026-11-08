@@ -3,8 +3,9 @@ import SwiftUI
 
 /// The first-launch card: crash reports and anonymous feature counts are part of using EditMax, and this says so once,
 /// with Agree. Nothing is sent before Agree (`Telemetry`); until then the card comes back at each launch, after the
-/// splash and after the "is installed" card. Like the update card it floats over the editor without taking the
-/// keyboard, and it waits while EditMax is in the background.
+/// splash and after the "is installed" card. It holds the whole app until Agree: an app-modal session, as an alert's,
+/// so clicks on every other window beep and the menus are off. It never takes the keyboard, and it waits while EditMax
+/// is in the background (a modal card nobody can see would hold the app for nothing).
 @MainActor
 final class TelemetryPrompt {
     static let shared = TelemetryPrompt()
@@ -16,6 +17,7 @@ final class TelemetryPrompt {
     var window: NSPanel? { panel }
     var isShowing: Bool { panel?.isVisible == true }
     private var panel: UpdatePromptPanel?
+    private var waitingForFront: NSObjectProtocol?
 
     func askIfNeeded() {
         guard Telemetry.isAvailable(), !Telemetry.shared.agreed, !isShowing else { return }
@@ -24,23 +26,47 @@ final class TelemetryPrompt {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.askIfNeeded() }
             return
         }
-        show()
+        guard NSApp.isActive else { waitForFront(); return }
+        DispatchQueue.main.async { [weak self] in self?.show() }   // after the caller (the splash closing) has finished
     }
 
+    /// Shows the card and returns only once Agree is pressed.
     func show() {
+        guard !isShowing else { return }
         let host = NSHostingView(rootView: TelemetryPromptView(agree: { [weak self] in self?.agree() }))
         host.frame = CGRect(origin: .zero, size: host.fittingSize)
         let panel = self.panel ?? UpdatePromptPanel()
         panel.contentView = host
         panel.setFrame(frame(for: host.frame.size), display: true)
         self.panel = panel
-        panel.orderFront(nil)   // not key: whatever the user is typing in keeps the keyboard
+        panel.orderFront(nil)   // never key (a borderless panel cannot be): nothing typed lands on Agree
         DebugLog.event("telemetry-card-shown", [:])
+        NSApp.runModal(for: panel)
     }
 
     func agree() {
+        if let panel, NSApp.modalWindow === panel {
+            NSApp.stopModal()
+            // stopModal ends the session at its next event; an Agree from outside one (the in-process ui tap) brings it.
+            if let wake = NSEvent.otherEvent(with: .applicationDefined, location: .zero, modifierFlags: [], timestamp: 0,
+                                             windowNumber: 0, context: nil, subtype: 0, data1: 0, data2: 0) {
+                NSApp.postEvent(wake, atStart: false)
+            }
+        }
         panel?.orderOut(nil)
         Telemetry.shared.agree()
+    }
+
+    private func waitForFront() {
+        guard waitingForFront == nil else { return }
+        waitingForFront = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                if let o = self.waitingForFront { NotificationCenter.default.removeObserver(o) }
+                self.waitingForFront = nil
+                self.askIfNeeded()
+            }
+        }
     }
 
     private func frame(for size: CGSize) -> CGRect {
@@ -78,7 +104,7 @@ struct TelemetryPromptView: View {
                     .pointer().help(TelemetryPrompt.detailsURL.absoluteString).uiFrame("telemetry.details")
                 Spacer(minLength: 12)
                 GlassGroup(spacing: 10) {
-                    // No Return shortcut, as on the update card: a Return typed into a title must not answer it.
+                    // No Return shortcut: Agree is only ever a click on it.
                     Button("Agree", action: agree)
                         .glassButtonStyle(prominent: true).controlSize(.large)
                         .pointer().uiFrame("telemetry.agree").uiTap("telemetry.agree", agree)

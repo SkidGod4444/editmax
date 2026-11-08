@@ -421,7 +421,8 @@ down per release.
 
 `Support/Telemetry.swift` runs PostHog's SDK (posthog-ios, US cloud, the public project token in the source). It starts
 only once the person has pressed Agree on `TelemetryPrompt` (the first-launch card, after the splash and any update card;
-it returns each launch until agreed; `Telemetry.terms` raised shows it again) and only in a release build: never in the
+it returns each launch until agreed and holds the app in an app-modal session until then, so other windows and the
+menus, Quit too, do nothing; it waits while EditMax is in the background; `Telemetry.terms` raised shows it again) and only in a release build: never in the
 unit tests, on CI (`CI`), or in a Debug build unless `EDITMAX_POSTHOG=1` (`EDITMAX_POSTHOG_DEBUG=1` adds the SDK log).
 The SDK's crash handler (its vendored PLCrashReporter; off while a debugger is attached) saves a crash and sends it at
 the next launch. Configured off: lifecycle and screen events, swizzling (MenuCapture already swizzles NSMenu), GeoIP,

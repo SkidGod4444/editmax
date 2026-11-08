@@ -54,7 +54,12 @@ final class Telemetry: ObservableObject {
         config.enableSwizzling = false   // EditMax swizzles NSMenu itself (MenuCapture); no second swizzler on AppKit
         config.disableGeoIp = true
         config.personProfiles = .never   // anonymous events only; nothing is ever identified
-        config.setBeforeSend { event in event.properties = Sanitizer.clean(event.properties); return event }
+        let debugBuild = Self.isDebugBuild
+        config.setBeforeSend { event in
+            event.properties = Sanitizer.clean(event.properties)
+            if debugBuild { event.properties["debug_build"] = true }   // the project's test-account filter leaves these out of charts
+            return event
+        }
         config.debug = env["EDITMAX_POSTHOG_DEBUG"] == "1"
         PostHogSDK.shared.setup(config)
         PostHogSDK.shared.optIn()

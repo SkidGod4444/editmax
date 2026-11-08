@@ -390,8 +390,9 @@ What is sent:
   message sent. Each carries only fixed choices and rough sizes: the export preset, the video length in bands (under a
   minute, 1–10 min, 10–60 min, 1–3 h, longer), the clip count in bands, which assistant backend.
 - **About the Mac:** EditMax's version, the macOS version, the Mac model (like "MacBook Pro", never its name), the
-  language and time zone, the screen size, whether it is on Wi-Fi. No location: PostHog's lookup of a place from the
-  IP address is off.
+  language and time zone, the screen size, whether it is on Wi-Fi.
+- **The IP address** the reports come from, which PostHog keeps with each one. EditMax turns off PostHog's lookup of a
+  place from it, so no city or country is stored.
 
 Never sent: your footage, sound or pictures, file and folder names, project names, transcripts, captions, titles, chat
 messages, API keys, or anything you type. Your user name is removed from file paths in crash reports. There is no

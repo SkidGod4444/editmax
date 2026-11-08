@@ -430,8 +430,15 @@ person profiles. Events are the six in `Telemetry.Event` with bucketed values (`
 smooth slow motion, voice isolation and agent-runtime failures; a full disk, an offline drive, Cancel and other
 `EditError`s count as `export_failed` with a reason and no exception. Every event passes `Telemetry.Sanitizer` in the
 SDK's `beforeSend`: our string properties with a `/` or over 64 characters are dropped, and `/Users/<name>` becomes
-`/Users/~` at any depth (crash image paths). `scripts/package.sh` keeps each release's dSYM in `build/dsyms` and uploads
-it with the SDK's `upload-symbols.sh` when `POSTHOG_CLI_API_KEY` is in `.release.env`.
+`/Users/~` at any depth (crash image paths). A Debug build run with `EDITMAX_POSTHOG=1` also tags each event
+`debug_build`, so charts and alerts can leave it out. PostHog stores the sending IP address with each event (the
+project's "anonymize IPs" is off; the README says so). `scripts/package.sh` keeps each release's dSYM in `build/dsyms`
+and uploads it with the SDK's `upload-symbols.sh` when `POSTHOG_CLI_API_KEY` is in `.release.env`.
+
+A new error issue, or one marked resolved coming back, is emailed by two PostHog error-tracking alerts ("Issue created ·
+email via AgentMail (auto)" and "Issue reopened · …"): each POSTs to AgentMail's send endpoint from
+no-reply@openhorizon.so, with the AgentMail key in the alert's Secret headers. A `debug_build` error still sends, with
+"Debug build:" in the subject: an issue is created once per kind of error, so skipping it would hide a later real one.
 
 ## Logs and diagnostics
 

@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// The first-launch card: crash reports and anonymous feature counts are part of using EditMax, and this says so once,
+/// The first-launch card: crash reports and feature counts are part of using EditMax, and this says so once,
 /// with Agree. Nothing is sent before Agree (`Telemetry`); until then the card comes back at each launch, after the
 /// splash and after the "is installed" card. It holds the whole app until Agree: an app-modal session, as an alert's,
 /// so clicks on every other window beep and the menus are off. It never takes the keyboard, and it waits while EditMax
@@ -94,7 +94,7 @@ struct TelemetryPromptView: View {
                     .frame(width: 64, height: 64)
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Crash reports and usage").font(.title3.weight(.semibold))
-                    Text("EditMax sends a report when it crashes, and anonymous counts of the features you use, so problems get found and fixed. It never sends your footage, your words, file names or anything you type.")
+                    Text("EditMax sends a report when it crashes, and counts of the features you use, so problems get found and fixed. It never sends your footage, your words, file names or anything you type.")
                         .font(.callout).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }

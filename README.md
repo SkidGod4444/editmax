@@ -382,7 +382,7 @@ a page on how their tools work and where their limits are.
 
 ## Privacy
 
-EditMax sends crash reports and anonymous feature counts to [PostHog](https://posthog.com) (US cloud), starting once
+EditMax sends crash reports and feature counts to [PostHog](https://posthog.com) (US cloud), starting once
 you press **Agree** on the card it shows at first launch. They are what lets problems get found and fixed, so they are
 part of using EditMax; Settings ▸ General ▸ Privacy shows the state.
 

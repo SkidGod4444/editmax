@@ -12,7 +12,7 @@ packages:
   Sparkle:
     url: https://github.com/sparkle-project/Sparkle
     exactVersion: 2.10.1
-  # Crash reports and anonymous feature counts (Support/Telemetry.swift), sent once the person has agreed.
+  # Crash reports and feature counts (Support/Telemetry.swift), sent once the person has agreed.
   PostHog:
     url: https://github.com/PostHog/posthog-ios
     exactVersion: 3.93.6

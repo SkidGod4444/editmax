@@ -91,7 +91,7 @@ struct GeneralSettings: View {
                 Text("Privacy")
             } footer: {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("A report when EditMax crashes, and anonymous counts of the features you use (exports, transcripts, the assistant). Never your footage, your words, file names or anything you type.")
+                    Text("A report when EditMax crashes, and counts of the features you use (exports, transcripts, the assistant). Never your footage, your words, file names or anything you type.")
                     Button("What is sent") { NSWorkspace.shared.open(TelemetryPrompt.detailsURL) }
                         .buttonStyle(.link).pointer().help(TelemetryPrompt.detailsURL.absoluteString).uiFrame("settings.general.telemetryDetails")
                 }

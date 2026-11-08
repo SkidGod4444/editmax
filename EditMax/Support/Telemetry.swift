@@ -1,7 +1,7 @@
 import Foundation
 import PostHog
 
-/// Crash reports and anonymous feature counts, sent to PostHog (US cloud) once the person has agreed on the
+/// Crash reports and feature counts, sent to PostHog (US cloud) once the person has agreed on the
 /// first-launch card (`TelemetryPrompt`). Nothing is sent before that; the card comes back each launch until it is
 /// agreed to.
 ///
@@ -53,7 +53,7 @@ final class Telemetry: ObservableObject {
         config.captureScreenViews = false
         config.enableSwizzling = false   // EditMax swizzles NSMenu itself (MenuCapture); no second swizzler on AppKit
         config.disableGeoIp = true
-        config.personProfiles = .never   // anonymous events only; nothing is ever identified
+        config.personProfiles = .never   // no person profiles: nothing is ever identified
         let debugBuild = Self.isDebugBuild
         config.setBeforeSend { event in
             event.properties = Sanitizer.clean(event.properties)

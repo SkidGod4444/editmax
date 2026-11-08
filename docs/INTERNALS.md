@@ -87,11 +87,13 @@ layers with their masks → finishing (noise reduction, sharpen, glow, vignette,
 transitions → blend mode onto the tracks below (`ColorPipeline.apply`, `Effects.composite`). Sources are decoded to
 16-bit half floats (`kCVPixelFormatType_64RGBAHalf`), so 10-bit footage keeps its precision through the LUT. SDR
 projects have no color management: an ungraded frame exports with the source's pixel values. HDR projects (HLG or
-PQ, `set_project_color`) swap in HDR compositors (`ColorManagement.configure`); see [effects.md](effects.md#hdr).
+PQ, `set_project_color`) swap in HDR compositors (`ColorManagement.configure`); see [internals-effects.md](internals-effects.md#hdr).
 
-Every feature added after the first release has its own page with the user view, the engine's design and its limits:
-[color.md](color.md), [audio.md](audio.md), [editing.md](editing.md), [effects.md](effects.md). Read the page before
-changing the feature. The rule they all keep: every new field decodes as "off", so a project saved before a feature
+Every feature added after the first release has a user page ([color.md](color.md), [audio.md](audio.md),
+[editing.md](editing.md), [effects.md](effects.md)) and an internals page with the engine's design, measurements and
+limits ([internals-color.md](internals-color.md), [internals-audio.md](internals-audio.md),
+[internals-editing.md](internals-editing.md), [internals-effects.md](internals-effects.md)). Read the internals page
+before changing the feature. The rule they all keep: every new field decodes as "off", so a project saved before a feature
 renders exactly as before (checked by rendering one project on the old and new code and comparing every pixel).
 
 Keyframes: every transform, color, opacity, volume and speed value can be animated (linear, smooth, hold). Speed

@@ -1,118 +1,106 @@
-# Color: wheels, curves, scopes, shot match, finishing, grade layers, masks
+# Color
 
-How EditMax's color tools work, for users and for whoever changes the code: each section has a user paragraph and an
-internals paragraph. The [README](../README.md) has the overview; [INTERNALS](INTERNALS.md) the engine's rules. Every
-setting here is optional and decodes as "off", so projects saved before these tools open and render exactly as before.
+EditMax's color tools fix footage and give it a look. Select a clip: the inspector shows the Color, Color wheels,
+Curves, Look, Shot match, Grade layers and Finishing cards.
 
-Order of everything color does to a clip, after its transform (`ColorPipeline.apply`, Engine/GradeStack.swift):
-input LUT → exposure → contrast/saturation → temperature/tint → shadows/midtones/highlights → vibrance → **wheels →
-curves** → look → **grade layers** (first to last) → **finishing** (noise reduction → sharpen → glow → vignette →
-grain) → opacity, fades, transitions. The before/after view skips all of it (it keeps the input LUT only).
+## Work in this order
 
-## Color wheels
+1. **Input LUT** for log footage.
+2. **Color card**: exposure, contrast, saturation, temperature, tint, shadows, midtones, highlights, vibrance.
+3. **Color wheels** and **Curves** for finer control.
+4. **Look**, blended by its Mix slider.
+5. **Grade layers** for parts of the picture, then **Finishing**.
 
-**User.** The inspector's Color wheels card has lift (shadows), gamma (midtones), gain (highlights) and offset
-(everything). Drag a wheel's dot toward a colour to tint that range; the slider under it is the wheel's master
-(darker/brighter). Double-click a wheel to reset it. Agents use `set_color_wheels`, for example "lift the shadows
-−0.05 toward blue" is `wheel lift, master -0.05, toward blue, amount 0.05`.
+EditMax always applies them in this order, whichever you set first. Sources are decoded in 16-bit, so 10-bit footage
+keeps its precision through a LUT.
 
-**Internals.** `ClipColor.wheels: ColorWheels?` (Model/ColorGrading.swift), nil when untouched. Per channel, with
-effective value = master + channel balance: `x += offset; x += lift·(1 − x); x = x^(2^(−2·gamma)) (x > 0);
-x *= 1 + gain`. `toward` builds a luma-neutral balance pointing at the hue (largest component = amount). The wheel
-pads place colours at their Rec.709 vectorscope angle, so a dot dragged toward the scope's B target pushes blue.
+## Fix log footage with an input LUT
 
-## Curves
+Log footage (DJI D-Log, S-Log, V-Log) looks flat and grey: the camera records it that way to keep more detail. A LUT
+(look-up table, a `.cube` file) turns every color into another; the camera maker's conversion LUT turns log into a
+normal Rec.709 picture.
 
-**User.** The Curves card has Master, R, G, B and Hue sat. Click to add a point, drag to move it, double-click to
-remove it. Master moves R, G and B together; Hue sat changes the saturation of one hue (anchor its neighbours at 1).
-The old shadows/midtones/highlights sliders still work and apply before the curves. Tool: `set_color_curve`.
+1. In the Look card, open **Input LUT** ▸ **Load conversion .cube (D-Log → Rec.709…)…**.
+2. Pick the camera's `.cube` file.
 
-**Internals.** `ClipColor.curves: ColorCurves?`. Curves are monotone cubic (Fritsch–Carlson) splines with (0,0) and
-(1,1) implied, extended linearly past the ends. Wheels and the master/R/G/B curves are baked together into one 1D
-table per channel for `CIColorCurves`, 4096 entries over **−0.5…2.5**, so half-float sources above 1 (exposure
-pushes, superwhites) and below 0 go through the curve instead of clipping (verified: gain −0.2 maps 1.5 to 1.2).
-Hue vs saturation needs all three channels: a 64³ `CIColorCube` fed with the picture scaled by 0.5 and scaled back by
-2, so the cube's 0…1 domain covers 0…2 (values outside clamp, only when a hue-sat curve is set). Tables and cubes are
-cached by parameter hash (`BoundedCache`, 64 tables / 6 cubes). The hook is one line in `FrameRenderer.graded`.
-Keyframing of wheels and curves is not implemented.
+It runs first, at full strength, so the other controls behave as expected.
 
-## Scopes: RGB parade and vectorscope
+## Add a look
 
-**User.** The scopes panel under the preview now shows the luma waveform, the RGB parade (each channel's levels
-across the frame: equal traces on a neutral subject mean no cast), the vectorscope (distance from the centre is
-saturation, the angle is hue; boxes mark 75% R, Mg, B, Cy, G, Yl; the faint orange line is skin tone) and the RGB
-histogram. Agents get the numbers from `frame_stats` (`parade`, `vectorscope`) or an image plus numbers from
-`capture_scopes`.
+The Look card's **Look** menu has six built-in looks (Teal & Orange, Black & White, Film Fade, Cool Blue, Warm Vintage,
+High Contrast) and **Load .cube file…** for a LUT from any grading app. **Mix** sets how much shows.
 
-**Internals.** Engine/ColorScopes.swift samples the same 8-bit frame as the waveform (`ScopeSampler`), builds a
-96×96 per-channel parade and a 128×128 vectorscope (each spot in the average colour of its pixels, log brightness),
-and computes per-channel 1st/50th/99th percentiles and means, mean saturation (max − min), the cast (mean Cb/Cr
-direction converted to an HSV hue) and the saturation-weighted share of 12 hue sectors. `capture_scopes` draws
-`ScopesView` with `ImageRenderer`.
+## Judge the picture: scopes and before/after
 
-## Shot match
+The scopes button on the preview shows four scopes:
 
-**User.** In the Shot match card, choose another clip and press Match: this clip is graded to look like it (black
-level, middle, white level per channel and saturation). The correction goes on a "Shot match" grade layer you can
-mix down, edit or remove; matching again replaces it; one undo removes it. Tool: `match_color`, which returns the
-colour distance before and after (under about 5 is close).
+- **Waveform**: brightness across the frame, black at the bottom, white at the top.
+- **Parade**: the same for red, green and blue. Equal traces on a neutral subject mean no color cast.
+- **Vectorscope**: distance from the centre is saturation, the angle is hue. Boxes mark the six main colors at 75%;
+  the faint orange line is where skin tones sit.
+- **Histogram**: how many pixels sit at each level.
 
-**Internals.** Engine/ShotMatch.swift and `ToolExecutor.matchColor`. Both clips are rendered on their own
-(`soloProject`: the clip alone at time 0 without fades, transitions, opacity or titles; `pictureOnly` resets
-position/size and gives the canvas the picture's shape so letterbox bars are not measured). The target is measured
-on exactly what the layer receives (grade + earlier layers, no finishing). Per channel, lift and gain are solved in
-closed form so the 2nd and 98th percentiles land on the reference's, with gamma found by bisection to match the
-median; a saturation factor (applied before the wheels, as in the grade) is iterated to match mean saturation.
-Distance = RMS of 7 percentiles × 3 channels plus the saturation difference, in 0–255 levels. Measured on the parrot
-test frame: 27.9 → 0.9. If the check render fails, the result says the "after" numbers are the solver's prediction.
+**View ▸ Before / After** (⌥⌘B), or the button next to the scopes, shows the clip without its grade. Its arrow picks
+**Split at a divider** (drag the divider) or **Whole picture before**. "Before" keeps the input LUT, so log footage
+compares against its converted picture. It needs a graded clip and affects only the preview.
 
-## Finishing
+## Balance shadows, midtones and highlights with the wheels
 
-**User.** The Finishing card has Noise, Sharpen, Glow, Vignette (left lightens the edges) and Grain (with a size).
-They apply after the grade and the grade layers. Tool: `set_clip_finish` (with radius, threshold, size and
-softness values too). Sizes are pixels of a 1080-line frame, so a look holds at any project size.
+**Lift** moves the shadows, **gamma** the midtones, **gain** the highlights and **offset** everything. Drag a wheel's
+dot toward a color to tint that range; the slider under it makes the range darker or brighter. Double-click a wheel to
+reset it.
 
-**Internals.** Engine/Finishing.swift, built-in filters only, all kept inside the clip's picture and alpha. Noise
-reduction = `CIMedianFilter` then `CINoiseReduction`, dissolved by the amount. Sharpen = `CISharpenLuminance`.
-Glow = threshold (`CIColorMatrix` + clamp) → Gaussian blur → scaled → `CIScreenBlendMode`. Vignette = an elliptical
-`CIRadialGradient` fitted to the picture used as a `CIBlendWithMask` mask toward black (or white). Grain =
-`CIRandomGenerator` seeded by the timeline time in ms (the same frame always gets the same grain), two channels
-averaged, added with `CILinearLightBlendMode` around 0.5 (zero mean), weighted by 0.25 + 3y(1 − y) of brightness;
-never finer than one pixel so a small canvas does not average it away.
+## Shape contrast and color with curves
 
-## Grade layers
+Pick **Master**, **R**, **G**, **B** or **Hue sat**. Click to add a point, drag to move it, double-click to remove it.
+Master moves red, green and blue together. Hue sat changes the saturation of one hue: move its point, and keep the
+neighbouring hues at 1 (unchanged).
 
-**User.** The Grade layers card adds grades on top of the clip's own, applied top to bottom, each with on/off, a
-mix and an order. Click a layer to give it its own basics (exposure, contrast, saturation, temperature, tint),
-wheels, curves and mask. Tools: `add_grade_layer`, `update_grade_layer`, `remove_grade_layer`, `move_grade_layer`;
-`set_color_wheels` / `set_color_curve` take `layer`.
+## Match one shot to another
 
-**Internals.** `Clip.grades: [GradeLayer]` (empty = none) with `id, name, enabled, mix, color: ClipColor, mask`.
-`GradeStack.apply` grades the running result with `FrameRenderer.graded` (the layer's input LUT is ignored) and
-blends it back with `CIBlendWithMask` by matte × mix. At most 12 layers per clip. The render hook is one line in
-`FrameRenderer.render`, replacing `graded(img, color)` with `ColorPipeline.apply(...)`.
+1. In the Shot match card, pick the clip to match from **Choose a clip**.
+2. Click **Match**.
 
-## Masks
+EditMax matches this clip's black level, middle, white level and saturation to the other one, and shows the color
+distance before and after (under 5 is close). The correction is a "Shot match" grade layer you can mix down, edit or
+remove. Matching again replaces it; one undo removes it.
 
-**User.** A layer's mask card limits where it applies: a shape (ellipse or rectangle with centre, size, rotation
-and feather), a colour selection (hue, hue range, minimum saturation, brightness range) and/or the subject (Person
-or Objects, found by Apple's Vision). The parts multiply; Invert flips the result. Tools: `set_layer_mask` and
-`capture_matte` (a grayscale PNG, white = the layer applies, with the coverage and a note when it is empty).
+## Grade one part of the picture
 
-**Internals.** Engine/Masks.swift. Shapes are placed on the canvas (fractions of the frame, y down; feather is a
-fraction of the frame height). The qualifier is a 32³ colour cube of `ColorQualifier.membership` applied to the
-picture entering the layer, then blurred; saturation there is chroma (max − min), so dark colours count as less
-saturated. The subject matte (`SubjectMatte`) runs `VNGeneratePersonSegmentationRequest` (.balanced) or
-`VNGenerateForegroundInstanceMaskRequest` on the clip's own picture before the grade (input LUT applied), at 512 px
-high, **live in the compositor, memoized** in an `NSCache` (240 entries) keyed by asset, source time (ms), transform,
-canvas, kind, input LUT and stabilization; preview and export use the same matte. Measured on this Mac (512×512):
-first call 1.6 s (person) / 3.1 s (foreground) for model load, then about 14–15 ms per new frame; a cached frame
-costs nothing. Nothing is stored in the project. `capture_matte` renders a solo copy registered with `MatteProbe`,
-which makes the compositor draw that layer's matte; the live preview never sees the copy's id. Vision's person model
-is not a detector: on a photo with no person it still marks about a third of the frame, so check with
-`capture_matte`.
+A grade layer is an extra grade on top of the clip's own, limited by a mask (the area it applies to).
 
-## Interchange
+1. Click **+** in the Grade layers card. The new layer's cards open below; click a layer to open it later.
+2. In its mask card, choose where it applies:
+   - **Shape**: an ellipse or rectangle, with centre, size, rotation and feather (a soft edge).
+   - **Color selection**: a hue, hue range, minimum saturation and brightness range, for example skin tones.
+   - **Subject**: **Person** or **Objects**, found in every frame by Apple's on-device model.
+3. Grade it with its own basics, wheels and curves.
 
-`Interchange.report` lists, per export, what EDL/FCPXML cannot carry: color wheels, custom curves, grade layers
-(with masks and shot matches) and finishing (`ColorPipeline.notTransferred`).
+The layer applies only where all the mask's parts overlap; **Invert** flips it. Layers apply top to bottom, each with an
+on/off checkbox, a **Mix** slider and buttons to reorder or remove it.
+
+## Finish the picture
+
+The Finishing card works after the grade and grade layers: **Noise** (reduction), **Sharpen**, **Glow** on highlights,
+**Vignette** (left of centre lightens the edges) and **Grain** with a size. Sizes are set for a 1080-line frame, so a
+look holds at any project size.
+
+## For agents
+
+| Task | Tools |
+|---|---|
+| Basics, input LUT, look | `set_clip_color` |
+| Wheels and curves | `set_color_wheels`, `set_color_curve` (both take `layer`) |
+| Grade layers and masks | `add_grade_layer`, `update_grade_layer`, `remove_grade_layer`, `move_grade_layer`, `set_layer_mask`, `capture_matte` |
+| Shot match | `match_color` |
+| Finishing | `set_clip_finish` |
+| Check the result | `capture_scopes` (image and numbers), `frame_stats` (numbers) |
+
+## Limits
+
+- A clip can have at most 12 grade layers.
+- Wheels, curves, grade layers and finishing cannot be keyframed. The Color card sliders and the look's Mix can.
+- The Person subject can select about a third of a frame that has no person in it. Agents can check with
+  `capture_matte`.
+- File ▸ Export Timeline… (Final Cut Pro, Resolve) does not carry wheels, curves, grade layers (including shot
+  matches) or finishing; the export lists them under "Stays in EditMax". Export a ProRes master too to keep the grade.

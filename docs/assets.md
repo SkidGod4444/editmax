@@ -1,87 +1,73 @@
 # Assets and the notch drawer
 
-Assets is one place for every video, sound, picture and font you have used in EditMax, across all your projects. The
-notch drawer lets you add files to it from any app, without switching to EditMax. How it is built is in
-[internals-assets.md](internals-assets.md).
+Assets holds every video, sound, picture and font you have used in EditMax, across all your projects. Open it from
+Home's sidebar, or in a project from the media panel's **Library** tab. The notch drawer adds files from any app.
 
-## Assets on Home
+## Find a file you used before
 
-Home's sidebar has two places: **Projects** (where Home opens) and **Assets**.
+In Home ▸ Assets, each file is a card with its picture, name, length or size, and the projects that use it ("Used in
+Goa trip, Launch video"). Filter by kind (Fonts opens the [font library](fonts.md)), search by name, and drag a card
+into an open project or to the Finder. Point at a card for **Reveal in Finder**. "Used in" stays current as you open,
+save and delete projects.
 
-Assets shows every file as a card: a frame of the video, the picture, a waveform for sound, or "Aa" set in the font
-itself. Under each card is its name, length or size, and the projects it is used in ("Used in Goa trip, Launch
-video"). A file that has been moved or deleted shows **Missing** and where it used to be.
+## Add files
 
-- **Filter** by kind: All, Video, Audio, Images, Fonts.
-- **Search** by name.
-- **Add Files…** picks files to add. Dropping files onto Assets adds them too.
-- **Reveal in Finder** and **Remove from Assets** are on each card when you point at it, and on its right-click menu.
-  Removing asks first. It takes the file out of the list; a file EditMax copied in, and that no project uses, goes to
-  the Trash.
-- **Drag a card out** to the Finder, or into an open project to use it.
+- Everything you import into a project is added. Assets points at these files where they are.
+- **Add Files…**, dropping files on Home ▸ Assets, and the notch drawer **copy** files into the Assets folder (Movies ▸
+  EditMax Projects ▸ Assets by default), so a Downloads or Desktop clean-up does not lose them.
+- Footage on an external drive or camera card is never copied, so it does not fill your Mac's disk. The message names
+  the drive, and reminds you to back up a camera card, since it holds the only copy.
 
-### What gets added
+Adding the same file twice does nothing.
 
-- Everything you import into any project (the + button, dropping files on the media panel or the timeline, and the
-  `import_media` tool).
-- Files you drop on Assets, on the notch drawer, or add from the drawer's Downloads row.
+## Use Assets in a project
 
-Files dropped on Assets or on the drawer are **copied** into the Assets folder inside your projects folder (Movies ▸
-EditMax Projects ▸ Assets by default). That way they stay when Downloads or the Desktop gets cleaned. Files you import
-into a project are not copied; Assets points at them where they are. Adding the same file twice does nothing.
+The **Library** tab lists Assets (without fonts); a check mark shows what this project already has. Drag a row onto
+the timeline, or double-click it to add it to the project. The minus button takes a file out of this project with any
+clips that use it, asking first if there are clips. It stays in Assets, and ⌘Z undoes it.
 
-Footage on an external drive (an SSD, a camera card, a camera that shows up as a drive) is **never copied**, wherever you
-add it: it is used where it is, so it does not fill your Mac's disk. The add says which drive it was left on. A camera
-card (a drive with a `DCIM` folder) is then the only copy of that footage, so the message says to back it up.
+## Add a file from the notch
 
-When the drive is unplugged, its clips go offline: the preview plays the rest of the timeline with a gap where they are,
-a line at the top of the window says how many clips went offline, and an export says which drive to plug in. Plug it back
-in and they play again, also when the Mac mounts it under another name ("Untitled 1"). Ejecting the drive while EditMax
-plays from it works: EditMax lets go of its files first.
+1. Drag files from the Finder, a browser or any app onto the notch. On a Mac without a notch, use the small bar at the
+   top centre of the screen.
+2. Drop them on **Drop to add to Assets**. The drawer confirms ("Added 2 files to Assets") and folds away.
 
-"Used in" is kept right on its own: opening and saving a project records what it uses, a file taken out of a project
-drops that project from its list, and moving a project to the Trash drops it everywhere.
+Pointing at the notch, or **Open the drawer** in the EditMax menu bar menu, opens it too. The drawer never changes the
+open project or brings EditMax to the front. **Settings ▸ Files ▸ Notch drawer** turns it off.
 
-## Assets in the editor
+## Add a recent download
 
-The media panel on the left has two tabs: **Project** (this project's media, as before) and **Library** (everything
-in Assets, with search). In Library, a check mark shows what this project already has. Drag a row onto the timeline to
-use it, or double-click it to add it to the project. Fonts are not listed there.
+The open drawer's **New in Downloads** row shows the videos, sounds, pictures and fonts downloaded in the last day.
+Click **Add** to copy one into Assets, or drag it into a project. The drawer never opens by itself for a download.
 
-## The notch drawer
+macOS asks whether EditMax may see Downloads the first time you open the drawer. If you said no, allow it in System
+Settings ▸ Privacy & Security ▸ Files and Folders. **Settings ▸ Files ▸ Watch Downloads** turns the row off.
 
-On a Mac with a notch, EditMax puts a drawer in the notch at the top of the screen. On a screen without one it is a
-small bar at the top centre. Folded, it is black and reads as part of the notch; open, it is Liquid Glass (a dark
-frosted panel when Liquid Glass is off in Settings ▸ General).
+## Delete files from Assets
 
-- **Drag files onto the notch** from the Finder, a browser or any app. The drawer opens: drop the files on "Drop to add
-  to Assets". It says what happened ("Added 2 files to Assets") and folds back when you move away.
-- **Point at the notch** to open it without dragging.
-- **New in Downloads**: the open drawer lists the videos, sounds, pictures and fonts you downloaded in the last day,
-  newest first; scroll sideways for more. Nothing goes into Assets until you click **Add** (it copies the file in) or
-  drag one into a project or the Finder, and the drawer never opens by itself for a download: a new one is first in the
-  row the next time you point at the notch. Files still downloading are not shown. macOS asks whether EditMax may see
-  Downloads the first time you open the drawer (not at launch, and not while you drag a file onto it).
-- **Open the drawer** in the EditMax menu bar menu opens it too.
+Click a card's trash button, or right-click ▸ **Delete from Assets…**; **Select** deletes several. EditMax asks first
+and says what will happen:
 
-Adding from the drawer only adds to Assets. It never changes the project you have open, what is selected, or which
-panel you are looking at, and it never brings EditMax to the front.
+- A copy EditMax made goes to the Archive, where Home ▸ Archive can restore it for 30 days (or the time set in
+  Settings ▸ Files). Projects that still use it show it as missing.
+- A file Assets points at stays where it is.
+- A font is uninstalled from EditMax, and its files go to the Archive.
 
-### Settings
+In the editor's Library tab, deleting also takes the file and its clips out of the open project.
 
-In **Settings ▸ Files**:
+## When a drive is unplugged
 
-- **Notch drawer** (on by default) shows or hides the drawer.
-- **Watch Downloads** (on by default) lists the last day's downloads in the drawer. The first time you open the drawer,
-  macOS asks whether EditMax may see your Downloads folder. If you say no, the drawer says so; you can allow it later in System Settings ▸ Privacy &
-  Security ▸ Files and Folders.
+Its clips go offline: the preview leaves a gap, a line at the top of the window counts them, and an export names the
+drive to plug in. Plug it back in, even under another name ("Untitled 1"), and they play again. You can eject a drive
+while EditMax plays from it.
 
-## For agents (MCP)
+In Assets, a file on an unplugged drive shows **Missing**. A file you delete or move in the Finder leaves the list.
 
-- `list_library` lists Assets: `kind` (video, audio, image, font), `search`, `limit` (default 100). Each entry has
-  `id`, `name`, `path`, `kind`, `duration`, `used_in` (project names) and `missing` when the file is gone. It works
-  with no project open.
-- `add_to_library` adds files by `paths`. They are referenced where they are unless `copy` is true. It answers with
-  the items and any files it skipped.
+## For agents
 
-Neither one changes the open project or the editor's view.
+- `list_library`: Assets, filtered by `kind` (video, audio, image, font), `search` and `limit` (default 100). Items
+  have `id`, `name`, `path`, `kind`, `duration`, `used_in` and `missing`.
+- `add_to_library`: adds files by `paths`, referenced in place unless `copy` is true.
+- `import_media`: puts an item in a project, by its path.
+
+The library tools work with no project open and never change the open project or the editor's view.

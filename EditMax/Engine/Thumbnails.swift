@@ -1,16 +1,32 @@
 import Foundation
 import AVFoundation
+import CryptoKit
+import ImageIO
+import UniformTypeIdentifiers
 import SwiftUI
 
-/// Small video frames along each asset, for the timeline's clip strips. Generated once per asset in the background:
-/// one frame every `interval` seconds of source, at most ~240 per file, 88 px tall (44 pt rows on a Retina display).
+/// Small video frames along each asset, for the timeline's clip strips and the media list: one frame every `interval`
+/// seconds of source, at most 240 per file, 88 px tall (44 pt rows on a Retina display).
+///
+/// From a slow drive (a T7 on a USB 2 cable reads about 28 MB/s, and a 4K keyframe is 1-2 MB) a whole strip takes
+/// 10-60 s a file, so a strip fills in stages and the pictures a person is looking at come first:
+/// 1. a 12-frame quick strip for every file (about a second each), for the media list and a first look at the clips;
+/// 2. the frames of the seconds the timeline actually uses (`request(_:using:)`), for every file;
+/// 3. the rest, behind the waveforms. Gaps show the nearest frame made so far.
+/// A finished strip is kept on this Mac's disk (`StripCache`), so opening the project again reads nothing from the drive.
 @MainActor
 final class ThumbnailStore: ObservableObject {
     static let shared = ThumbnailStore()
-    struct Strip { var interval: Double; var frames: [CGImage]; var aspect: CGFloat }
+    struct Strip {
+        var interval: Double; var frames: [CGImage]; var aspect: CGFloat
+        /// Goes up as the strip fills in, so a clip redraws although its frame count is the same.
+        var version = 0
+    }
 
     @Published private(set) var strips: [UUID: Strip] = [:]
     private var inFlight: Set<UUID> = []
+    /// The source seconds the timeline's clips show of each file: their frames are made before the rest of the strip.
+    private var used: [UUID: [ClosedRange<Double>]] = [:]
     /// Not published: made on first use while a view body runs, and each one publishes its own frames.
     private var fineFrames: [UUID: FineThumbnails] = [:]
 
@@ -23,42 +39,73 @@ final class ThumbnailStore: ObservableObject {
         return f
     }
     static let overviewFrames = 240.0
+    static let quickFrames = 12.0
 
-    func request(_ asset: Asset) {
+    /// Makes the asset's strip if it has none. `range` is the source seconds a clip shows: those frames come early.
+    func request(_ asset: Asset, using range: ClosedRange<Double>? = nil) {
+        if let range, range.upperBound > range.lowerBound, used[asset.id]?.contains(range) != true { used[asset.id, default: []].append(range) }
         guard asset.kind == .video || asset.kind == .sequence, strips[asset.id] == nil, !inFlight.contains(asset.id) else { return }
         inFlight.insert(asset.id)
         let url = asset.url, id = asset.id, duration = max(0.1, asset.duration)
-        Task.detached(priority: .utility) {
-            await BackgroundReads.shared.acquire(url)
-            let strip = await Self.generate(url: url, duration: duration)
-            await BackgroundReads.shared.release(url)
-            await MainActor.run { self.strips[id] = strip; self.inFlight.remove(id) }
-        }
+        Task.detached(priority: .utility) { await self.build(id: id, url: url, duration: duration) }
     }
     /// Reads the asset's file again (after a relink pointed it at another file).
     func refresh(_ asset: Asset) { strips[asset.id] = nil; fineFrames[asset.id] = nil; request(asset) }
     /// A strip made elsewhere (tests: frames for a clip without its file); a later `request` keeps it.
     func install(_ strip: Strip, for id: UUID) { strips[id] = strip }
 
-    private static func generate(url: URL, duration: Double) async -> Strip {
-        let started = Date()
-        let asset = AVURLAsset(url: url)
-        // The generator's reader raises an uncatchable ObjC exception (seen once: SIGABRT on its own queue) when the
-        // file has no readable video track, so check first and give such a file an empty strip.
-        guard let tracks = try? await asset.loadTracks(withMediaType: .video), !tracks.isEmpty, (try? await asset.load(.isReadable)) == true else {
-            DebugLog.event("thumbnails-skipped", ["file": url.lastPathComponent, "reason": "no readable video track"])
-            return Strip(interval: 1, frames: [], aspect: 16 / 9)
+    nonisolated private func build(id: UUID, url: URL, duration: Double) async {
+        let key = StripCache.key(for: url)
+        if let key, let cached = StripCache.load(key) {
+            await MainActor.run { self.strips[id] = cached; self.inFlight.remove(id) }
+            DebugLog.event("thumbnails-cached", ["file": url.lastPathComponent, "frames": cached.frames.count])
+            return
         }
+        await BackgroundReads.shared.acquire(url, priority: .high)
+        var quick = await Self.generate(url: url, duration: duration, frames: Self.quickFrames)
+        await BackgroundReads.shared.release(url)
+        quick.version = 1
+        let first = quick
+        await MainActor.run { self.strips[id] = first }
+        guard !quick.frames.isEmpty else { await MainActor.run { _ = self.inFlight.remove(id) }; return }
+
+        let ranges = await MainActor.run { self.used[id] ?? [] }
+        let full = await Self.fill(url: url, duration: duration, quick: quick, used: ranges) { strip in
+            await MainActor.run { self.strips[id] = strip }
+        }
+        await MainActor.run { self.strips[id] = full.strip; self.inFlight.remove(id) }
+        if full.complete, let key { StripCache.save(full.strip, key: key) }
+    }
+
+    nonisolated private static func generator(_ asset: AVURLAsset, interval: Double) -> AVAssetImageGenerator {
         let gen = AVAssetImageGenerator(asset: asset)
         gen.appliesPreferredTrackTransform = true
         gen.maximumSize = CGSize(width: 320, height: 88)
-        let interval = max(0.5, duration / overviewFrames)
-        // The nearest keyframe within half a step: an exact frame of long-GOP 4K HEVC means reading and decoding from
-        // the keyframe before it, which over a whole strip reads most of the file (minutes from a slow USB drive). At
-        // one frame per `interval`, half a step either side is invisible in the strip; the zoomed-in frames stay exact.
-        let tolerance = CMTime(seconds: interval / 2, preferredTimescale: 600)
+        // The nearest keyframe: an exact frame of long-GOP 4K HEVC means reading and decoding from the keyframe before
+        // it, which over a whole strip reads most of the file. Cameras put a keyframe every 0.5-1.25 s (DJI Osmo:
+        // 1.25 s), so ±0.75 s always finds one. The zoomed-in frames (FineThumbnails) stay exact.
+        let tolerance = CMTime(seconds: max(interval / 2, 0.75), preferredTimescale: 600)
         gen.requestedTimeToleranceBefore = tolerance
         gen.requestedTimeToleranceAfter = tolerance
+        return gen
+    }
+
+    /// The asset's video can be read (the generator raises an uncatchable ObjC exception, seen once as SIGABRT on its
+    /// own queue, when the file has no readable video track).
+    nonisolated private static func readable(_ asset: AVURLAsset) async -> Bool {
+        guard let tracks = try? await asset.loadTracks(withMediaType: .video), !tracks.isEmpty else { return false }
+        return (try? await asset.load(.isReadable)) == true
+    }
+
+    nonisolated private static func generate(url: URL, duration: Double, frames count: Double = overviewFrames) async -> Strip {
+        let started = Date()
+        let asset = AVURLAsset(url: url)
+        guard await readable(asset) else {
+            DebugLog.event("thumbnails-skipped", ["file": url.lastPathComponent, "reason": "no readable video track"])
+            return Strip(interval: 1, frames: [], aspect: 16 / 9)
+        }
+        let interval = max(0.5, duration / count)
+        let gen = generator(asset, interval: interval)
         var times: [CMTime] = []
         var t = 0.0
         while t < duration { times.append(CMTime(seconds: t, preferredTimescale: 600)); t += interval }
@@ -71,6 +118,139 @@ final class ThumbnailStore: ObservableObject {
         }
         DebugLog.event("thumbnails", ["file": url.lastPathComponent, "frames": frames.count, "seconds": (Date().timeIntervalSince(started) * 100).rounded() / 100])
         return Strip(interval: interval, frames: frames, aspect: aspect)
+    }
+
+    /// The slots of a strip of `count` frames `interval` apart, those inside `used` (and one either side) first.
+    nonisolated static func order(count: Int, interval: Double, used: [ClosedRange<Double>]) -> (first: [Int], rest: [Int]) {
+        var first: [Int] = [], rest: [Int] = []
+        for i in 0..<count {
+            let t = Double(i) * interval
+            if used.contains(where: { t >= $0.lowerBound - interval && t <= $0.upperBound + interval }) { first.append(i) } else { rest.append(i) }
+        }
+        return (first, rest)
+    }
+
+    /// A full-length strip from the frames made so far: each slot shows its own frame, else the nearest made frame when
+    /// it is closer than the nearest quick frame, else the quick frame.
+    nonisolated static func compose(made: [Int: CGImage], count: Int, interval: Double, quick: Strip) -> [CGImage] {
+        let keys = made.keys.sorted()
+        var frames: [CGImage] = []
+        frames.reserveCapacity(count)
+        var k = 0
+        for i in 0..<count {
+            if let img = made[i] { frames.append(img); continue }
+            while k + 1 < keys.count, abs(keys[k + 1] - i) <= abs(keys[k] - i) { k += 1 }
+            let t = Double(i) * interval
+            let near: (img: CGImage, dt: Double)? = keys.isEmpty ? nil : (made[keys[k]]!, abs(Double(keys[k]) * interval - t))
+            var q: (img: CGImage, dt: Double)? = nil
+            if !quick.frames.isEmpty {
+                let qi = min(quick.frames.count - 1, max(0, Int((t / quick.interval).rounded())))
+                q = (quick.frames[qi], abs(Double(qi) * quick.interval - t))
+            }
+            switch (near, q) {
+            case let (n?, q?): frames.append(n.dt <= q.dt ? n.img : q.img)
+            case let (n?, nil): frames.append(n.img)
+            case let (nil, q?): frames.append(q.img)
+            default: break
+            }
+        }
+        return frames
+    }
+
+    /// Stages 2 and 3: the used seconds at high priority, the rest at low priority, publishing every few frames.
+    nonisolated private static func fill(url: URL, duration: Double, quick: Strip, used: [ClosedRange<Double>],
+                                         publish: @escaping @Sendable (Strip) async -> Void) async -> (strip: Strip, complete: Bool) {
+        let started = Date()
+        let asset = AVURLAsset(url: url)
+        let interval = max(0.5, duration / overviewFrames)
+        var count = 0
+        while Double(count) * interval < duration { count += 1 }
+        let gen = generator(asset, interval: interval)
+        let (first, rest) = order(count: count, interval: interval, used: used)
+        var made: [Int: CGImage] = [:]
+        var aspect = quick.aspect
+        var version = quick.version
+        var unpublished = 0
+
+        func strip() -> Strip {
+            version += 1
+            return Strip(interval: interval, frames: compose(made: made, count: count, interval: interval, quick: quick), aspect: aspect, version: version)
+        }
+        func run(_ slots: [Int], _ priority: BackgroundReads.Priority) async {
+            guard !slots.isEmpty else { return }
+            await BackgroundReads.shared.acquire(url, priority: priority)
+            let times = slots.map { CMTime(seconds: min(max(0, duration - 0.05), Double($0) * interval), preferredTimescale: 600) }
+            for await r in gen.images(for: times) {
+                guard let img = try? r.image else { continue }
+                let i = min(count - 1, max(0, Int((r.requestedTime.seconds / interval).rounded())))
+                if made.isEmpty { aspect = CGFloat(img.width) / CGFloat(max(1, img.height)) }
+                made[i] = img
+                unpublished += 1
+                if unpublished >= 8 { unpublished = 0; await publish(strip()) }
+            }
+            await BackgroundReads.shared.release(url)
+            if unpublished > 0 { unpublished = 0; await publish(strip()) }
+        }
+        await run(first, .high)
+        let firstSeconds = Date().timeIntervalSince(started)
+        await run(rest, .low)
+        DebugLog.event("thumbnails", ["file": url.lastPathComponent, "frames": made.count, "usedFrames": first.count,
+                                      "usedSeconds": (firstSeconds * 100).rounded() / 100,
+                                      "seconds": (Date().timeIntervalSince(started) * 100).rounded() / 100])
+        return (strip(), made.count >= max(1, count * 9 / 10))
+    }
+}
+
+/// Finished strips on this Mac's disk, keyed by the file's path, size and modification date, so a project opens with
+/// its pictures without reading the media again. Frames are JPEG, about 2 MB a file.
+enum StripCache {
+    nonisolated static var directory: URL {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("EditMax/thumbnails", isDirectory: true)
+    }
+    private static let magic = Data("EMXS1".utf8)
+
+    nonisolated static func key(for url: URL) -> String? {
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path), let size = attrs[.size] else { return nil }
+        let stamp = "\(url.path)|\(size)|\((attrs[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0)|240"
+        return SHA256.hash(data: Data(stamp.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    nonisolated static func save(_ strip: ThumbnailStore.Strip, key: String, in dir: URL = directory) {
+        var blobs: [Data] = []
+        for img in strip.frames {
+            let d = NSMutableData()
+            guard let dest = CGImageDestinationCreateWithData(d, UTType.jpeg.identifier as CFString, 1, nil) else { return }
+            CGImageDestinationAddImage(dest, img, [kCGImageDestinationLossyCompressionQuality: 0.75] as CFDictionary)
+            guard CGImageDestinationFinalize(dest) else { return }
+            blobs.append(d as Data)
+        }
+        let header: [String: Any] = ["interval": strip.interval, "aspect": Double(strip.aspect), "sizes": blobs.map(\.count)]
+        guard let head = try? JSONSerialization.data(withJSONObject: header) else { return }
+        var out = magic
+        var n = UInt32(head.count).littleEndian
+        out.append(Data(bytes: &n, count: 4)); out.append(head)
+        blobs.forEach { out.append($0) }
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try? out.write(to: dir.appendingPathComponent("\(key).strip"), options: .atomic)
+    }
+
+    nonisolated static func load(_ key: String, in dir: URL = directory) -> ThumbnailStore.Strip? {
+        guard let data = try? Data(contentsOf: dir.appendingPathComponent("\(key).strip")), data.count > magic.count + 4,
+              data.prefix(magic.count) == magic else { return nil }
+        let base = data.startIndex + magic.count
+        let n = Int(data[base..<base + 4].withUnsafeBytes { $0.loadUnaligned(as: UInt32.self) }.littleEndian)
+        guard data.count >= magic.count + 4 + n,
+              let header = try? JSONSerialization.jsonObject(with: data[(base + 4)..<(base + 4 + n)]) as? [String: Any],
+              let interval = header["interval"] as? Double, let aspect = header["aspect"] as? Double, let sizes = header["sizes"] as? [Int] else { return nil }
+        var at = base + 4 + n
+        var frames: [CGImage] = []
+        for size in sizes {
+            guard size > 0, at + size <= data.endIndex,
+                  let src = CGImageSourceCreateWithData(data[at..<at + size] as CFData, nil),
+                  let img = CGImageSourceCreateImageAtIndex(src, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary) else { return nil }
+            frames.append(img); at += size
+        }
+        return frames.isEmpty ? nil : ThumbnailStore.Strip(interval: interval, frames: frames, aspect: CGFloat(aspect), version: 1)
     }
 }
 
@@ -151,7 +331,7 @@ struct ThumbnailStripView: View, Equatable {
     var visible: ClosedRange<CGFloat>? = nil
     /// Denser frames for a long file, made for the tiles on screen when the overview strip is too sparse for the zoom.
     var fine: FineThumbnails? = nil
-    static func == (a: ThumbnailStripView, b: ThumbnailStripView) -> Bool { a.strip.frames.count == b.strip.frames.count && a.strip.interval == b.strip.interval && a.sourceIn == b.sourceIn && a.sourceOut == b.sourceOut && a.visible == b.visible && a.fine === b.fine }
+    static func == (a: ThumbnailStripView, b: ThumbnailStripView) -> Bool { a.strip.frames.count == b.strip.frames.count && a.strip.version == b.strip.version && a.strip.interval == b.strip.interval && a.sourceIn == b.sourceIn && a.sourceOut == b.sourceOut && a.visible == b.visible && a.fine === b.fine }
 
     var body: some View {
         if let fine { FineStrip(fine: fine, base: self) } else { canvas(nil) }

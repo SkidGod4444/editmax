@@ -44,6 +44,40 @@ final class BackgroundReadsTests: XCTestCase {
         await gate.release(t7b); await gate.release(mac)
     }
 
+    func testPicturesGoBeforeWaveformsAndTheRestOfAStrip() async {
+        let gate = BackgroundReads(perDrive: 1)
+        await gate.acquire(t7)
+        var order: [String] = []
+        let lock = NSLock()
+        func note(_ s: String) { lock.lock(); order.append(s); lock.unlock() }
+        let rest = Task { await gate.acquire(self.t7, priority: .low); note("rest"); await gate.release(self.t7) }
+        try? await Task.sleep(for: .milliseconds(30))
+        let wave = Task { await gate.acquire(self.t7, priority: .normal); note("wave"); await gate.release(self.t7) }
+        try? await Task.sleep(for: .milliseconds(30))
+        let pic = Task { await gate.acquire(self.t7, priority: .high); note("picture"); await gate.release(self.t7) }
+        try? await Task.sleep(for: .milliseconds(30))
+        await gate.release(t7)
+        _ = await (rest.value, wave.value, pic.value)
+        XCTAssertEqual(order, ["picture", "wave", "rest"], "the latest request with the highest priority still goes first")
+    }
+
+    func testWhilePlayingOnlyTheWarmUpStarts() async {
+        let gate = BackgroundReads(perDrive: 2)
+        await gate.setPaused(true)
+        let thumbnail = Task { await gate.acquire(self.t7, priority: .high); return true }
+        await gate.acquire(t7, priority: .urgent)   // the warm-up still gets its turn
+        try? await Task.sleep(for: .milliseconds(50))
+        var load = await gate.load(t7)
+        XCTAssertEqual(load.running, 1)
+        XCTAssertEqual(load.waiting, 1, "a thumbnail waits while the player plays")
+        await gate.setPaused(false)
+        let started = await thumbnail.value
+        XCTAssertTrue(started)
+        load = await gate.load(t7)
+        XCTAssertEqual(load.running, 2)
+        await gate.release(t7); await gate.release(t7)
+    }
+
     func testTheTurnKeyIsTheDrive() {
         XCTAssertEqual(BackgroundReads.drive(of: t7), "T7 Shield")
         XCTAssertEqual(BackgroundReads.drive(of: mac), "")

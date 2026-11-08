@@ -8,7 +8,9 @@ import QuartzCore
 final class PlayerController: ObservableObject {
     let player = AVPlayer()
     @Published private(set) var currentTime: Double = 0
-    @Published private(set) var isPlaying = false
+    @Published private(set) var isPlaying = false {
+        didSet { if isPlaying != oldValue { BackgroundReads.setPlaying(isPlaying) } }
+    }
     /// Playback rate: 1 = play, 0 = paused, -1/-2/-4/-8 and 2/4/8 = J/L shuttle.
     @Published private(set) var rate: Float = 0
     @Published private(set) var renderSize = CGSize(width: 1920, height: 1080)
@@ -115,6 +117,8 @@ final class PlayerController: ObservableObject {
                 heldTime = nil
                 player.replaceCurrentItem(with: item)
                 DebugLog.event("player-rebuild", ["reason": reason, "audioTracks": out.composition.tracks(withMediaType: .audio).count])
+                let spans = PlaybackWarmup.spans(project, from: keep.isValid ? keep.seconds : 0)
+                Task { await PlaybackWarmup.shared.warm(spans) }
                 renderSize = out.renderSize
                 lastOutput = out
                 buildError = nil

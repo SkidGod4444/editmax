@@ -85,13 +85,18 @@ final class MixerMeters: ObservableObject {
     func start(_ tracks: @escaping () -> [UUID]) {
         timer = Timer.publish(every: 1.0 / 15, on: .main, in: .common).autoconnect().sink { [weak self] _ in
             guard let self else { return }
+            var levels = self.levels, reduction = self.reduction
             for id in tracks() {
                 guard let slot = MeterBank.shared.existing(id) else { continue }
                 let (p, r) = slot.take()
                 let db = p > 0 ? 20 * log10(p) : -90
-                levels[id] = max(db, (levels[id] ?? -90) - 24.0 / 15)
-                reduction[id] = max(r, (reduction[id] ?? 0) - 12.0 / 15)
+                levels[id] = max(db, max(-90, (levels[id] ?? -90) - 24.0 / 15))
+                reduction[id] = max(r, max(0, (reduction[id] ?? 0) - 12.0 / 15))
             }
+            // Publishing only a change: silence writing -90 fifteen times a second redrew the whole Mixer and laid out
+            // the window each time (more than half the main thread's time with nothing playing).
+            if levels != self.levels { self.levels = levels }
+            if reduction != self.reduction { self.reduction = reduction }
         }
     }
     func stop() { timer = nil }
@@ -101,7 +106,8 @@ struct MixerPane: View {
     @ObservedObject var document: EditMaxDocument
     /// nil: a still picture of the pane (tests), with no meters and no player rebuilds.
     let player: PlayerController?
-    @StateObject private var meters = MixerMeters()
+    /// Kept without observing it: only each `MeterBar` watches the levels, not the whole pane.
+    @State private var meters = MixerMeters()
     @State private var loudness: String?
     /// The measurement running now ("Measuring the mix", "Normalizing to −14 LUFS") and when it started: it plays the
     /// whole mix through, which takes seconds, so the pane says what it is doing and for how long.
@@ -305,20 +311,8 @@ struct MixerPane: View {
         .buttonStyle(.plain).focusable(false).help(help).pointer().uiFrame(id)
     }
 
-    private func meter(_ id: UUID) -> some View {
-        let db = Double(meters.levels[id] ?? -90)
-        let frac = max(0, min(1, (db + 60) / 60))
-        let gr = Double(meters.reduction[id] ?? 0)
-        return GeometryReader { g in
-            ZStack(alignment: .leading) {
-                RoundedRectangle(cornerRadius: 2).fill(Color.primary.opacity(0.08))
-                RoundedRectangle(cornerRadius: 2).fill(db > -1 ? Color.red : db > -9 ? Color.yellow : Color.green).frame(width: g.size.width * frac)
-            }
-        }
-        .frame(height: 6).frame(minWidth: 40)
-        .help(db <= -89 ? "No signal (meters show while playing)" : String(format: "Peak %.1f dBFS", db) + (gr > 0.1 ? String(format: ", %.1f dB of compression", gr) : ""))
-        .uiFrame("mixer.\(id.short).meter")
-    }
+    /// Its own view, so the bars redraw at the meter rate while the faders, buttons and cards around them stay put.
+    private func meter(_ id: UUID) -> some View { MeterBar(meters: meters, id: id) }
 
     private func fader(_ title: String, id: String, value: Double, range: ClosedRange<Double>, format: @escaping (Double) -> String, reset: Double, set: @escaping (Double) -> Void) -> some View {
         HStack(spacing: 6) {
@@ -329,5 +323,26 @@ struct MixerPane: View {
                 .onTapGesture(count: 2) { set(reset) }.help("Double-click to reset").pointer()
                 .uiFrame("\(id).reset").uiTap("\(id).reset", count: 2) { set(reset) }
         }
+    }
+}
+
+/// One track's peak meter (green, yellow above -9 dBFS, red above -1) with the compressor's gain reduction in its help.
+private struct MeterBar: View {
+    @ObservedObject var meters: MixerMeters
+    let id: UUID
+
+    var body: some View {
+        let db = Double(meters.levels[id] ?? -90)
+        let frac = max(0, min(1, (db + 60) / 60))
+        let gr = Double(meters.reduction[id] ?? 0)
+        GeometryReader { g in
+            ZStack(alignment: .leading) {
+                RoundedRectangle(cornerRadius: 2).fill(Color.primary.opacity(0.08))
+                RoundedRectangle(cornerRadius: 2).fill(db > -1 ? Color.red : db > -9 ? Color.yellow : Color.green).frame(width: g.size.width * frac)
+            }
+        }
+        .frame(height: 6).frame(minWidth: 40)
+        .help(db <= -89 ? "No signal (meters show while playing)" : String(format: "Peak %.1f dBFS", db) + (gr > 0.1 ? String(format: ", %.1f dB of compression", gr) : ""))
+        .uiFrame("mixer.\(id.short).meter")
     }
 }

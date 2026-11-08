@@ -504,7 +504,7 @@ struct TimelineView: View {
                      peaks: waveforms.peaks[clip.assetID] ?? [], strip: thumbnails.strips[clip.assetID],
                      off: ClipBody.Off(track: track, in: document.project), viewport: viewport, fine: thumbnails.fine(for: asset))
                 .equatable()
-                .onAppear { if let asset { waveforms.request(asset); thumbnails.request(asset) } }
+                .onAppear { if let asset { waveforms.request(asset); thumbnails.request(asset, using: clip.sourceIn...max(clip.sourceIn, clip.sourceOut)) } }
                 .contextMenu {
             PlayerReader(player: player) { p in
                 Button("Split at playhead", systemImage: "scissors") { select(clip.id, keepGroup: false); try? x.splitClip(clip.id.uuidString, at: p.currentTime) }
@@ -637,7 +637,7 @@ struct ClipBody: View, Equatable {
 
     static func == (a: ClipBody, b: ClipBody) -> Bool {
         a.clip == b.clip && a.kind == b.kind && a.selected == b.selected && a.height == b.height && a.pps == b.pps
-            && a.peaks.count == b.peaks.count && a.strip?.frames.count == b.strip?.frames.count && a.off == b.off && a.fine === b.fine
+            && a.peaks.count == b.peaks.count && a.strip?.frames.count == b.strip?.frames.count && a.strip?.version == b.strip?.version && a.off == b.off && a.fine === b.fine
     }
 
     /// Transition wedge at the head, fade ramps at both ends, as other editors draw them.

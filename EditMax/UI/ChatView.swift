@@ -171,7 +171,7 @@ struct ChatView: View {
             Text("Tell \(workerName) what to change").font(.headline)
             if note {
                 Text(chat.backend == .agent
-                     ? "Runs with its own login through EditMax's bundled agent runtime, no API key. It can only call EditMax's editing tools."
+                     ? "Runs with its own login through EditMax's bundled agent runtime, no API key. It can call EditMax's editing tools and search the web, nothing else on this Mac."
                      : "Uses your own API key through EditMax's bundled sidecar, pay per token. It can only call EditMax's editing tools.")
                     .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center).frame(maxWidth: 320).fixedSize(horizontal: false, vertical: true)
             }

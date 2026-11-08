@@ -231,6 +231,7 @@ final class CodemaxRunner {
                                      "transport": ["type": "http", "url": mcpURL, "headers": ["Authorization": "Bearer \(token)"]]]
         var params: [String: Any] = ["agent": agent, "cwd": Self.workDirectory.path, "instructions": instructions, "mcp": [server]]
         if let api { params["api"] = api }
+        else { params["web"] = true }   // the agent may search and read the web (current trends), still nothing on this Mac (codemax serve)
         let r = try await request("configure", params)
         return Self.startInfo(r["result"] as? [String: Any] ?? [:])
     }

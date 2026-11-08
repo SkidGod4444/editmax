@@ -218,6 +218,17 @@ final class ChatErrorTests: XCTestCase {
         XCTAssertNil(Telemetry.errorKind(in: "{\"errorKind\":\"/Users/me/secret.mov\"}"), "never a path or text")
     }
 
+    /// Every tool the agent's instructions name exists: a renamed tool would leave the agent calling one that is gone.
+    func testTheInstructionsNameOnlyRealTools() throws {
+        let names = Set(EditMaxTools.tools.map(\.name))
+        let re = try NSRegularExpression(pattern: #"\b[a-z]+(?:_[a-z]+)+\b"#)
+        let text = ChatSession.agentInstructions
+        let cited = Set(re.matches(in: text, range: NSRange(text.startIndex..., in: text)).compactMap { Range($0.range, in: text).map { String(text[$0]) } })
+        let notTools: Set<String> = ["input_lut", "look_mix", "high_pass", "voice_isolation", "optical_flow", "max_words", "turn_text"]
+        XCTAssertEqual(cited.subtracting(names).subtracting(notTools), [], "named in the instructions but not a tool")
+        XCTAssertTrue(text.contains("November 2026"), "the reels paragraph says when it was true")
+    }
+
     func testDifferentFailuresStillShowEach() {
         let chat = ChatSession(document: EditMaxDocument())
         chat.appendError("429 rate limit")

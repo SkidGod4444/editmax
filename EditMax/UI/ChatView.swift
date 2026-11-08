@@ -7,6 +7,7 @@ struct ChatView: View {
     @State private var editingKey = false
     /// The composer field's current height: a capsule while it is one line, a rounded rectangle once it wraps.
     @State private var fieldHeight: CGFloat = 0
+    @FocusState private var inputFocused: Bool
 
     /// The example requests in the empty state; a tap puts one in the input.
     private static let suggestions = ["cut the first 2 seconds", "add a title that says Welcome at 0:01", "speed up the second clip"]
@@ -227,6 +228,8 @@ struct ChatView: View {
                 TextField(chat.dictation.isActive ? "Listening… speak, then press Return" : "Tell \(workerName) what to change…", text: $chat.input, axis: .vertical)
                     .textFieldStyle(.plain).font(.body).lineLimit(1...6)
                     .onSubmit { chat.sendOrFinishDictation() }
+                    .focused($inputFocused)
+                    .onChange(of: chat.focusRequest) { _, _ in inputFocused = true }
                     .padding(.horizontal, 14).padding(.vertical, 8)
                     .frame(minHeight: 32)
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fieldHeight = $0 }

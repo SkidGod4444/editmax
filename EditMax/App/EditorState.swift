@@ -28,6 +28,8 @@ final class EditorState: ObservableObject {
     @Published var chat: ChatSession?
     /// Focus layout: only the player and the chat (no media list, inspector or timeline).
     @Published var focusMode = false
+    /// File ▸ Import Media… (⌘I): the media list opens its file picker when this changes.
+    @Published var importRequest = 0
     /// History tab: the version being shown in the preview instead of the live project (nil = current). Not an edit.
     @Published var viewingVersion: ProjectVersion?
     /// Timeline edit tool: select (move/trim), roll, slip or slide (TrimTools.swift).

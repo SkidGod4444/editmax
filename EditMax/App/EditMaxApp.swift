@@ -38,9 +38,14 @@ struct EditMaxApp: App {
             EditCommands()
             EditingCommands()   // relink, consolidate, source viewer (RelinkSheet.swift)
             UpdateCommands()
-            CommandGroup(after: .help) { Button("Welcome Tour") { WelcomeTour.shared.replay() } }
+            PanelCommands()     // View ▸ inspector tabs and timeline zoom, File ▸ Import Media… (MenuCommands.swift)
+            ClipCommands()
+            AgentCommands()
+            HelpCommands()      // Welcome Tour, Keyboard Shortcuts
         }
         Settings { SettingsView() }
+        Window("Keyboard Shortcuts", id: KeyboardShortcutsView.windowID) { KeyboardShortcutsView() }
+            .windowResizability(.contentSize)
         MenuBarExtra(isInserted: AppDelegate.isTesting ? .constant(false) : $showMenuBarIcon) {   // no icon while tests run
             MenuBarMenu()
         } label: {
@@ -128,6 +133,7 @@ struct EditorRootView: View {
             if DocumentRegistry.shared.active?.id == document.id, document.project.hasColorGrade { player.toggleCompare() }
         }
         .onChange(of: document.project.hasColorGrade) { _, graded in if !graded, player.compareMode != .off { player.compareMode = .off } }
+        .modifier(EditorCommandReceiver(document: document, state: state, player: player))   // the menus (MenuCommands.swift)
         .onReceive(NotificationCenter.default.publisher(for: .editmaxFocusMode)) { _ in
             if DocumentRegistry.shared.active?.id == document.id { state.focusMode.toggle() }
         }

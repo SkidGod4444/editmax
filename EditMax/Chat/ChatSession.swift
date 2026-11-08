@@ -43,6 +43,8 @@ final class ChatSession: ObservableObject {
     @Published var input = ""
     /// Speaking instead of typing (the composer's microphone, ⇧⌘D): what is heard is written into `input` as it comes.
     let dictation = Dictation()
+    /// Agent ▸ Ask the Agent… (⌘L): the composer takes the keyboard focus when this changes.
+    @Published var focusRequest = 0
     @Published var isRunning = false {
         didSet {   // an agent reply in progress holds back the update popup's restart
             guard isRunning != oldValue else { return }

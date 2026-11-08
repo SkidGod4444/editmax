@@ -66,6 +66,7 @@ struct AssetsSidebar: View {
                 if justAdded == paths { withAnimation(.easeOut(duration: 0.4)) { justAdded = [] } }
             }
         }
+        .onChange(of: state.importRequest) { _, _ in importing = true }   // File ▸ Import Media… (⌘I)
         .fileImporter(isPresented: $importing, allowedContentTypes: [.movie, .audio, .image, .mpeg4Movie, .quickTimeMovie, .mp3, .wav, .png, .jpeg], allowsMultipleSelection: true) { result in
             if case .success(let urls) = result { importURLs(urls) }
         }

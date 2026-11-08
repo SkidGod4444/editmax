@@ -119,7 +119,15 @@ enum Relink {
             if let u = bookmarkTarget(a), let pr = await probed(u), (try? check(pr, for: a, in: p)) != nil {
                 matches.append(Match(asset: a, url: u, probe: pr, reason: "found where its bookmark points (moved or renamed on the same disk)")); taken.insert(u); continue
             }
-            guard folder != nil else { misses.append(Miss(asset: a, reason: "not at \(a.path); choose a folder to search", candidates: [])); continue }
+            guard folder != nil else {
+                // A file renamed on a camera card (FAT or exFAT: no bookmark follows it) is usually still in its folder.
+                // Searching it here would probe every clip in a DCIM folder on each plug-in, so the reason says where.
+                let dir = URL(fileURLWithPath: a.path).deletingLastPathComponent().path
+                var isDir: ObjCBool = false
+                let hint = FileManager.default.fileExists(atPath: dir, isDirectory: &isDir) && isDir.boolValue
+                    ? "its folder is still there: search \(dir) (folder) for it under another name" : "choose a folder to search"
+                misses.append(Miss(asset: a, reason: "not at \(a.path); \(hint)", candidates: [])); continue
+            }
             let name = URL(fileURLWithPath: a.path).lastPathComponent.lowercased()
             var named: [(URL, Probe, Double)] = []
             for u in idx[name] ?? [] where !taken.contains(u) {

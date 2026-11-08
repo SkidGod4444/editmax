@@ -72,6 +72,18 @@ final class EditingMediaTests: XCTestCase {
         XCTAssertEqual(p.asset(a.id)?.name, "A001_C003.mp4", "the name follows the file when it was the file name")
     }
 
+    func testAMissFromARenameInPlaceNamesTheFolderToSearch() async throws {
+        let a = try await missingAsset("C0001.MP4", movedTo: "original", newName: "C0001-renamed.MP4")
+        let r = try await x.relinkMedia(asset: nil, path: nil, folder: nil, recursive: false, dryRun: true)
+        let reason = try XCTUnwrap(r.stillMissing.first { $0.asset == a.id.short }?.reason)
+        XCTAssertTrue(reason.contains("its folder is still there"), reason)
+        XCTAssertTrue(reason.contains(root.appendingPathComponent("original").lastPathComponent), reason)
+        let gone = try await missingAsset("B.mp4", movedTo: "elsewhere")
+        try FileManager.default.removeItem(at: root.appendingPathComponent("original"))   // its folder is gone too
+        let r2 = try await x.relinkMedia(asset: gone.id.short, path: nil, folder: nil, recursive: false, dryRun: true)
+        XCTAssertTrue(r2.stillMissing.first?.reason.contains("choose a folder to search") == true, r2.stillMissing.first?.reason ?? "")
+    }
+
     func testRelinkRefusesAShorterOrDifferentFile() async throws {
         let a = try await missingAsset("interview.mp4", movedTo: "moved")
         // The timeline plays further into the asset than a replacement has.

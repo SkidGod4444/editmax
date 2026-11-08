@@ -24,6 +24,7 @@ final class WelcomeTourTests: XCTestCase {
             XCTAssertGreaterThan(b.line.count, b.caption.count, "the voice says more than the row")
             XCTAssertGreaterThanOrEqual(b.readingTime, 1.8)
         }
+        for b in DemoBeat.script { XCTAssertNotNil(DemoVoice.url(b.voice), "the '\(b.voice)' line is recorded (scripts/demo-voice.py)") }
         for name in DemoBeat.media {
             XCTAssertNotNil(Bundle.main.path(forResource: (name as NSString).deletingPathExtension, ofType: "mp4"), "\(name) is in the app")
         }

@@ -57,15 +57,15 @@ def to_m4a(wav, out):
         f.write(wav)
         tmp = f.name
     try:
-        subprocess.run(["afconvert", "-f", "m4af", "-d", "aac", "-b", "96000", tmp, str(out)], check=True)
+        subprocess.run(["afconvert", "-f", "m4af", "-d", "aac", "-b", "64000", tmp, str(out)], check=True)
     finally:
         os.unlink(tmp)
 
 
 def main():
     a = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    a.add_argument("--speaker", required=True, help="a Bulbul speaker, e.g. anushka, vidya, manisha, arya, abhilash, karun, hitesh")
-    a.add_argument("--model", default="bulbul:v2")
+    a.add_argument("--speaker", required=True, help="a Bulbul v3 speaker (the error for an unknown one lists them)")
+    a.add_argument("--model", default="bulbul:v3")
     a.add_argument("--language", default="en-IN")
     a.add_argument("--pace", type=float, default=1.0)
     a.add_argument("--sample", metavar="DIR", help="record only the first line, into DIR, to hear the voice")

@@ -252,8 +252,10 @@ back (a menu that still starts tracking is closed at once). `ui_select {target, 
 and runs the chosen item (`performActionForItem`), sets an AppKit `NSPopUpButton` or `NSSegmentedControl` directly,
 and with no option lists the choices. A menu caught with its items not built yet (built by a delegate as it opens; a
 SwiftUI menu button on macOS 26 came back empty on CI) is filled first the way NSMenu would at the start of tracking
-(`UIDriver.fill`: `menuNeedsUpdate`, `numberOfItems(in:)`); one still empty says its control, menu and delegate classes
-in the error and the `ui-select-empty-menu` log. In the background `ui_click` on a picker turns the caught menu into an error that
+(`UIDriver.fill`: `menuNeedsUpdate`, `numberOfItems(in:)`, and for a caught menu still empty `menuWillOpen`, with
+`menuDidClose` after the choice runs). An AppKit pop-up button with no items yet (macOS 26's `SwiftUIPopupButton` for a
+SwiftUI menu button, whose `SwiftUIMenu` is built when pressed) is pressed with the menu caught instead of set directly.
+One still empty says its control, menu and delegate classes in the error and the `ui-select-empty-menu` log. In the background `ui_click` on a picker turns the caught menu into an error that
 points at `ui_select` and lists the options. (A SwiftUI segmented picker bound to an `@Published` value logs SwiftUI's
 "Publishing changes from within view updates" for a real click too; it is not the driver's.)
 

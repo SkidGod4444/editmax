@@ -498,7 +498,11 @@ enum UIDriver {
 
     /// A menu whose items are built only as it opens (a delegate's `menuNeedsUpdate` or `numberOfItems(in:)`): build
     /// them now, as NSMenu would at the start of tracking. On macOS 26 a SwiftUI menu button was caught with no items.
-    static func fill(_ menu: NSMenu) {
+    /// With `opening`, a menu still empty is told it opens (`menuWillOpen`), for a delegate that builds its items then;
+    /// the closure returned tells it the menu closed, and is called once the choice has run.
+    @discardableResult
+    static func fill(_ menu: NSMenu, opening: Bool = false) -> (() -> Void)? {
+        defer { menu.update() }   // validation
         if let d = menu.delegate {
             d.menuNeedsUpdate?(menu)
             if let n = d.numberOfItems?(in: menu), n > 0, menu.items.count != n {
@@ -509,8 +513,12 @@ enum UIDriver {
                     if d.menu?(menu, update: item, at: i, shouldCancel: false) == false { break }
                 }
             }
+            if opening, menu.items.allSatisfy({ $0.isSeparatorItem || $0.isHidden }) {
+                d.menuWillOpen?(menu)
+                return { [weak menu, weak d] in if let menu { d?.menuDidClose?(menu) } }
+            }
         }
-        menu.update()   // validation
+        return nil
     }
 
     /// What an empty menu came from, so a report from another macOS says what it was.
@@ -547,7 +555,13 @@ enum UIDriver {
         let pick: (title: String, what: String, run: () -> Void)
         let titles: [String]
         var flashed = false
-        if let c = control(in: t.window, around: t.area) {
+        var closeMenu: (() -> Void)?
+        defer { closeMenu?() }
+        // A pop-up button whose menu is built only when it is pressed (SwiftUI's menu button on macOS 26: a
+        // SwiftUIPopupButton with an empty SwiftUIMenu until mouse-down) is pressed like a SwiftUI control below.
+        let found = control(in: t.window, around: t.area)
+        let builtOnPress = (found as? NSPopUpButton).map { choices($0).isEmpty } ?? false
+        if let c = found, !builtOnPress {
             // AppKit controls are set directly.
             let what = c is NSSegmentedControl ? "segmented control" : (c as? NSPopUpButton)?.pullsDown == true ? "menu button" : "pop-up menu"
             if let p = c as? NSPopUpButton {
@@ -588,10 +602,10 @@ enum UIDriver {
             }
             guard let menu else { throw EditError.invalid("\(name) is not a pop-up menu, menu button or segmented control (no menu comes from it); use ui_click") }
             flashed = MenuCapture.opened
-            fill(menu)
+            closeMenu = fill(menu, opening: true)
             let list = choices(menu, skipFirst: false)
             titles = list.map(\.title)
-            let empty = emptyMenuDetail(menu, control: nil)   // a SwiftUI control: no AppKit control under the point
+            let empty = emptyMenuDetail(menu, control: found)
             if !empty.isEmpty { DebugLog.event("ui-select-empty-menu", ["name": name, "detail": empty]) }
             guard let option, !option.isEmpty else { return "\(name) is a menu; its options are: \(titles.joined(separator: ", "))\(empty)" }
             guard let i = match(option, in: titles) else { throw EditError.invalid("\(name) has no option '\(option)'; its options are: \(titles.joined(separator: ", "))\(empty)") }

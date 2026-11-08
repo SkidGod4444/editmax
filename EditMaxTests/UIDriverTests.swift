@@ -238,6 +238,36 @@ final class UIDriverTests: XCTestCase {
 
     // MARK: M3 — pop-up menus without a menu
 
+    /// macOS 26's SwiftUI menu button, as CI showed it: an NSPopUpButton whose menu stays empty until mouse-down builds
+    /// it. ui_select presses it with the menu caught and chooses from what the press built.
+    func testSelectPressesAPopUpButtonThatBuildsItsMenuOnPress() async throws {
+        final class Built: @unchecked Sendable { var picked: [String] = [] }
+        final class LazyPopUp: NSPopUpButton {
+            var built: Built?
+            override func mouseDown(with event: NSEvent) {
+                if let menu, menu.items.isEmpty {
+                    menu.addItem(withTitle: "Add", action: nil, keyEquivalent: "")   // a pull-down's own title
+                    for t in ["Title", "Lower third"] {
+                        let i = NSMenuItem(title: t, action: #selector(pick(_:)), keyEquivalent: ""); i.target = self; menu.addItem(i)
+                    }
+                }
+                super.mouseDown(with: event)
+            }
+            @objc func pick(_ i: NSMenuItem) { built?.picked.append(i.title) }
+        }
+        struct Lazy: NSViewRepresentable {
+            let built: Built
+            func makeNSView(context: Context) -> LazyPopUp { let b = LazyPopUp(frame: .zero, pullsDown: true); b.built = built; return b }
+            func updateNSView(_ v: LazyPopUp, context: Context) {}
+        }
+        let built = Built()
+        let w = host(Lazy(built: built).frame(width: 120, height: 24).uiFrame("t.lazy"), size: CGSize(width: 200, height: 60), ordered: true)
+        pump(w)
+        let said = try await UIDriver.select(try UIDriver.target(.string("t.lazy"), dx: 0, dy: 0, in: w), option: "Lower third")
+        pump(w)
+        XCTAssertEqual(built.picked, ["Lower third"], said)
+    }
+
     func testSelectSetsPickersAndMenusWithoutOpeningAMenu() async throws {
         let m = DriverModel()
         struct V: View {

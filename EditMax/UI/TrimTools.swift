@@ -11,9 +11,8 @@ enum EditTool: String, CaseIterable, Identifiable {
     case select, roll, slip, slide
     var id: String { rawValue }
     var title: String { rawValue.capitalized }
-    /// The plain key that picks the tool (EditorActions.handle).
-    var key: String { switch self { case .select: "a"; case .roll: "r"; case .slip: "y"; case .slide: "u" } }
-    init?(key: String) { guard let t = Self.allCases.first(where: { $0.key == key }) else { return nil }; self = t }
+    /// The shortcut that picks the tool (A, R, Y, U unless changed in Settings ▸ Shortcuts).
+    var action: ShortcutAction { switch self { case .select: .toolSelect; case .roll: .toolRoll; case .slip: .toolSlip; case .slide: .toolSlide } }
     var symbol: String {
         switch self {
         case .select: "cursorarrow"
@@ -22,19 +21,25 @@ enum EditTool: String, CaseIterable, Identifiable {
         case .slide: "rectangle.split.3x1"
         }
     }
-    var help: String {
+    var what: String {
         switch self {
-        case .select: "Select (A): drag a clip to move it, its edges to trim"
-        case .roll: "Roll (R): drag the edge between two touching clips to move the cut; one gets longer, the other shorter"
-        case .slip: "Slip (Y): drag a clip to show an earlier or later part of its media in the same place"
-        case .slide: "Slide (U): drag a clip between its neighbours; they get longer or shorter to make room"
+        case .select: "drag a clip to move it, its edges to trim"
+        case .roll: "drag the edge between two touching clips to move the cut; one gets longer, the other shorter"
+        case .slip: "drag a clip to show an earlier or later part of its media in the same place"
+        case .slide: "drag a clip between its neighbours; they get longer or shorter to make room"
         }
+    }
+    /// "Roll (R): drag the edge…", with the key in use.
+    @MainActor var help: String {
+        let k = ShortcutStore.shared.display(action)
+        return "\(title)\(k.isEmpty ? "" : " (\(k))"): \(what)"
     }
 }
 
 /// The four tool buttons in the timeline toolbar.
 struct TrimToolPicker: View {
     @Binding var tool: EditTool
+    @ObservedObject private var keys = ShortcutStore.shared   // the tooltips name the keys in use
     var body: some View {
         HStack(spacing: 0) {
             ForEach(EditTool.allCases) { t in

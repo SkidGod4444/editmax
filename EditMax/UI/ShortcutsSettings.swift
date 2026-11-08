@@ -184,6 +184,7 @@ struct ShortcutsSettings: View {
     func start(_ t: Target, _ done: @escaping (KeyCombo) -> Void) {
         stop()
         target = t
+        PushToTalk.shared.paused = true
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
             MainActor.assumeIsolated {
                 guard let self else { return e }
@@ -197,5 +198,6 @@ struct ShortcutsSettings: View {
     func stop() {
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil; target = nil
+        PushToTalk.shared.paused = false
     }
 }

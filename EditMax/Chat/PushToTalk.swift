@@ -48,6 +48,9 @@ import AppKit
 
     var key: Key { Key(rawValue: AppSettings.shared.pushToTalk) ?? .rightOption }
 
+    /// Off while Settings ▸ Shortcuts records a key: holding ⌥ for an ⌥ chord there is not a request to talk.
+    var paused = false { didSet { if paused { perform(machine.keyUp()) } } }
+
     func install() {
         guard monitor == nil else { return }
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .keyDown]) { [weak self] e in
@@ -62,7 +65,7 @@ import AppKit
 
     private func handle(_ e: NSEvent) {
         let key = self.key
-        guard let code = key.keyCode else { return }
+        guard !paused, let code = key.keyCode else { return }
         if e.type == .keyDown { perform(machine.otherInput()); return }
         let others = e.modifierFlags.intersection([.shift, .control, .option, .command, .function]).subtracting(key.modifier)
         if e.keyCode == code {

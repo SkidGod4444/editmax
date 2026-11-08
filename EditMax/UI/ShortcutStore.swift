@@ -335,10 +335,18 @@ enum ShortcutConflicts {
         for d in list where (d[kHISymbolicHotKeyEnabled as String] as? Bool) == true {
             guard let code = d[kHISymbolicHotKeyCode as String] as? Int, let mods = d[kHISymbolicHotKeyModifiers as String] as? Int,
                   let c = systemCombo(code: code, carbon: mods) else { continue }
+            guard appLevel[c] == nil else { continue }
             out[c] = systemName(c) ?? out[c] ?? ""
         }
         return out
     }
+
+    /// Entries of macOS's table that work inside one kind of window, not system-wide: they never take a key from an
+    /// EditMax project window.
+    static let appLevel: [KeyCombo: String] = [
+        KeyCombo("f", [.command, .shift]): "Recents in Open and Save panels and Finder",
+        KeyCombo("/", [.command, .shift]): "the Help menu's search",
+    ]
 
     /// One entry of macOS's table as a key EditMax can bind, or nil. The table marks Globe (fn) chords with the Fn bit:
     /// 🌐F, 🌐A, 🌐M are not F, A, M, and EditMax keys have no Globe, so those are skipped. Arrows, Home/End/Page and
@@ -358,6 +366,7 @@ enum ShortcutConflicts {
         switch (c.key, c.modifierFlags) {
         case ("space", [.command]): "Spotlight"
         case ("space", [.command, .option]): "a Finder search window"
+        case ("space", [.command, .shift]): "Visual Intelligence"
         case ("space", [.control]), ("space", [.control, .option]): "switching input sources"
         case ("space", [.control, .command]): "Emoji & Symbols"
         case ("3", [.command, .shift]), ("4", [.command, .shift]), ("5", [.command, .shift]): "screenshots"

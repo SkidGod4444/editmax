@@ -109,6 +109,24 @@ final class ShortcutStoreTests: XCTestCase {
         XCTAssertEqual(listed.first, .systemListed); XCTAssertFalse(listed.first!.blocks, "unnamed: a warning, not a refusal")
     }
 
+    func testTheDefaultsMeetNothingMacOSTakesHere() {
+        let system = ShortcutConflicts.systemShortcuts()
+        XCTAssertNil(system[KeyCombo("f", [.command, .shift])], "⇧⌘F is Recents in Open and Save panels, not system-wide")
+        for a in ShortcutAction.allCases {
+            for c in a.defaults {
+                let named = ShortcutConflicts.clashes(c, system: system, installed: { _ in false }).filter { if case .otherApp = $0 { return false }; return true }
+                XCTAssertTrue(named.isEmpty, "\(c.display) (\(a.rawValue)): \(named.map(\.message))")
+            }
+        }
+    }
+
+    func testTheToolTipsNameTheKeyInUse() {
+        XCTAssertTrue(EditTool.roll.help.hasPrefix("Roll (R): "))
+        ShortcutStore.shared.set(.toolRoll, [KeyCombo("e")])
+        defer { ShortcutStore.shared.reset(.toolRoll) }
+        XCTAssertTrue(EditTool.roll.help.hasPrefix("Roll (E): "))
+    }
+
     func testRecordedKeysComeFromRealKeyPresses() throws {
         let e = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.command, .shift], timestamp: 0, windowNumber: 0,
                                                context: nil, characters: "+", charactersIgnoringModifiers: "+", isARepeat: false, keyCode: 24))

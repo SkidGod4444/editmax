@@ -335,7 +335,8 @@ at launch is closed 0.3 s in. Under XCTest (`AppDelegate.isTesting`) none of thi
 `App/WelcomeTour.swift`. Six steps over the first project window, once (`tour.completedVersion`; closing it counts,
 Help ▸ Welcome Tour runs it again, `-EditMaxTourDemo YES` starts it anyway in a Debug check): add media, put a clip on the
 timeline, play, split, open Chat, export. A step finishes on what the person does, read four times a second from the
-window (`TourSnapshot`: asset and clip counts, playing, the Chat tab, exporting), and the tour moves on by itself; Next,
+window (`TourSnapshot`: asset and clip counts, playing, the Chat tab, exporting), and the tour moves on by itself. A
+step already done when it comes up (a project with media in it) says so and waits for Next. Next,
 Back and the dots go anywhere already reached (`TourProgress`, pure). It starts after the splash and the crash-report
 card, never under a modal session, and only with EditMax in front. The card and a click-through cursor layer are
 non-key child windows of the project window, so the keyboard stays where the steps happen. The cursor flies on a

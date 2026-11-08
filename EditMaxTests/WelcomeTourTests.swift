@@ -39,6 +39,26 @@ final class WelcomeTourTests: XCTestCase {
         XCTAssertFalse(p.next(s), "past the last step the tour is over")
     }
 
+    func testStepsAlreadyDoneWaitForNext() {
+        // A project that already has media and clips, playing: the first three steps are done before they show.
+        var s = TourSnapshot(assets: 3, clips: 2, playing: true, firstAsset: "a.mov")
+        var p = TourProgress(s)
+        XCTAssertTrue(p.isDone)
+        XCTAssertTrue(p.wasFoundDone, "shown as already done")
+        XCTAssertFalse(p.observe(s), "and it does not move the tour on by itself")
+        XCTAssertTrue(p.next(s))
+        XCTAssertTrue(p.wasFoundDone)
+        XCTAssertFalse(p.observe(s))
+        XCTAssertTrue(p.next(s))
+        XCTAssertTrue(p.wasFoundDone, "playing already")
+        XCTAssertTrue(p.next(s))
+        XCTAssertEqual(p.step, .split)
+        XCTAssertFalse(p.isDone, "a cut is never done before its step")
+        s.clips = 3
+        XCTAssertTrue(p.observe(s))
+        XCTAssertFalse(p.wasFoundDone, "done while showing: this one moves on")
+    }
+
     func testDotsGoOnlyToStepsAlreadyReached() {
         let s = TourSnapshot()
         var p = TourProgress(s)
@@ -113,6 +133,17 @@ final class WelcomeTourTests: XCTestCase {
         snap.assets = 1
         spin(0.6)   // the 4 Hz check sees it, then the step moves on by itself
         XCTAssertEqual(tour.progress?.step, .timeline, "adding a file moved the tour on")
+        snap.clips = 1
+        tour.close(finished: false)
+        tour.start(doc, in: window)
+        spin(0.6)
+        XCTAssertEqual(tour.progress?.step, .media, "a project that has media already: the step waits for Next")
+        tour.next()
+        spin(0.6)
+        XCTAssertEqual(tour.progress?.step, .timeline, "so does one with clips")
+        tour.next()
+        XCTAssertEqual(tour.progress?.step, .play)
+        tour.back()
         tour.back()
         XCTAssertEqual(tour.progress?.step, .media)
         tour.next()

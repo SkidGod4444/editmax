@@ -99,15 +99,18 @@ struct TourProgress: Equatable {
     /// The furthest step shown; the dots go back to any of them.
     private(set) var reached = 0
     private(set) var done: Set<Int> = []
+    /// Steps that were already done when they came up (a project with media in it): they wait for Next.
+    private(set) var foundDone: Set<Int> = []
     private(set) var start = TourSnapshot()
 
-    init(_ s: TourSnapshot) { start = s }
+    init(_ s: TourSnapshot) { start = s; checkFoundDone(s) }
 
     var step: TourStep { TourStep.allCases[index] }
     var isLast: Bool { index == TourStep.allCases.count - 1 }
     var isDone: Bool { done.contains(index) }
+    var wasFoundDone: Bool { foundDone.contains(index) }
 
-    /// True the moment the current step is done.
+    /// True the moment the current step is done, by the person while it is showing: only that moves the tour on.
     mutating func observe(_ s: TourSnapshot) -> Bool {
         guard !isDone, step.isDone(s, since: start) else { return false }
         done.insert(index)
@@ -128,6 +131,13 @@ struct TourProgress: Equatable {
         index = i
         reached = max(reached, i)
         start = s
+        checkFoundDone(s)
+    }
+
+    private mutating func checkFoundDone(_ s: TourSnapshot) {
+        guard !done.contains(index), step.isDone(s, since: s) else { return }
+        done.insert(index)
+        foundDone.insert(index)
     }
 }
 
@@ -494,7 +504,7 @@ struct TourCardView: View {
 
     @ViewBuilder private var status: some View {
         if progress.isDone {
-            Label("Nice", systemImage: "checkmark.circle.fill").font(.callout.weight(.semibold)).foregroundStyle(.green)
+            Label(progress.wasFoundDone ? "Already done" : "Nice", systemImage: "checkmark.circle.fill").font(.callout.weight(.semibold)).foregroundStyle(.green)
                 .transition(.scale(scale: 0.6).combined(with: .opacity))
         } else {
             Text(step.keys.isEmpty ? "Your turn" : "Your turn: press it").font(.callout).foregroundStyle(.secondary)

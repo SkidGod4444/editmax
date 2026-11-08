@@ -45,8 +45,10 @@
 	<true/>
 	<key>NSHumanReadableCopyright</key>
 	<string>© 2026 Saidev Dhal</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>EditMax listens when you press the microphone in the chat, so you can speak to the agent instead of typing.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>EditMax turns the speech in your footage into captions, on this Mac.</string>
+	<string>EditMax turns the speech in your footage into captions, and what you say to the agent into text, on this Mac.</string>
 	<key>SUAutomaticallyUpdate</key>
 	<true/>
 	<key>SUEnableAutomaticChecks</key>

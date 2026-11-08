@@ -18,6 +18,7 @@ OUT="$ROOT/build/release"; rm -rf "$OUT"; mkdir -p "$OUT"
 DD="$ROOT/build/DerivedData-release"
 APP="$DD/Build/Products/Release/EditMax.app"
 BUN_ENT="$ROOT/scripts/signing/bun-runtime.entitlements"
+APP_ENT="$ROOT/scripts/signing/editmax.entitlements"   # the chat's microphone under the hardened runtime
 IDENTITY="${SIGN_IDENTITY:--}"
 NOTARIZE=""; NOTARY=()
 if [ -n "${NOTARY_PROFILE:-}" ]; then NOTARY=(--keychain-profile "$NOTARY_PROFILE")
@@ -76,8 +77,9 @@ codesign --force --options runtime --sign "$IDENTITY" $([ "$IDENTITY" != "-" ] &
 sign "$SPARKLE/Autoupdate"
 sign "$SPARKLE/Updater.app"
 find "$APP/Contents" \( -name "*.dylib" -o -name "*.framework" \) -prune -print 2>/dev/null | while read -r f; do sign "$f"; done
-sign "$APP"
+sign "$APP" "$APP_ENT"
 codesign --verify --deep --strict "$APP"
+codesign -d --entitlements - "$APP" 2>/dev/null | grep -q "device.audio-input" || { echo "package: the app lost its microphone entitlement" >&2; exit 1; }
 # The bundled runtimes must still start under the hardened runtime (without their entitlements they die at launch).
 "$APP/Contents/Resources/bin/codemax" --version >/dev/null || { echo "package: bundled codemax does not start under the hardened runtime" >&2; exit 1; }
 

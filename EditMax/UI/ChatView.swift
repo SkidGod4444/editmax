@@ -224,19 +224,20 @@ struct ChatView: View {
     private var composer: some View {
         GlassGroup(spacing: 8) {
             HStack(alignment: .bottom, spacing: 8) {
-                TextField("Tell \(workerName) what to change…", text: $chat.input, axis: .vertical)
+                TextField(chat.dictation.isActive ? "Listening… speak, then press Return" : "Tell \(workerName) what to change…", text: $chat.input, axis: .vertical)
                     .textFieldStyle(.plain).font(.body).lineLimit(1...6)
-                    .onSubmit { chat.send() }
+                    .onSubmit { chat.sendOrFinishDictation() }
                     .padding(.horizontal, 14).padding(.vertical, 8)
                     .frame(minHeight: 32)
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fieldHeight = $0 }
                     .liquidGlass(in: fieldShape)
                     .uiFrame("chat.input")
+                MicButton(dictation: chat.dictation) { chat.toggleDictation() }
                 if chat.isRunning {
                     Button { chat.stop() } label: { Image(systemName: "stop.fill").font(.system(size: 12, weight: .bold)).frame(width: 18, height: 18) }
                         .glassButtonStyle(prominent: true).buttonBorderShape(.circle).tint(.accentColor).focusable(false).help("Stop").pointer().uiFrame("chat.stop")
                 } else {
-                    Button { chat.send() } label: { Image(systemName: "arrow.up").font(.system(size: 14, weight: .semibold)).frame(width: 18, height: 18) }
+                    Button { chat.sendOrFinishDictation() } label: { Image(systemName: "arrow.up").font(.system(size: 14, weight: .semibold)).frame(width: 18, height: 18) }
                         .glassButtonStyle(prominent: true).buttonBorderShape(.circle).tint(.accentColor).focusable(false).keyboardShortcut(.return, modifiers: .command)
                         .help("Send (⌘↩)")
                         .pointer().disabled(chat.input.trimmingCharacters(in: .whitespaces).isEmpty || (chat.backend == .apiKey ? !chat.apiReady : !chat.agentReady)).uiFrame("chat.send")
@@ -244,6 +245,7 @@ struct ChatView: View {
             }
         }
         .padding(12)
+        .overlay(alignment: .top) { DictationProblem(dictation: chat.dictation) }
         .frame(maxWidth: Self.columnWidth)
         .frame(maxWidth: .infinity)
     }
@@ -251,6 +253,58 @@ struct ChatView: View {
     /// A capsule for a one-line field; once it wraps, a continuous rounded rectangle so the corners stay clear of the text.
     private var fieldShape: AnyShape {
         fieldHeight > 40 ? AnyShape(RoundedRectangle(cornerRadius: 16, style: .continuous)) : AnyShape(Capsule())
+    }
+}
+
+/// Speak instead of typing: listens while red, the ring following the voice. ⇧⌘D does the same from the menu.
+private struct MicButton: View {
+    @ObservedObject var dictation: Dictation
+    let action: () -> Void
+    var body: some View {
+        let on = dictation.isActive
+        Button(action: action) {
+            ZStack {
+                if dictation.state == .preparing || dictation.state == .finishing {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: on ? "mic.fill" : "mic").font(.system(size: 13, weight: .semibold))
+                }
+            }
+            .frame(width: 18, height: 18)
+        }
+        .glassButtonStyle(prominent: on).buttonBorderShape(.circle).tint(on ? .red : .secondary)
+        .background { if dictation.state == .listening { MicRing(level: dictation.level) } }
+        .focusable(false)
+        .help(on ? "Stop listening (⇧⌘D). Return sends." : "Speak instead of typing (⇧⌘D)")
+        .accessibilityLabel(on ? "Stop listening" : "Dictate")
+        .pointer().uiFrame("chat.mic")
+    }
+}
+
+/// A red ring that grows with the microphone level; its own view, so only it redraws as the level moves.
+private struct MicRing: View {
+    @ObservedObject var level: MicLevel
+    var body: some View {
+        Circle().stroke(Color.red.opacity(0.55), lineWidth: 2)
+            .scaleEffect(1 + CGFloat(level.value) * 0.45)
+            .animation(.easeOut(duration: 0.12), value: level.value)
+            .allowsHitTesting(false)
+    }
+}
+
+/// Why listening stopped (no microphone permission, no microphone), above the composer until the next try.
+private struct DictationProblem: View {
+    @ObservedObject var dictation: Dictation
+    var body: some View {
+        if let p = dictation.problem {
+            HStack(alignment: .top, spacing: 6) {
+                Image(systemName: "mic.slash").foregroundStyle(.secondary)
+                Text(p).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Button { dictation.problem = nil } label: { Image(systemName: "xmark").font(.caption2) }.buttonStyle(.borderless).focusable(false)
+            }
+            .padding(8).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .offset(y: -44).padding(.horizontal, 12)
+        }
     }
 }
 

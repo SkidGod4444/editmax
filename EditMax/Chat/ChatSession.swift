@@ -41,6 +41,8 @@ final class ChatSession: ObservableObject {
 
     @Published var items: [Item] = []
     @Published var input = ""
+    /// Speaking instead of typing (the composer's microphone, ⇧⌘D): what is heard is written into `input` as it comes.
+    let dictation = Dictation()
     @Published var isRunning = false {
         didSet {   // an agent reply in progress holds back the update popup's restart
             guard isRunning != oldValue else { return }
@@ -96,6 +98,7 @@ final class ChatSession: ObservableObject {
         model = UserDefaults.standard.string(forKey: "chatModel") ?? ""
         runner.onEvent = { [weak self] ev in self?.handle(ev) }
         apiRunner.onEvent = { [weak self] ev in self?.handle(ev) }
+        dictation.onText = { [weak self] t in self?.input = t }
         refreshAgents()
         if backend == .apiKey { refreshProviders() }
         Self.live.add(self)
@@ -185,6 +188,15 @@ final class ChatSession: ObservableObject {
         configuredAPI = nil   // the sidecar is given the keys again on the next message
         refreshProviders()
     }
+
+    /// Send, or while listening: stop, let the last words settle, then send what is in the field.
+    func sendOrFinishDictation() {
+        guard dictation.isActive else { send(); return }
+        Task { input = await dictation.finish(); send() }
+    }
+
+    /// The microphone button and ⇧⌘D: start listening after what is typed, or stop.
+    func toggleDictation() { dictation.toggle(current: input) }
 
     func send() {
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines)

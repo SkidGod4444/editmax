@@ -22,8 +22,14 @@ enum Transcriber {
 
     /// `progress` gets how far through the file it has heard (0–1), from whatever thread the recognizer runs on.
     static func transcribe(url: URL, language: String?, progress: (@Sendable (Double) -> Void)? = nil) async throws -> Transcript {
-        if !usesLegacyEngine, #available(macOS 26, *) { return try await Engine.transcribe(url: url, language: language, progress: progress) }
-        return try await Legacy.transcribe(url: url, language: language, progress: progress)
+        let started = Date()
+        let t: Transcript
+        if !usesLegacyEngine, #available(macOS 26, *) { t = try await Engine.transcribe(url: url, language: language, progress: progress) }
+        else { t = try await Legacy.transcribe(url: url, language: language, progress: progress) }
+        let length = Telemetry.lengthBucket(t.words.last?.end ?? 0), took = Telemetry.lengthBucket(Date().timeIntervalSince(started))
+        let engine = usesLegacyEngine ? "legacy" : "speech-analyzer"
+        await MainActor.run { Telemetry.shared.capture(.transcribeFinished, ["length": length, "took": took, "engine": engine]) }
+        return t
     }
 
     /// SFSpeechRecognizer path (macOS 10.15+). Needs the speech-recognition permission (asked once). On-device recognition has no

@@ -43,7 +43,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidBecomeActive(_ notification: Notification) {
         if Date().timeIntervalSince(launchedAt) < 2, AppSettings.bool(AppSettings.Key.showSplash, default: true) { SplashScreen.shared.show(); SplashScreen.shared.dismissWhenReady() }
         // Just updated? "EditMax x.y is installed", once, after the splash (at once when there is none).
-        if !Self.isTesting { SplashScreen.shared.afterDismiss { UpdatePrompt.shared.showInstalledNoteIfUpdated() } }
+        // Not agreed yet to crash reports and usage? The card, after the splash (and after the installed note).
+        if !Self.isTesting { SplashScreen.shared.afterDismiss { UpdatePrompt.shared.showInstalledNoteIfUpdated(); TelemetryPrompt.shared.askIfNeeded() } }
     }
     /// True when the app is the host of the unit tests: no splash, no Home, no untitled document handling.
     static let isTesting = NSClassFromString("XCTestCase") != nil || ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil

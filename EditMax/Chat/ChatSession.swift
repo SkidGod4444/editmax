@@ -195,11 +195,13 @@ final class ChatSession: ObservableObject {
             guard CodemaxRunner.bundledBinary != nil else { items.append(Item(kind: .error, text: "The agent runtime is missing from this build of EditMax.")); return }
             input = ""
             items.append(Item(kind: .user, text: text))
+            Telemetry.shared.capture(.agentTurn, ["backend": "agent"])
             runAgent(prompt: withHandoff(text))
         case .apiKey:
             if let problem = apiProblem { items.append(Item(kind: .error, text: problem)); return }
             input = ""
             items.append(Item(kind: .user, text: text))
+            Telemetry.shared.capture(.agentTurn, ["backend": "api-key"])
             runAPI(prompt: withHandoff(text))
         }
     }
@@ -346,6 +348,7 @@ final class ChatSession: ObservableObject {
             currentAssistant = nil
             // A protocol breakdown or crash in the agent side of an updated codemax counts against the update.
             if backend == .agent, kind == "protocol" || kind == "crashed" { CodemaxUpdater.shared.noteAgentFailure("turn-\(kind)", detail: message) }
+            Telemetry.shared.agentFailed(kind: kind, backend: backend == .agent ? "agent" : "api-key")
             items.append(Item(kind: .error, text: kind == "quota" ? "Out of quota: \(message)" : kind == "auth" ? (backend == .apiKey ? "Key rejected: \(message)" : "Login needed: \(message)") : Self.plainError(message)))
         case .notice(let text):
             items.append(Item(kind: .note, text: text))

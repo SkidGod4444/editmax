@@ -139,6 +139,27 @@ enum ExportService {
 
     /// `ignoreDiskEstimate`: export even when the estimate says the disk is too small (it still stops if the disk runs low).
     static func export(_ project: Project, to url: URL, preset: Preset = .high, ignoreDiskEstimate: Bool = false, progress: ((Double) -> Void)? = nil, depth: Int = 0) async throws -> Result {
+        guard depth == 0 else { return try await exportNow(project, to: url, preset: preset, ignoreDiskEstimate: ignoreDiskEstimate, progress: progress, depth: depth) }
+        // Crash reports and usage (Telemetry): the preset and coarse lengths, never the file.
+        let started = Date(), name = preset.rawValue, length = Telemetry.lengthBucket(project.duration)
+        do {
+            let r = try await exportNow(project, to: url, preset: preset, ignoreDiskEstimate: ignoreDiskEstimate, progress: progress, depth: depth)
+            let took = Telemetry.lengthBucket(Date().timeIntervalSince(started))
+            await MainActor.run { Telemetry.shared.capture(.exportFinished, ["preset": name, "length": length, "took": took]) }
+            return r
+        } catch {
+            // The person's own limits (a full disk, an offline drive, an empty timeline, Cancel) are counted, not reported.
+            let theirs = error is CancellationError || error is DiskTooSmall || error is DiskRanLow || error is EditError
+            let reason = theirs ? String(describing: type(of: error)) : (error as NSError).domain
+            await MainActor.run {
+                Telemetry.shared.capture(.exportFailed, ["preset": name, "length": length, "reason": reason])
+                if !theirs { Telemetry.shared.failed(error, at: "export") }
+            }
+            throw error
+        }
+    }
+
+    private static func exportNow(_ project: Project, to url: URL, preset: Preset, ignoreDiskEstimate: Bool, progress: ((Double) -> Void)?, depth: Int) async throws -> Result {
         guard project.duration > 0 else { throw EditError.invalid("timeline is empty") }
         BusyWork.begin(BusyWork.export); defer { BusyWork.end(BusyWork.export) }   // the update popup waits for it
         try Relink.requireOnline(project)   // names the drive to plug in, before any render starts

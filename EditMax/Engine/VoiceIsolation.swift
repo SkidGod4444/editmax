@@ -244,6 +244,7 @@ final class IsolatedAudio: ObservableObject {
         } catch {
             failed[k] = error.localizedDescription
             DebugLog.error("voice-isolation-failed", error, ["asset": name, "key": k])
+            if !(error is CancellationError) { Telemetry.shared.failed(error, at: "voice-isolation") }
             throw error
         }
     }

@@ -112,7 +112,11 @@ final class InterpolatedVideo: ObservableObject {
             try? FileManager.default.removeItem(at: j.url.deletingPathExtension().appendingPathExtension("part.mov"))
             DebugLog.error("smooth-slow-motion-flow-failed", e, ["key": k])
             return try await ensure(Self.blending(j))
-        } catch { failed[k] = error.localizedDescription; DebugLog.error("smooth-slow-motion-failed", error, ["key": k]); throw error }
+        } catch {
+            failed[k] = error.localizedDescription; DebugLog.error("smooth-slow-motion-failed", error, ["key": k])
+            if !(error is CancellationError) { Telemetry.shared.failed(error, at: "smooth-slow-motion") }
+            throw error
+        }
     }
 
     /// The same render with blend: the key `job` gives it once flow is not available.

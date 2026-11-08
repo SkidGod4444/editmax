@@ -8,6 +8,7 @@ struct EditMaxApp: App {
     @AppStorage("showMenuBarIcon") private var showMenuBarIcon = true
     init() {
         guard !AppDelegate.isTesting else { return }
+        Telemetry.shared.start()   // first, so the crash handler is in place early (only once the person has agreed)
         // Downloaded and added fonts first, before any document window restores and renders (FontLibrary.swift).
         FontLibrary.registerInstalledFonts()
         MCPService.shared.start(); CodemaxInstaller.shared.ensureInstalled(); CodemaxUpdater.shared.start(); AppUpdater.shared.start()
@@ -99,6 +100,8 @@ struct EditorRootView: View {
         .frame(minWidth: 1000, minHeight: 640)
         .onAppear { document.fileURL = fileURL; DocumentRegistry.shared.register(document); player.bind(to: document); DriveWatcher.shared.register(player); if state.chat == nil { state.chat = ChatSession(document: document) }
             FontLibrary.shared.ensureFonts(for: document.project)   // a Google font this Mac lacks downloads now; the picture redraws when it lands
+            Telemetry.shared.capture(.projectOpened, ["length": Telemetry.lengthBucket(document.project.duration),
+                                                      "clips": Telemetry.bucket(Double(document.project.tracks.reduce(0) { $0 + $1.clips.count }), [1, 10, 50, 200, 1000])])
             document.noteLibraryUse()   // the Assets library's "Used in" is right from the moment a project opens
             // Debug affordances (used by automated checks): EDITMAX_INSPECTOR_TAB=chat|agents|history opens that tab;
             // EDITMAX_CHAT_AUTOSEND="..." sends a first chat message on launch.

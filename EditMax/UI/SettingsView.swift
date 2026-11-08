@@ -84,6 +84,19 @@ struct GeneralSettings: View {
                 Text(updateNote)
             }
             Section {
+                LabeledContent("Crash reports and usage") {
+                    Text(telemetryState).foregroundStyle(.secondary).uiFrame("settings.general.telemetry")
+                }
+            } header: {
+                Text("Privacy")
+            } footer: {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("A report when EditMax crashes, and anonymous counts of the features you use (exports, transcripts, the assistant). Never your footage, your words, file names or anything you type.")
+                    Button("What is sent") { NSWorkspace.shared.open(TelemetryPrompt.detailsURL) }
+                        .buttonStyle(.link).pointer().help(TelemetryPrompt.detailsURL.absoluteString).uiFrame("settings.general.telemetryDetails")
+                }
+            }
+            Section {
                 LabeledContent {
                     Button("by Saidev Dhal") { NSWorkspace.shared.open(HomeFooter.makerURL) }
                         .buttonStyle(.link).pointer().help(HomeFooter.makerURL.absoluteString).uiFrame("settings.general.maker")
@@ -91,6 +104,12 @@ struct GeneralSettings: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    @ObservedObject private var telemetry = Telemetry.shared
+    private var telemetryState: String {
+        guard Telemetry.isAvailable() else { return "Off in development builds" }
+        return telemetry.started ? "On" : telemetry.agreed ? "Starts at the next launch" : "Waiting for you to agree"
     }
 
     private var updateNote: String {

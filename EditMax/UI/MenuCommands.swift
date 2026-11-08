@@ -92,32 +92,34 @@ extension EditorActions {
 
 /// Clip ▸ the edits a reel needs most, each with a chord.
 struct ClipCommands: Commands {
+    @ObservedObject private var keys = ShortcutStore.shared
     var body: some Commands {
         CommandMenu("Clip") {
-            Button("Split at Playhead") { postEditorCommand(.split) }.keyboardShortcut("b", modifiers: .command)
-            Button("Add Cross Dissolve") { postEditorCommand(.transition) }.keyboardShortcut("t", modifiers: .command)
-            Button("Add Marker") { postEditorCommand(.marker) }.keyboardShortcut("m", modifiers: [.command, .shift])
+            Button("Split at Playhead") { postEditorCommand(.split) }.keyboardShortcut(keys.menuShortcut(.split))
+            Button("Add Cross Dissolve") { postEditorCommand(.transition) }.keyboardShortcut(keys.menuShortcut(.transition))
+            Button("Add Marker") { postEditorCommand(.marker) }.keyboardShortcut(keys.menuShortcut(.addMarker))
             Divider()
             Menu("Speed") {
-                Button("Slow Motion (0.5×)") { postEditorCommand(.slowMotion) }.keyboardShortcut("1", modifiers: [.command, .control])
-                Button("Normal (1×)") { postEditorCommand(.normalSpeed) }.keyboardShortcut("2", modifiers: [.command, .control])
-                Button("Fast (2×)") { postEditorCommand(.fast) }.keyboardShortcut("3", modifiers: [.command, .control])
+                Button("Slow Motion (0.5×)") { postEditorCommand(.slowMotion) }.keyboardShortcut(keys.menuShortcut(.slowMotion))
+                Button("Normal (1×)") { postEditorCommand(.normalSpeed) }.keyboardShortcut(keys.menuShortcut(.normalSpeed))
+                Button("Fast (2×)") { postEditorCommand(.fast) }.keyboardShortcut(keys.menuShortcut(.fast))
             }
-            Button("Auto-Reframe Selected Clips") { postEditorCommand(.reframe) }.keyboardShortcut("r", modifiers: [.command, .option])
+            Button("Auto-Reframe Selected Clips") { postEditorCommand(.reframe) }.keyboardShortcut(keys.menuShortcut(.reframe))
             Divider()
-            Button("Close Gaps") { postEditorCommand(.closeGaps) }.keyboardShortcut("g", modifiers: [.command, .option])
-            Button("Delete In to Out") { postEditorCommand(.deleteRange) }.keyboardShortcut(.delete, modifiers: [.command, .option])
+            Button("Close Gaps") { postEditorCommand(.closeGaps) }.keyboardShortcut(keys.menuShortcut(.closeGaps))
+            Button("Delete In to Out") { postEditorCommand(.deleteRange) }.keyboardShortcut(keys.menuShortcut(.deleteInOut))
         }
     }
 }
 
 /// Agent ▸ talk to the editor's agent from anywhere in the window.
 struct AgentCommands: Commands {
+    @ObservedObject private var keys = ShortcutStore.shared
     var body: some Commands {
         CommandMenu("Agent") {
-            Button("Ask the Agent…") { postEditorCommand(.askAgent) }.keyboardShortcut("l", modifiers: .command)
-            Button("Speak to the Agent") { postEditorCommand(.dictate) }.keyboardShortcut("d", modifiers: [.command, .shift])
-            Button("Stop the Agent") { postEditorCommand(.stopAgent) }.keyboardShortcut(".", modifiers: .command)
+            Button("Ask the Agent…") { postEditorCommand(.askAgent) }.keyboardShortcut(keys.menuShortcut(.askAgent))
+            Button("Speak to the Agent") { postEditorCommand(.dictate) }.keyboardShortcut(keys.menuShortcut(.dictate))
+            Button("Stop the Agent") { postEditorCommand(.stopAgent) }.keyboardShortcut(keys.menuShortcut(.stopAgent))
             Divider()
             PushToTalkMenuLine()
         }
@@ -126,30 +128,32 @@ struct AgentCommands: Commands {
 
 /// View ▸ the inspector's tabs and the timeline's zoom; File ▸ Import Media….
 struct PanelCommands: Commands {
+    @ObservedObject private var keys = ShortcutStore.shared
     var body: some Commands {
         CommandGroup(after: .toolbar) {
             Divider()
-            Button("Inspector") { postEditorCommand(.showInspector) }.keyboardShortcut("1", modifiers: .command)
-            Button("Chat") { postEditorCommand(.showChat) }.keyboardShortcut("2", modifiers: .command)
-            Button("Agents") { postEditorCommand(.showAgents) }.keyboardShortcut("3", modifiers: .command)
-            Button("History") { postEditorCommand(.showHistory) }.keyboardShortcut("4", modifiers: .command)
+            Button("Inspector") { postEditorCommand(.showInspector) }.keyboardShortcut(keys.menuShortcut(.showInspector))
+            Button("Chat") { postEditorCommand(.showChat) }.keyboardShortcut(keys.menuShortcut(.showChat))
+            Button("Agents") { postEditorCommand(.showAgents) }.keyboardShortcut(keys.menuShortcut(.showAgents))
+            Button("History") { postEditorCommand(.showHistory) }.keyboardShortcut(keys.menuShortcut(.showHistory))
             Divider()
-            Button("Zoom In Timeline") { postEditorCommand(.zoomIn) }.keyboardShortcut("=", modifiers: .command)
-            Button("Zoom Out Timeline") { postEditorCommand(.zoomOut) }.keyboardShortcut("-", modifiers: .command)
+            Button("Zoom In Timeline") { postEditorCommand(.zoomIn) }.keyboardShortcut(keys.menuShortcut(.zoomIn))
+            Button("Zoom Out Timeline") { postEditorCommand(.zoomOut) }.keyboardShortcut(keys.menuShortcut(.zoomOut))
         }
         CommandGroup(before: .saveItem) {
-            Button("Import Media…") { postEditorCommand(.importMedia) }.keyboardShortcut("i", modifiers: .command)
+            Button("Import Media…") { postEditorCommand(.importMedia) }.keyboardShortcut(keys.menuShortcut(.importMedia))
         }
     }
 }
 
 /// Help ▸ Welcome Tour, Keyboard Shortcuts.
 struct HelpCommands: Commands {
+    @ObservedObject private var keys = ShortcutStore.shared
     @Environment(\.openWindow) private var openWindow
     var body: some Commands {
         CommandGroup(after: .help) {
             Button("Welcome Tour") { WelcomeTour.shared.replay() }
-            Button("Keyboard Shortcuts") { openWindow(id: KeyboardShortcutsView.windowID) }.keyboardShortcut("/", modifiers: .command)
+            Button("Keyboard Shortcuts") { openWindow(id: KeyboardShortcutsView.windowID) }.keyboardShortcut(keys.menuShortcut(.keyboardShortcuts))
         }
     }
 }
@@ -159,89 +163,59 @@ private struct PushToTalkMenuLine: View {
     @ObservedObject private var settings = AppSettings.shared
     var body: some View {
         let key = PushToTalk.Key(rawValue: settings.pushToTalk) ?? .rightOption
-        if let s = key.symbol { Text("Push to Talk: hold \(s)") } else { Text("Push to Talk: off (Settings ▸ Assistant)") }
+        if let s = key.symbol { Text("Push to Talk: hold \(s)") } else { Text("Push to Talk: off (Settings ▸ Shortcuts)") }
     }
 }
 
 // MARK: Keyboard Shortcuts window
 
 /// Every key in one place, the plain editor keys included: they are not in the menus, so this is where they are found.
+/// The keys are the ones in use (Settings ▸ Shortcuts changes them).
 struct KeyboardShortcutsView: View {
     static let windowID = "keyboard-shortcuts"
-    struct Row: Identifiable { let keys: String; let what: String; var id: String { keys + what } }
-    struct Section: Identifiable { let title: String; let rows: [Row]; var id: String { title } }
+    @ObservedObject private var store = ShortcutStore.shared
+    @ObservedObject private var settings = AppSettings.shared
+    @Environment(\.openSettings) private var openSettings
 
-    static let sections: [Section] = [
-        Section(title: "Playback", rows: [
-            Row(keys: "Space", what: "Play or pause"),
-            Row(keys: "J  K  L", what: "Play backward, pause, play forward (press again to go faster)"),
-            Row(keys: "←  →", what: "One frame back or forward (⇧ for ten)"),
-            Row(keys: "Home  End", what: "Go to the start or the end"),
-            Row(keys: "[  ]", what: "Previous or next keyframe of the selected clips"),
-        ]),
-        Section(title: "Marking", rows: [
-            Row(keys: "I  O", what: "Mark in, mark out"),
-            Row(keys: "X", what: "Clear in and out"),
-            Row(keys: "⌥⌘⌫", what: "Delete in to out, closing the gap"),
-            Row(keys: "M  or  ⇧⌘M", what: "Add a marker at the playhead"),
-        ]),
-        Section(title: "Editing", rows: [
-            Row(keys: "S  or  ⌘B", what: "Split the selected clips at the playhead"),
-            Row(keys: "Delete", what: "Remove the selection"),
-            Row(keys: "⌘T", what: "Cross dissolve into the selected clips"),
-            Row(keys: "⌃⌘1  ⌃⌘2  ⌃⌘3", what: "Speed: slow motion, normal, fast"),
-            Row(keys: "⌥⌘R", what: "Auto-reframe the selected clips (faces first)"),
-            Row(keys: "⌥⌘G", what: "Close gaps"),
-            Row(keys: "A  R  Y  U", what: "Select, roll, slip, slide tools"),
-            Row(keys: ",  .", what: "Insert or overwrite from the source viewer"),
-            Row(keys: "F", what: "Match frame"),
-            Row(keys: "⌘Z  ⇧⌘Z", what: "Undo, redo"),
-        ]),
-        Section(title: "Agent", rows: [
-            Row(keys: "⌘L", what: "Ask the agent (opens the chat)"),
-            Row(keys: "⇧⌘D", what: "Speak instead of typing; again to stop"),
-            Row(keys: "Hold right ⌥", what: "Push to talk: listens while held, stops when you let go (Settings ▸ Assistant picks the key)"),
-            Row(keys: "Return  or  ⌘↩", what: "Send (stops listening first)"),
-            Row(keys: "⌘.", what: "Stop the agent"),
-        ]),
-        Section(title: "View", rows: [
-            Row(keys: "⌘1  ⌘2  ⌘3  ⌘4", what: "Inspector, Chat, Agents, History"),
-            Row(keys: "⌘=  ⌘−", what: "Zoom the timeline in or out"),
-            Row(keys: "⇧⌘F", what: "Full screen preview"),
-            Row(keys: "⌥⌘F", what: "Focus on the player and the chat"),
-            Row(keys: "⌥⌘B", what: "Before / after the grade"),
-            Row(keys: "⌥⌘S", what: "Source viewer"),
-            Row(keys: "⇧⌘P", what: "Home"),
-        ]),
-        Section(title: "File", rows: [
-            Row(keys: "⌘N", what: "New project"),
-            Row(keys: "⌘I", what: "Import media"),
-            Row(keys: "⌘E  ⇧⌘E  ⌥⌘E", what: "Export video, batch export, export timeline"),
-        ]),
-    ]
+    /// Keys that are not in the store: macOS's fixed ones and the chat's.
+    private func extras(_ g: ShortcutAction.Group) -> [(String, String)] {
+        switch g {
+        case .editing: return [("⌘Z  ⇧⌘Z", "Undo, redo")]
+        case .agent:
+            let ptt = (PushToTalk.Key(rawValue: settings.pushToTalk) ?? .rightOption).symbol.map { "Hold \($0)" } ?? "Off"
+            return [(ptt, "Push to talk: listens while held, stops when you let go"), ("Return  or  ⌘↩", "Send (stops listening first)")]
+        case .file: return [("⌘N", "New project")]
+        default: return []
+        }
+    }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                Text("Single keys work while the timeline or player has the focus, not while you type in the chat. Click the timeline first.")
-                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                ForEach(Self.sections) { s in
+                HStack(alignment: .top) {
+                    Text("Single keys work while the timeline or player has the keyboard, not while you type in the chat. Click the timeline first.")
+                        .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    Spacer()
+                    Button("Change Keys…") { SettingsView.show(.shortcuts, using: openSettings) }.uiFrame("shortcuts.change")
+                }
+                ForEach(ShortcutAction.Group.allCases, id: \.self) { g in
                     VStack(alignment: .leading, spacing: 6) {
-                        Text(s.title).font(.headline)
+                        Text(g.rawValue).font(.headline)
                         Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 5) {
-                            ForEach(s.rows) { r in
-                                GridRow {
-                                    Text(r.keys).font(.system(.body, design: .rounded).weight(.semibold)).monospacedDigit()
-                                        .frame(minWidth: 130, alignment: .leading)
-                                    Text(r.what).foregroundStyle(.secondary)
-                                }
+                            ForEach(ShortcutAction.allCases.filter { $0.group == g }) { a in
+                                GridRow { keys(store.combos(a).isEmpty ? "None" : store.display(a)); Text(a.title).foregroundStyle(.secondary) }
                             }
+                            ForEach(extras(g), id: \.0) { k, what in GridRow { keys(k); Text(what).foregroundStyle(.secondary) } }
                         }
                     }
                 }
             }
             .padding(20)
         }
-        .frame(width: 560, height: 620)
+        .frame(width: 600, height: 660)
+    }
+
+    private func keys(_ s: String) -> some View {
+        Text(s).font(.system(.body, design: .rounded).weight(.semibold)).monospacedDigit().frame(minWidth: 150, alignment: .leading)
     }
 }

@@ -28,12 +28,7 @@ struct EditMaxApp: App {
                     ForEach(Templates.list().filter(\.builtin)) { t in Button("\(t.name) · \(t.width)×\(t.height)") { newLibraryProject(t) } }
                 }
             }
-            CommandGroup(after: .saveItem) {
-                Button("Export Video…") { NotificationCenter.default.post(name: .editmaxExport, object: nil) }.keyboardShortcut("e", modifiers: [.command])
-                Button("Export Chapters…") { NotificationCenter.default.post(name: .editmaxExportChapters, object: nil) }
-                Button("Batch Export…") { NotificationCenter.default.post(name: .editmaxBatchExport, object: nil) }.keyboardShortcut("e", modifiers: [.command, .shift])
-                Button("Export Timeline…") { NotificationCenter.default.post(name: .editmaxExportTimeline, object: nil) }.keyboardShortcut("e", modifiers: [.command, .option])
-            }
+            ExportCommands()
             ViewCommands()
             EditCommands()
             EditingCommands()   // relink, consolidate, source viewer (RelinkSheet.swift)
@@ -266,15 +261,29 @@ struct EditorRootView: View {
 /// (`toggleFullScreen`) guards it, the same way the preview button does. The item itself stays enabled because the
 /// focused document is not reliably visible to the menu (it goes nil whenever the editor window is not key).
 struct ViewCommands: Commands {
+    @ObservedObject private var keys = ShortcutStore.shared
     var body: some Commands {
         CommandGroup(after: .windowList) {
-            Button("Home") { HomeWindow.shared.show() }.keyboardShortcut("p", modifiers: [.command, .shift])
+            Button("Home") { HomeWindow.shared.show() }.keyboardShortcut(keys.menuShortcut(.home))
             Button("Archive") { HomeWindow.shared.show(place: .archive) }   // deleted files, with Restore (a Home page)
         }
         CommandGroup(after: .toolbar) {
-            Button("Full Screen Preview") { NotificationCenter.default.post(name: .editmaxFullScreenPreview, object: nil) }.keyboardShortcut("f", modifiers: [.command, .shift])
-            Button("Focus on Player and Chat") { NotificationCenter.default.post(name: .editmaxFocusMode, object: nil) }.keyboardShortcut("f", modifiers: [.command, .option])
-            Button("Before / After") { NotificationCenter.default.post(name: .editmaxCompare, object: nil) }.keyboardShortcut("b", modifiers: [.command, .option])
+            Button("Full Screen Preview") { NotificationCenter.default.post(name: .editmaxFullScreenPreview, object: nil) }.keyboardShortcut(keys.menuShortcut(.fullScreenPreview))
+            Button("Focus on Player and Chat") { NotificationCenter.default.post(name: .editmaxFocusMode, object: nil) }.keyboardShortcut(keys.menuShortcut(.focusMode))
+            Button("Before / After") { NotificationCenter.default.post(name: .editmaxCompare, object: nil) }.keyboardShortcut(keys.menuShortcut(.compare))
+        }
+    }
+}
+
+/// File ▸ the exports, with the keys from Settings ▸ Shortcuts.
+struct ExportCommands: Commands {
+    @ObservedObject private var keys = ShortcutStore.shared
+    var body: some Commands {
+        CommandGroup(after: .saveItem) {
+            Button("Export Video…") { NotificationCenter.default.post(name: .editmaxExport, object: nil) }.keyboardShortcut(keys.menuShortcut(.exportVideo))
+            Button("Export Chapters…") { NotificationCenter.default.post(name: .editmaxExportChapters, object: nil) }
+            Button("Batch Export…") { NotificationCenter.default.post(name: .editmaxBatchExport, object: nil) }.keyboardShortcut(keys.menuShortcut(.batchExport))
+            Button("Export Timeline…") { NotificationCenter.default.post(name: .editmaxExportTimeline, object: nil) }.keyboardShortcut(keys.menuShortcut(.exportTimeline))
         }
     }
 }

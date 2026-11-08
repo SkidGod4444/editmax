@@ -1,6 +1,6 @@
 import AppKit
 
-/// Push to talk: hold a modifier key alone (right ⌥ by default, Settings ▸ Assistant) and speak into the front
+/// Push to talk: hold a modifier key alone (right ⌥ by default, Settings ▸ Shortcuts) and speak into the front
 /// project's chat; let go and listening stops, the words staying in the field until Return sends them. A modifier, not
 /// a letter: holding it types nothing into the chat field, and it works while that field has the keyboard.
 /// The key must be held a moment alone: right ⌥ with a letter is a typed character (⌥E, ⌥U), not a request to talk.

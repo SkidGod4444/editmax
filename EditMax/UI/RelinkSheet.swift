@@ -212,6 +212,7 @@ struct EditingMediaMenu: View {
 /// File ▸ Relink Media… / Consolidate Media… and View ▸ Source Viewer for the focused project.
 struct EditingCommands: Commands {
     @FocusedObject private var document: EditMaxDocument?
+    @ObservedObject private var keys = ShortcutStore.shared
     var body: some Commands {
         CommandGroup(after: .saveItem) {
             Divider()
@@ -220,7 +221,7 @@ struct EditingCommands: Commands {
         }
         CommandGroup(after: .toolbar) {
             Button("Source Viewer") { NotificationCenter.default.post(name: .editmaxToggleSource, object: document?.id) }
-                .keyboardShortcut("s", modifiers: [.command, .option]).disabled(document == nil)
+                .keyboardShortcut(keys.menuShortcut(.sourceViewer)).disabled(document == nil)
         }
     }
 }

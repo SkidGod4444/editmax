@@ -8,7 +8,7 @@ import AppKit
 /// - Assistant: who edits with you (an agent on this Mac, or a provider and its API keys), Follow the agent.
 /// - Advanced: the MCP server, the agent runtime, logs.
 struct SettingsView: View {
-    enum Pane: String, Hashable, CaseIterable { case general, files, assistant, advanced }
+    enum Pane: String, Hashable, CaseIterable { case general, files, assistant, shortcuts, advanced }
     static let paneKey = "settingsPane"
     /// The tab last shown, and the one `show(_:using:)` asks for.
     @AppStorage(Self.paneKey) private var pane: Pane = .general
@@ -26,6 +26,7 @@ struct SettingsView: View {
             Tab(value: Pane.general) { GeneralSettings() } label: { tab("General", "gearshape") }
             Tab(value: Pane.files) { FilesSettings() } label: { tab("Files", "folder") }
             Tab(value: Pane.assistant) { AssistantSettings() } label: { tab("Assistant", "sparkles") }
+            Tab(value: Pane.shortcuts) { ShortcutsSettings() } label: { tab("Shortcuts", "keyboard") }
             Tab(value: Pane.advanced) { AdvancedSettings() } label: { tab("Advanced", "wrench.and.screwdriver") }
         }
         .frame(width: 560, height: 580)
@@ -281,16 +282,6 @@ struct AssistantSettings: View {
                     Text("While an agent edits (from the chat or over MCP), the clip is selected, the playhead moves onto it and the inspector shows the setting that changes. It waits while you use the mouse or keyboard.")
                 }
                 .pointer().uiFrame("settings.assistant.followAgent")
-            }
-            Section {
-                Picker("Push to talk", selection: $s.pushToTalk) {
-                    ForEach(PushToTalk.Key.allCases) { Text($0.label).tag($0.rawValue) }
-                }
-                .pointer().uiFrame("settings.assistant.pushToTalk")
-            } header: {
-                Text("Voice")
-            } footer: {
-                Text("Hold the key and speak to the agent; let go to stop. Your words stay in the chat field until you press Return, so you can fix a word first. ⇧⌘D or the microphone button also start and stop listening.")
             }
         }
         .formStyle(.grouped)

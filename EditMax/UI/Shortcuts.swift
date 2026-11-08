@@ -73,46 +73,75 @@ struct EditorActions {
 
     func zoom(_ factor: Double) { state.pixelsPerSecond = max(10, min(400, state.pixelsPerSecond * factor)) }
 
-    /// Returns true when the key was used.
+    /// Returns true when the key was used. The keys come from Settings ▸ Shortcuts (ShortcutStore); undo and redo are
+    /// macOS's and fixed.
     func handle(_ e: NSEvent) -> Bool {
-        let mods = e.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        let shift = mods.contains(.shift)
-        let chars = e.charactersIgnoringModifiers?.lowercased() ?? ""
-        if mods.contains(.command) {
-            guard !mods.contains(.option), !mods.contains(.control) else { return false }
-            switch chars {
-            case "=", "+": zoom(1.4); return true
-            case "-": zoom(1 / 1.4); return true
-            case "t": addTransition(); return true
-            case "z": if shift { document.redo() } else { document.undo() }; return true
-            default: return false
-            }
+        let mods = e.modifierFlags.intersection([.command, .shift, .option, .control])
+        if mods == .command || mods == [.command, .shift], e.charactersIgnoringModifiers?.lowercased() == "z" {
+            if mods.contains(.shift) { document.redo() } else { document.undo() }
+            return true
         }
-        guard !mods.contains(.control), !mods.contains(.option) else { return false }
-        switch e.keyCode {
-        case 49: player.togglePlay(); return true                                    // space
-        case 123: player.step(frames: shift ? -10 : -1, fps: fps); return true       // ←
-        case 124: player.step(frames: shift ? 10 : 1, fps: fps); return true         // →
-        case 115: player.pause(); player.seek(to: 0); return true                    // home
-        case 119: player.pause(); player.seek(to: document.project.duration); return true   // end
-        case 51, 117: deleteSelection(); return true                                 // delete, forward delete
-        default: break
+        guard let a = ShortcutStore.shared.action(matching: e) else { return false }
+        return perform(a)
+    }
+
+    /// Runs an action. False when only its menu item can (the menu then takes the key).
+    func perform(_ a: ShortcutAction) -> Bool {
+        let source = SourceActions(document: document, state: state, player: player)
+        let post = { (n: Notification.Name) in NotificationCenter.default.post(name: n, object: nil) }
+        switch a {
+        case .playPause: player.togglePlay()
+        case .shuttleBack: player.shuttle(backward: true)
+        case .pause: player.pause()
+        case .shuttleForward: player.shuttle(backward: false)
+        case .stepBack: player.step(frames: -1, fps: fps)
+        case .stepForward: player.step(frames: 1, fps: fps)
+        case .stepBack10: player.step(frames: -10, fps: fps)
+        case .stepForward10: player.step(frames: 10, fps: fps)
+        case .goToStart: player.pause(); player.seek(to: 0)
+        case .goToEnd: player.pause(); player.seek(to: document.project.duration)
+        case .prevKeyframe: jumpKeyframe(forward: false)
+        case .nextKeyframe: jumpKeyframe(forward: true)
+        case .markIn: setIn()
+        case .markOut: setOut()
+        case .clearInOut: clearInOut()
+        case .deleteInOut: run(.deleteRange)
+        case .addMarker: addMarker()
+        case .split: splitAtPlayhead()
+        case .deleteSelection: deleteSelection()
+        case .transition: addTransition()
+        case .slowMotion: run(.slowMotion)
+        case .normalSpeed: run(.normalSpeed)
+        case .fast: run(.fast)
+        case .reframe: run(.reframe)
+        case .closeGaps: run(.closeGaps)
+        case .toolSelect: state.editTool = .select
+        case .toolRoll: state.editTool = .roll
+        case .toolSlip: state.editTool = .slip
+        case .toolSlide: state.editTool = .slide
+        case .insertFromSource, .overwriteFromSource:
+            if let n = source.edit(overwrite: a == .overwriteFromSource) { DebugLog.event("source-edit-refused", ["why": n]); NSSound.beep() }
+        case .matchFrame: source.matchFrame()
+        case .askAgent: run(.askAgent)
+        case .dictate: run(.dictate)
+        case .stopAgent: run(.stopAgent)
+        case .showInspector: run(.showInspector)
+        case .showChat: run(.showChat)
+        case .showAgents: run(.showAgents)
+        case .showHistory: run(.showHistory)
+        case .zoomIn: zoom(1.4)
+        case .zoomOut: zoom(1 / 1.4)
+        case .fullScreenPreview: post(.editmaxFullScreenPreview)
+        case .focusMode: post(.editmaxFocusMode)
+        case .compare: post(.editmaxCompare)
+        case .sourceViewer: NotificationCenter.default.post(name: .editmaxToggleSource, object: document.id)
+        case .home: HomeWindow.shared.show()
+        case .importMedia: run(.importMedia)
+        case .exportVideo: post(.editmaxExport)
+        case .batchExport: post(.editmaxBatchExport)
+        case .exportTimeline: post(.editmaxExportTimeline)
+        case .keyboardShortcuts: return false
         }
-        switch chars {
-        case "j": player.shuttle(backward: true); return true
-        case "k": player.pause(); return true
-        case "l": player.shuttle(backward: false); return true
-        case "i": setIn(); return true
-        case "o": setOut(); return true
-        case "m": addMarker(); return true
-        case "s": splitAtPlayhead(); return true
-        case "x": clearInOut(); return true
-        case "[": jumpKeyframe(forward: false); return true
-        case "]": jumpKeyframe(forward: true); return true
-        case "a", "r", "y", "u": state.editTool = EditTool(key: chars) ?? .select; return true   // select / roll / slip / slide
-        case ",", ".": if let n = SourceActions(document: document, state: state, player: player).edit(overwrite: chars == ".") { DebugLog.event("source-edit-refused", ["why": n]); NSSound.beep() }; return true   // insert / overwrite from the source viewer
-        case "f": SourceActions(document: document, state: state, player: player).matchFrame(); return true   // match frame
-        default: return false
-        }
+        return true
     }
 }

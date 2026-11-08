@@ -169,6 +169,8 @@ final class LibraryPreviewTests: LibraryTestCase {
             ("files", AnyView(FilesSettings()), ["settings.files.library.change", "settings.files.notchDrawer", "settings.files.archiveDays"],
              ["settings.general.updates.check"]),
             ("assistant", AnyView(AssistantSettings()), ["settings.assistant.backend", "settings.assistant.followAgent"], ["settings.advanced.port"]),
+            ("shortcuts", AnyView(ShortcutsSettings()), ["settings.shortcuts.pushToTalk", "settings.shortcuts.playPause"],
+             ["settings.assistant.backend"]),
             ("advanced", AnyView(AdvancedSettings()), ["settings.advanced.port", "settings.runtime.check", "settings.runtime.auto", "settings.advanced.logs"],
              ["settings.assistant.followAgent", "settings.general.updates.check"]),
         ]
@@ -178,7 +180,7 @@ final class LibraryPreviewTests: LibraryTestCase {
             for id in hasNot { XCTAssertNil(h.frame(id), "\(name) does not have \(id)") }
             h.close()
         }
-        XCTAssertEqual(SettingsView.Pane.allCases.map(\.rawValue), ["general", "files", "assistant", "advanced"])
+        XCTAssertEqual(SettingsView.Pane.allCases.map(\.rawValue), ["general", "files", "assistant", "shortcuts", "advanced"])
         XCTAssertEqual(KeychainStore.slot(forProvider: "claude-agent"), "anthropic")
         XCTAssertEqual(KeychainStore.slot(forProvider: "openai"), "openai")
         XCTAssertNil(KeychainStore.slot(forProvider: "someone-new"))

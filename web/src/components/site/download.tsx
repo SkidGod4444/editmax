@@ -1,5 +1,6 @@
 "use client";
 
+import posthog from "posthog-js";
 import { useState, useSyncExternalStore } from "react";
 import { download, github } from "./links";
 
@@ -100,6 +101,11 @@ export function DownloadButton({ compact = false, className = "" }: { compact?: 
       onPointerEnter={warm}
       onFocus={warm}
       onClick={(e) => {
+        const buttonVariant = compact ? "compact" : "full";
+        if (process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN && process.env.NEXT_PUBLIC_POSTHOG_HOST) {
+          posthog.capture("download_started", { button_variant: buttonVariant });
+          posthog.logger.info("download started", { button_variant: buttonVariant });
+        }
         if (href !== download) return; // already the .dmg: let the link download it
         e.preventDefault();
         latestDmg().then((url) => { setHref(url); window.location.assign(url); });

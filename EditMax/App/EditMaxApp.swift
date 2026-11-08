@@ -38,6 +38,7 @@ struct EditMaxApp: App {
             EditCommands()
             EditingCommands()   // relink, consolidate, source viewer (RelinkSheet.swift)
             UpdateCommands()
+            CommandGroup(after: .help) { Button("Welcome Tour") { WelcomeTour.shared.replay() } }
         }
         Settings { SettingsView() }
         MenuBarExtra(isInserted: AppDelegate.isTesting ? .constant(false) : $showMenuBarIcon) {   // no icon while tests run
@@ -92,6 +93,13 @@ struct EditorRootView: View {
         .onAppear {
             UIRegistry.shared.playheads[document.id] = { [weak player] in player?.currentTime }
             UIRegistry.shared.playing[document.id] = { [weak player] in player?.isRunning ?? false }
+            WelcomeTour.shared.register(document.id) { [weak document, weak state, weak player] in
+                guard let document, let state, let player else { return TourSnapshot() }
+                let p = document.project
+                return TourSnapshot(assets: p.assets.count, clips: p.tracks.reduce(0) { $0 + $1.clips.count }, playing: player.isRunning,
+                                    chatOpen: state.inspectorTab == .chat || state.focusMode, exporting: state.isExporting, firstAsset: p.assets.first?.name)
+            }
+            WelcomeTour.shared.startIfNeeded(document: document.id)
             AgentFollow.shared.register(document.id) { [weak document, weak state, weak player] t in
                 guard let document, let state, let player else { return false }
                 return FollowUI.apply(t, document: document, state: state, player: player)
@@ -118,7 +126,7 @@ struct EditorRootView: View {
             if let old, old.standardizedFileURL != new?.standardizedFileURL { AssetLibrary.shared.forgetProject(AssetLibrary.projectID(for: old)) }
             document.noteLibraryUse()
         }
-        .onDisappear { DocumentRegistry.shared.unregister(document); AgentFollow.shared.unregister(document.id); player.pause() }
+        .onDisappear { DocumentRegistry.shared.unregister(document); AgentFollow.shared.unregister(document.id); WelcomeTour.shared.unregister(document.id); player.pause() }
         .background(WindowFocusObserver { DocumentRegistry.shared.activate(document) })
         .modifier(EditingSheets(document: document))   // relink on open, consolidate (RelinkSheet.swift)
         .onReceive(NotificationCenter.default.publisher(for: .editmaxCompare)) { _ in

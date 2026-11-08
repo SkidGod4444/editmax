@@ -126,6 +126,9 @@ and the export bar offers Don't Quit), **Keep Working** (Esc) or **Quit Now** (t
    captions and transcript. Sliders are undoable as one step per drag.
 5. **File → Export Video…** (⌘E) renders the timeline; **Batch Export…** renders every format you choose.
 
+The first project you open shows a short **Welcome tour** that walks through these steps with you; Help ▸ Welcome Tour
+runs it again.
+
 Projects are single `.emx` files that autosave. Media is referenced, not copied.
 
 ### Keyboard

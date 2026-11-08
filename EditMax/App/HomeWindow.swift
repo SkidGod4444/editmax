@@ -56,6 +56,14 @@ final class HomeWindow {
         DebugLog.event("home-show", ["windowNumber": window?.windowNumber ?? -1])
     }
 
+    /// Home from the menu bar icon: in front of the app in use and on the Space the person is on, a full-screen
+    /// app's included. `show()` alone leaves it behind whatever app is in front.
+    func bringForward() {
+        guard let window else { return }
+        BringForward.show(window)
+        DebugLog.event("home-bring-forward", ["active": NSApp.isActive])
+    }
+
     /// Home's two panes: the sidebar (AppKit's sidebar item) and the page, over one model. Tests build it in a window
     /// of their own to measure it.
     static func content(model: HomeModel, size: NSSize) -> NSSplitViewController {

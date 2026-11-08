@@ -13,7 +13,7 @@ struct MenuBarMenu: View {
 
     var body: some View {
         Button("New Project") { front(); newLibraryProject(Templates.list().first!) }
-        Button("Home") { front(); HomeWindow.shared.show() }
+        Button("Home") { HomeWindow.shared.show(); HomeWindow.shared.bringForward() }
         Button("Open the drawer") { NotchDrawer.shared.open() }.disabled(!settings.notchDrawer)
         let recent = Array(library.entries.prefix(5))
         if !recent.isEmpty {
@@ -26,7 +26,10 @@ struct MenuBarMenu: View {
         if let client = mcp.lastClient { Text("Last agent: \(client)") }
         Divider()
         Button("Check for Updates…") { front(); updates.checkForUpdates() }.disabled(!updates.canCheck)
-        Button("Settings…") { front(); openSettings() }
+        Button("Settings…") {
+            openSettings()
+            BringForward.showWhenOpen { $0.identifier?.rawValue.localizedCaseInsensitiveContains("settings") == true }
+        }
         Divider()
         Button("Quit EditMax") { NSApp.terminate(nil) }
     }
@@ -39,5 +42,6 @@ struct MenuBarMenu: View {
         }
     }
 
-    private func front() { NSApp.activate() }
+    /// Over a full-screen app too: `NSApp.activate()` alone is turned down while another app is in front (BringForward).
+    private func front() { BringForward.app() }
 }

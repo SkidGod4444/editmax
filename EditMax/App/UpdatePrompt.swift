@@ -264,7 +264,7 @@ enum UpdateNotifications {
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     DebugLog.event("app-update-notification-clicked", ["action": action])
-                    NSApp.activate()
+                    BringForward.app()   // a click on the notification while another app is in front
                     if action == UpdateNotifications.installAction { UpdatePrompt.shared.installNow() }
                     else if action == UNNotificationDefaultActionIdentifier { UpdatePrompt.shared.present() }
                 }

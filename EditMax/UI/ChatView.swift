@@ -243,7 +243,7 @@ struct ChatView: View {
                     Button { chat.sendOrFinishDictation() } label: { Image(systemName: "arrow.up").font(.system(size: 14, weight: .semibold)).frame(width: 18, height: 18) }
                         .glassButtonStyle(prominent: true).buttonBorderShape(.circle).tint(.accentColor).focusable(false).keyboardShortcut(.return, modifiers: .command)
                         .help("Send (⌘↩)")
-                        .pointer().disabled(chat.input.trimmingCharacters(in: .whitespaces).isEmpty || (chat.backend == .apiKey ? !chat.apiReady : !chat.agentReady)).uiFrame("chat.send")
+                        .pointer().disabled(chat.dictation.state == .finishing || chat.input.trimmingCharacters(in: .whitespaces).isEmpty || (chat.backend == .apiKey ? !chat.apiReady : !chat.agentReady)).uiFrame("chat.send")
                 }
             }
         }

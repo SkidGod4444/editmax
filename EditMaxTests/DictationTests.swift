@@ -17,6 +17,16 @@ final class DictationTests: XCTestCase {
         XCTAssertEqual(Dictation.join("Louder", "  please  "), "Louder please", "the recognizer's padding is trimmed")
     }
 
+    /// The chat redraws when dictation changes state, so the send button can wait for the last words.
+    @MainActor func testTheChatSeesDictationChange() {
+        let chat = ChatSession(document: EditMaxDocument())
+        var fired = 0
+        let c = chat.objectWillChange.sink { _ in fired += 1 }
+        chat.dictation.problem = "No microphone is connected."
+        XCTAssertGreaterThan(fired, 0)
+        c.cancel()
+    }
+
     @MainActor func testIdleDictationKeepsTheFieldAndSendsAtOnce() async {
         let d = Dictation()
         XCTAssertFalse(d.isActive)

@@ -43,6 +43,8 @@ final class ChatSession: ObservableObject {
     @Published var input = ""
     /// Speaking instead of typing (the composer's microphone, ⇧⌘D): what is heard is written into `input` as it comes.
     let dictation = Dictation()
+    /// Dictation's state changes redraw the chat (the field's placeholder, send disabled while the last words settle).
+    private var dictationChanges: AnyCancellable?
     /// Agent ▸ Ask the Agent… (⌘L): the composer takes the keyboard focus when this changes.
     @Published var focusRequest = 0
     @Published var isRunning = false {
@@ -104,6 +106,7 @@ final class ChatSession: ObservableObject {
         runner.onEvent = { [weak self] ev in self?.handle(ev) }
         apiRunner.onEvent = { [weak self] ev in self?.handle(ev) }
         dictation.onText = { [weak self] t in self?.input = t }
+        dictationChanges = dictation.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
         refreshAgents()
         if backend == .apiKey { refreshProviders() }
         Self.live.add(self)
@@ -197,6 +200,7 @@ final class ChatSession: ObservableObject {
     /// Send, or while listening: stop, let the last words settle, then send what is in the field.
     func sendOrFinishDictation() {
         guard dictation.isActive else { send(); return }
+        guard dictation.state != .finishing else { return }   // the send already waiting on the last words goes out once
         Task { input = await dictation.finish(); send() }
     }
 

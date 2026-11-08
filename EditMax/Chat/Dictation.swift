@@ -59,6 +59,8 @@ import Speech
     @discardableResult
     func finish() async -> String {
         guard state != .idle else { return text }
+        // A second Return or click while the last words settle waits for that same finish, never stops the engine twice.
+        if state == .finishing { while state == .finishing { try? await Task.sleep(for: .milliseconds(30)) }; return text }
         if state == .preparing { startTask?.cancel(); await engine?.cancel(); engine = nil; level.value = 0; state = .idle; return text }
         state = .finishing
         await engine?.stop()
@@ -206,7 +208,17 @@ enum MicTap {
         input?.finish(); input = nil
         do { try await analyzer?.finalizeAndFinishThroughEndOfInput() }
         catch { DebugLog.event("dictation-finish-error", ["error": error.localizedDescription]) }
-        await results?.value
+        // The final words arrive within a moment; never leave the composer stuck in "finishing" on them.
+        if let results {
+            let settled = await withTaskGroup(of: Bool.self) { g in
+                g.addTask { await results.value; return true }
+                g.addTask { try? await Task.sleep(for: .seconds(2)); return false }
+                let first = await g.next() ?? false
+                g.cancelAll()
+                return first
+            }
+            if !settled { results.cancel(); DebugLog.event("dictation-finish-timeout") }
+        }
         analyzer = nil; results = nil
     }
 

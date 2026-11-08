@@ -51,7 +51,9 @@ final class ProjectLibrary: ObservableObject {
         let fm = FileManager.default
         let library = Self.directory
         var urls = ((try? fm.contentsOfDirectory(at: library, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []).filter { Self.isProject($0) }
-        for r in NSDocumentController.shared.recentDocumentURLs where Self.isProject(r) && fm.fileExists(atPath: r.path) && !urls.contains(where: { $0.standardizedFileURL == r.standardizedFileURL }) {
+        let demo = WelcomeTour.demoRoot.standardizedFileURL.path   // the welcome demo's scratch project is never listed
+        for r in NSDocumentController.shared.recentDocumentURLs where Self.isProject(r) && fm.fileExists(atPath: r.path) && !r.standardizedFileURL.path.hasPrefix(demo)
+            && !urls.contains(where: { $0.standardizedFileURL == r.standardizedFileURL }) {
             urls.append(r)
         }
         var out: [Entry] = []

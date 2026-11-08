@@ -332,19 +332,22 @@ at launch is closed 0.3 s in. Under XCTest (`AppDelegate.isTesting`) none of thi
 
 ## Welcome tour
 
-`App/WelcomeTour.swift`. Six steps over the first project window, once (`tour.completedVersion`; closing it counts,
-Help ▸ Welcome Tour runs it again, `-EditMaxTourDemo YES` starts it anyway in a Debug check): add media, put a clip on the
-timeline, play, split, open Chat, export. A step finishes on what the person does, read four times a second from the
-window (`TourSnapshot`: asset and clip counts, playing, the Chat tab, exporting), and the tour moves on by itself. A
-step already done when it comes up (a project with media in it) says so and waits for Next. Next,
-Back and the dots go anywhere already reached (`TourProgress`, pure). It starts after the splash and the crash-report
-card, never under a modal session, and only with EditMax in front. The card and a click-through cursor layer are
-non-key child windows of the project window, so the keyboard stays where the steps happen. The cursor flies on a
-quadratic arc (`TourFlight`: eased, turned along the path, larger mid-flight) to the step's control, found in
-`UIRegistry` like the MCP UI driver finds it (the title-bar Export button by its tooltip), rings it and labels it; the
-card moves out of its way (`cardPlace`). Keycaps on the card light from a local key monitor that only watches. The tour
-never switches a view itself (the Chat step points at the tab) and plays no sound. Previews:
-`WelcomeTourTests.testWelcomeTourLook`.
+`App/WelcomeTour.swift`. A first launch (no projects in the library, `tour.completedVersion` below 2) goes splash, Home,
+then the welcome demo, then the crash-report card (`TelemetryPrompt.askIfNeeded` waits while it runs, and so does the
+update card). The demo writes an empty 16:9 project to `Application Support/EditMax/Demo/<uuid>/` (never the
+library; Home skips it, its clips stay out of Assets via `EditMaxDocument.isDemo`), opens it, and plays `DemoBeat.script`:
+import (the + is clicked for show, then `ToolExecutor.importMedia` brings in `Resources/Demo/*.mp4`, the website's
+clips), double-click two files onto the timeline, play, select a clip, drag the playhead along the ruler and press S,
+open Chat and type a request (never sent), point at Export (a click would open a modal save panel), and say goodbye.
+Clicks and keys go through `UIDriver` in-process, as the MCP driver's do; Chat's tab is found inside `inspector.tabs`,
+Export by its tooltip. A guide cursor the size of the person's own pointer flies on an arc (`TourFlight`), presses with
+a ripple, rings the icon it clicks (`ring(around:in:)`, icon-sized), and one blue row beside it says the beat in short.
+The layer is a non-key child window that takes stray clicks; a local monitor holds the keyboard except Esc (skip) and ⌘
+shortcuts. At the end, or on Esc/Skip, the scratch project is closed and deleted, Home comes back, then the card. Help ▸
+Welcome Tour plays it again on a fresh scratch project; `-EditMaxTourDemo YES` plays it at launch, also in a background
+launch. Each beat's spoken line is `Resources/Demo/Voice/demo-<voice>.m4a`, recorded with Sarvam by
+`scripts/demo-voice.py` (key in `~/.editmax-sarvam/api-key`); a beat without one runs silent for its reading time. The
+unit tests never play it. Previews: `WelcomeTourTests.testWelcomeDemoLook`.
 
 ## Chat backends
 

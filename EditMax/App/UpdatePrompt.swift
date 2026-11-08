@@ -36,7 +36,9 @@ final class UpdatePrompt: ObservableObject {
     /// Seams for the tests.
     var appIsActive: () -> Bool = { NSApp.isActive }
     /// What the update card waits for; the crash-report card holds the app until Agree, so the update card comes after.
-    var busy: () -> String? = { TelemetryPrompt.shared.isShowing ? "crash-report card" : BusyWork.current }
+    var busy: () -> String? = {
+        TelemetryPrompt.shared.isShowing ? "crash-report card" : WelcomeTour.shared.isRunning ? "welcome demo" : BusyWork.current
+    }
     var clock: () -> Date = { Date() }
     var activeEvery: TimeInterval = 2 * 3600       // the popup again, while EditMax is in front
     var backgroundEvery: TimeInterval = 6 * 3600   // a notification, while EditMax runs in the background

@@ -44,7 +44,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if Date().timeIntervalSince(launchedAt) < 2, AppSettings.bool(AppSettings.Key.showSplash, default: true) { SplashScreen.shared.show(); SplashScreen.shared.dismissWhenReady() }
         // Just updated? "EditMax x.y is installed", once, after the splash (at once when there is none).
         // Not agreed yet to crash reports and usage? The card, after the splash (and after the installed note).
-        if !Self.isTesting { SplashScreen.shared.afterDismiss { UpdatePrompt.shared.showInstalledNoteIfUpdated(); TelemetryPrompt.shared.askIfNeeded() } }
+        // A first launch: Home, then the welcome demo on a scratch project, then the card. Help ▸ Welcome Tour plays it again.
+        if !Self.isTesting {
+            SplashScreen.shared.afterDismiss {
+                UpdatePrompt.shared.showInstalledNoteIfUpdated()
+                WelcomeTour.shared.startFirstRun { TelemetryPrompt.shared.askIfNeeded() }
+            }
+        }
     }
     /// True when the app is the host of the unit tests: no splash, no Home, no untitled document handling.
     static let isTesting = NSClassFromString("XCTestCase") != nil || ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
@@ -59,6 +65,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         if Self.isTesting { return }
         InteractionLog.install()
+        WelcomeTour.cleanLeftovers()   // a scratch demo project a quit left behind
+        // Debug check: `-EditMaxTourDemo YES` plays the demo in a background launch too, which never gets the splash.
+        if WelcomeTour.shared.forced { DispatchQueue.main.asyncAfter(deadline: .now() + 3) { WelcomeTour.shared.startFirstRun { TelemetryPrompt.shared.askIfNeeded() } } }
         DriveWatcher.shared.start()   // footage on drives goes offline and comes back with them
         AppSettings.shared.applyAppearance()
         SplashScreen.renderIfRequested()

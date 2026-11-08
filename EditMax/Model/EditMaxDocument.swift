@@ -47,11 +47,14 @@ final class EditMaxDocument: ReferenceFileDocument, ObservableObject {
     /// This project's key in the Assets library's "Used in": from its file, so it is the same on every open. Nil for a
     /// project that has no file yet (nothing to point back to).
     var libraryProjectID: UUID? { fileURL.map(AssetLibrary.projectID(for:)) }
+    /// The welcome demo's scratch project: its clips are EditMax's own and stay out of the Assets library.
+    var isDemo: Bool { fileURL.map { $0.standardizedFileURL.path.hasPrefix(WelcomeTour.demoRoot.standardizedFileURL.path) } ?? false }
 
     /// Tells the Assets library what this project uses (on open, on save, after an import). With `assets`, only those
     /// are recorded (an import); without, the whole asset list is synced, which also drops assets the project no
     /// longer has. A project without a file only registers what it imports. Nested-sequence renders are not library items.
     func noteLibraryUse(_ assets: [Asset]? = nil) {
+        guard !isDemo else { return }
         guard let pid = libraryProjectID else { if let assets { AssetLibrary.shared.register(assets) }; return }
         if let assets { AssetLibrary.shared.noteUsed(assets, projectID: pid, projectName: displayName, explicit: true) }   // an import
         else { AssetLibrary.shared.syncUse(project.assets, projectID: pid, projectName: displayName) }

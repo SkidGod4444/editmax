@@ -93,13 +93,7 @@ struct EditorRootView: View {
         .onAppear {
             UIRegistry.shared.playheads[document.id] = { [weak player] in player?.currentTime }
             UIRegistry.shared.playing[document.id] = { [weak player] in player?.isRunning ?? false }
-            WelcomeTour.shared.register(document.id) { [weak document, weak state, weak player] in
-                guard let document, let state, let player else { return TourSnapshot() }
-                let p = document.project
-                return TourSnapshot(assets: p.assets.count, clips: p.tracks.reduce(0) { $0 + $1.clips.count }, playing: player.isRunning,
-                                    chatOpen: state.inspectorTab == .chat || state.focusMode, exporting: state.isExporting, firstAsset: p.assets.first?.name)
-            }
-            WelcomeTour.shared.startIfNeeded(document: document.id)
+            WelcomeTour.shared.register(document.id, DemoParts(document: document, state: state, player: player))
             AgentFollow.shared.register(document.id) { [weak document, weak state, weak player] t in
                 guard let document, let state, let player else { return false }
                 return FollowUI.apply(t, document: document, state: state, player: player)

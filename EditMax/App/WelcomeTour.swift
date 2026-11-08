@@ -1,162 +1,103 @@
 import AppKit
+import AVFoundation
+import MCP
 import SwiftUI
 
-/// The welcome tour: a card over a project window that teaches a first edit by doing it, one step at a time, while a
-/// guide cursor flies to the real control the step is about and points at it. A step finishes on what the person does
-/// in EditMax (a file added, playback started, a cut), never on a button alone, and the tour moves on by itself;
-/// Next, Back and the dots still go anywhere already reached. It runs once, on the first project window after the
-/// crash-report card; Help ▸ Welcome Tour runs it again. No sound.
+/// The welcome demo. On a first launch (no projects yet), after the splash and Home, EditMax opens a scratch project and
+/// shows itself being used: a guide cursor flies to the real controls and clicks them, so the clips come in, go on the
+/// timeline, play, get cut and Chat gets asked, while a voice explains and one blue line beside the cursor says the same
+/// in short. The person only watches; Esc or Skip ends it. Then Home again, then the crash-report card.
+/// Help ▸ Welcome Tour plays it again, on a fresh scratch project. Nothing it does touches the person's own projects.
 ///
-/// The card and the cursor are child windows of the project window, so they move with it and never float over other
-/// apps; the cursor's window lets every click through. Where things are comes from `UIRegistry`, the same frames the
-/// MCP UI driver uses. The tour never switches a view itself: the Chat step points at the tab and waits for the click.
-enum TourStep: Int, CaseIterable, Identifiable {
-    case media, timeline, play, split, chat, export
-    var id: Int { rawValue }
+/// It drives EditMax the way the MCP UI driver does (in-process events and the views' own handlers), never with
+/// system-level input. Its layer is a child window of the project window: it catches stray clicks so nobody trips the
+/// demo up, and while it runs the keyboard is held except for Esc and ⌘ shortcuts.
+struct DemoBeat: Equatable {
+    enum Action: Equatable { case none, importMedia, addClips, play(seconds: Double), cut, askChat(String), pointAtExport, outro }
+    /// The recording, `demo-<voice>.m4a` (or .mp3, .wav) in the app's resources; without one the line runs silent for its
+    /// reading time.
+    let voice: String
+    /// The one row beside the cursor.
+    let caption: String
+    /// What the voice says.
+    let line: String
+    var keys: [String] = []
+    let action: Action
 
-    var title: String {
-        switch self {
-        case .media: "Bring in your footage"
-        case .timeline: "Put a clip on the timeline"
-        case .play: "Play it"
-        case .split: "Make a cut"
-        case .chat: "Ask for an edit"
-        case .export: "Export when it looks right"
-        }
-    }
+    /// How long the line takes at an unhurried pace, for a beat without a recording.
+    var readingTime: Double { max(1.8, Double(line.split(separator: " ").count) / 2.6 + 0.4) }
 
-    var body: String {
-        switch self {
-        case .media: "Drag videos, sound or pictures from the Finder onto the Media list, or press + to pick them."
-        case .timeline: "Double-click a file in Media to add it to the end of the timeline, or drag it onto a lane."
-        case .play: "Space plays and pauses. J, K and L shuttle backwards and forwards."
-        case .split: "Click a clip on the timeline, put the playhead where the cut goes, and press S."
-        case .chat: "Open Chat and say what you want, like “cut the pauses and add a title”. Every change it makes can be undone."
-        case .export: "⌘E renders the movie. Projects save by themselves, so you can close the window any time."
-        }
-    }
+    static let script: [DemoBeat] = [
+        .init(voice: "intro", caption: "Hi! This is EditMax", line: "Hi! Let me show you around EditMax. It only takes a minute.", action: .none),
+        .init(voice: "import", caption: "Bring in your footage", line: "First, bring in your footage. Drop files on the Media list, or click plus.", action: .importMedia),
+        .init(voice: "timeline", caption: "Double-click to add a clip", line: "Double-click a clip to put it on the timeline.", action: .addClips),
+        .init(voice: "play", caption: "Space plays it", line: "Press Space to play it back.", keys: ["Space"], action: .play(seconds: 2.6)),
+        .init(voice: "cut", caption: "Press S to cut", line: "Put the playhead where you want a cut, and press S.", keys: ["S"], action: .cut),
+        .init(voice: "chat", caption: "Or just ask Chat", line: "Or just ask. Tell Chat what you want, and it makes the edit for you. Every change can be undone.",
+              action: .askChat("Cut the pauses and add a title")),
+        .init(voice: "export", caption: "Export with ⌘E", line: "When it looks right, export it. Your project saves by itself.", keys: ["⌘", "E"], action: .pointAtExport),
+        .init(voice: "outro", caption: "Your turn!", line: "That's it. Now go make something great.", action: .outro),
+    ]
 
-    /// Keycaps on the card; each lights while that key is held.
-    var keys: [String] {
-        switch self {
-        case .play: ["Space"]
-        case .split: ["S"]
-        case .export: ["⌘", "E"]
-        default: []
-        }
-    }
-
-    /// What the guide cursor says at the control.
-    var bubble: String {
-        switch self {
-        case .media: "Drop files here"
-        case .timeline: "Double-click me"
-        case .play: "Or click here"
-        case .split: "Or the scissors"
-        case .chat: "Open Chat"
-        case .export: "Export"
-        }
-    }
-
-    /// The `UIRegistry` id of the control the cursor points at (nil: the toolbar's Export, found in the title bar).
-    func target(_ s: TourSnapshot) -> String? {
-        switch self {
-        case .media: "media.import"
-        case .timeline: s.firstAsset.map { "media.\($0)" } ?? "media.import"
-        case .play: "toolbar.play"
-        case .split: "toolbar.split"
-        case .chat: "tab.chat"
-        case .export: nil
-        }
-    }
-
-    /// Whether the person has done the step, from what the window looks like now and when the step began.
-    func isDone(_ s: TourSnapshot, since start: TourSnapshot) -> Bool {
-        switch self {
-        case .media: s.assets > 0
-        case .timeline: s.clips > 0
-        case .play: s.playing
-        case .split: s.clips > start.clips
-        case .chat: s.chatOpen
-        case .export: s.exporting
-        }
-    }
+    /// The clips the demo imports, from the app's resources.
+    static let media = ["waves.mp4", "snowboard.mp4", "trail.mp4"]
 }
 
-/// What the tour reads from a project window, four times a second.
-struct TourSnapshot: Equatable {
-    var assets = 0
-    var clips = 0
-    var playing = false
-    var chatOpen = false
-    var exporting = false
-    var firstAsset: String?
+/// Plays the demo's recorded lines. Silent in the unit tests; muted keeps the timing and drops the sound.
+@MainActor
+final class DemoVoice {
+    var enabled = !AppDelegate.isTesting
+    var muted = false { didSet { player?.volume = muted ? 0 : 1 } }
+    private var player: AVAudioPlayer?
+
+    static func url(_ voice: String) -> URL? {
+        for ext in ["m4a", "mp3", "wav"] { if let u = Bundle.main.url(forResource: "demo-\(voice)", withExtension: ext) { return u } }
+        return nil
+    }
+
+    /// Starts the line and returns how long it lasts; nil without a recording.
+    func say(_ voice: String) -> Double? {
+        stop()
+        guard let url = Self.url(voice), let p = try? AVAudioPlayer(contentsOf: url) else { return nil }
+        if enabled { p.volume = muted ? 0 : 1; p.prepareToPlay(); p.play(); player = p }
+        return p.duration
+    }
+
+    func stop() { player?.stop(); player = nil }
 }
 
-/// Where the tour is: pure, so the tests can walk it.
-struct TourProgress: Equatable {
-    private(set) var index = 0
-    /// The furthest step shown; the dots go back to any of them.
-    private(set) var reached = 0
-    private(set) var done: Set<Int> = []
-    /// Steps that were already done when they came up (a project with media in it): they wait for Next.
-    private(set) var foundDone: Set<Int> = []
-    private(set) var start = TourSnapshot()
-
-    init(_ s: TourSnapshot) { start = s; checkFoundDone(s) }
-
-    var step: TourStep { TourStep.allCases[index] }
-    var isLast: Bool { index == TourStep.allCases.count - 1 }
-    var isDone: Bool { done.contains(index) }
-    var wasFoundDone: Bool { foundDone.contains(index) }
-
-    /// True the moment the current step is done, by the person while it is showing: only that moves the tour on.
-    mutating func observe(_ s: TourSnapshot) -> Bool {
-        guard !isDone, step.isDone(s, since: start) else { return false }
-        done.insert(index)
-        return true
-    }
-
-    /// False past the last step: the tour is over.
-    mutating func next(_ s: TourSnapshot) -> Bool {
-        guard !isLast else { return false }
-        go(index + 1, s, force: true)
-        return true
-    }
-
-    mutating func back(_ s: TourSnapshot) { if index > 0 { go(index - 1, s) } }
-
-    mutating func go(_ i: Int, _ s: TourSnapshot, force: Bool = false) {
-        guard TourStep.allCases.indices.contains(i), force || i <= reached, i != index else { return }
-        index = i
-        reached = max(reached, i)
-        start = s
-        checkFoundDone(s)
-    }
-
-    private mutating func checkFoundDone(_ s: TourSnapshot) {
-        guard !done.contains(index), step.isDone(s, since: s) else { return }
-        done.insert(index)
-        foundDone.insert(index)
-    }
+/// What the demo works with in a project window. Weak: the window owns them.
+struct DemoParts {
+    weak var document: EditMaxDocument?
+    weak var state: EditorState?
+    weak var player: PlayerController?
 }
 
-/// The guide cursor's flight: a quadratic arc that bows upward, eased at both ends, the pointer turned along the path
-/// and a little larger mid-flight.
+struct TourRipple: Identifiable, Equatable {
+    let id = UUID()
+    let point: CGPoint
+}
+
+/// The guide cursor's flight: a quadratic arc that bows upward (or a straight glide), eased at both ends, the pointer
+/// turned along the path and a little larger mid-flight.
 struct TourFlight: Equatable {
     let from: CGPoint
     let to: CGPoint
     let start: Date
     let duration: Double
+    var arc = true
 
-    init(from: CGPoint, to: CGPoint, start: Date) {
-        self.from = from; self.to = to; self.start = start
-        duration = min(max(hypot(to.x - from.x, to.y - from.y) / 900, 0.55), 1.2)
+    init(from: CGPoint, to: CGPoint, start: Date, duration: Double? = nil, arc: Bool = true) {
+        self.from = from; self.to = to; self.start = start; self.arc = arc
+        self.duration = duration ?? min(max(hypot(to.x - from.x, to.y - from.y) / 900, 0.55), 1.2)
     }
+
+    /// Already where it is going.
+    static func resting(at p: CGPoint) -> TourFlight { TourFlight(from: p, to: p, start: .distantPast) }
 
     private var control: CGPoint {
         let d = hypot(to.x - from.x, to.y - from.y)
-        return CGPoint(x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 - min(d * 0.2, 90))
+        return CGPoint(x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 - (arc ? min(d * 0.2, 90) : 0))
     }
 
     /// The pointer's tip, its turn in degrees from the resting pose, its scale, and whether it has landed.
@@ -166,6 +107,7 @@ struct TourFlight: Equatable {
         let t = p * p * (3 - 2 * p)
         let u = 1 - t, c = control
         let point = CGPoint(x: u * u * from.x + 2 * u * t * c.x + t * t * to.x, y: u * u * from.y + 2 * u * t * c.y + t * t * to.y)
+        guard arc else { return (point, 0, 1, false) }
         let dx = 2 * u * (c.x - from.x) + 2 * t * (to.x - c.x), dy = 2 * u * (c.y - from.y) + 2 * t * (to.y - c.y)
         // At rest the arrow's tip leads up and to the left (about -112° from +x in top-left coordinates).
         let heading = atan2(dy, dx) * 180 / .pi
@@ -179,200 +121,390 @@ struct TourFlight: Equatable {
 @MainActor
 final class WelcomeTour: ObservableObject {
     static let shared = WelcomeTour()
-    /// Raised when the tour changes enough to show it again to everyone.
-    static let version = 1
+    /// Raised when the demo changes enough to play it again for everyone who saw it.
+    static let version = 2
     static let completedKey = "tour.completedVersion"
+    static let mutedKey = "tour.muted"
+    /// Scratch projects live here while the demo plays, never in the library.
+    nonisolated static var demoRoot: URL { CodemaxInstaller.supportDirectory.appendingPathComponent("Demo", isDirectory: true) }
 
     var defaults: UserDefaults = .standard
-    /// Tests: the card and cursor go off screen.
+    /// Tests: the layer goes off screen.
     var offscreen = false
-    /// How long a finished step stays before the next one.
-    var advanceAfter: TimeInterval = 1.1
+    /// Tests: every wait is this fraction of its length.
+    var pace = 1.0
+    /// Tests: does each beat's action instead of EditMax.
+    var performer: ((DemoBeat) async throws -> Void)?
+    let voice = DemoVoice()
 
-    @Published private(set) var progress: TourProgress?
-    @Published private(set) var pressed: Set<String> = []
-    /// The guide cursor, in the project window's top-left points.
     @Published private(set) var flight: TourFlight?
-    @Published private(set) var targetRect: CGRect?
-    @Published private(set) var bubble = ""
+    @Published private(set) var ring: CGRect?
+    @Published private(set) var caption = ""
+    @Published private(set) var keys: [String] = []
+    @Published private(set) var pressed: Set<String> = []
+    @Published private(set) var pressing = false
+    @Published private(set) var ripples: [TourRipple] = []
+    @Published private(set) var shown = false
+    @Published var muted = false { didSet { voice.muted = muted; defaults.set(muted, forKey: Self.mutedKey) } }
 
-    var isRunning: Bool { progress != nil }
+    private(set) var isRunning = false
     var completed: Bool { defaults.integer(forKey: Self.completedKey) >= Self.version }
-    var cardWindow: NSPanel? { card }
     var cursorWindow: NSPanel? { overlay }
 
-    private var snapshots: [UUID: () -> TourSnapshot] = [:]
-    private var running: (doc: UUID, window: NSWindow)?
-    private var card: TourPanel?
+    private var parts: [UUID: DemoParts] = [:]
+    private var window: NSWindow?
     private var overlay: TourPanel?
-    private var poll: Timer?
+    private var task: Task<Void, Never>?
     private var keyMonitor: Any?
     private var resizeObserver: NSObjectProtocol?
-    private var pendingAdvance: DispatchWorkItem?
-    private var keyDownAt: [String: Date] = [:]
+    private var demoURL: URL?
+    private var demoDoc: UUID?
+    private var then: (() -> Void)?
+    private var startedThisLaunch = false
 
-    // MARK: Windows that can be toured
+    // MARK: Project windows
 
-    func register(_ doc: UUID, snapshot: @escaping () -> TourSnapshot) { snapshots[doc] = snapshot }
+    func register(_ doc: UUID, _ p: DemoParts) { parts[doc] = p }
 
     func unregister(_ doc: UUID) {
-        snapshots.removeValue(forKey: doc)
-        if running?.doc == doc { close(finished: false) }
+        parts.removeValue(forKey: doc)
+        if demoDoc == doc { skip() }   // its window went away
     }
 
-    /// A project window appeared: the first one gets the tour, once, after the crash-report card.
-    func startIfNeeded(document doc: UUID) {
-        let demo = UserDefaults.standard.bool(forKey: "EditMaxTourDemo")   // Debug check: -EditMaxTourDemo YES
-        guard !AppDelegate.isTesting, demo || !completed, !isRunning else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in self?.startWhenClear(doc, demo: demo, tries: 0) }
+    // MARK: Starting
+
+    /// Debug check: `-EditMaxTourDemo YES` plays the demo at launch even when it was seen, and in a background launch.
+    var forced: Bool { UserDefaults.standard.bool(forKey: "EditMaxTourDemo") }
+
+    /// A first launch: the demo not seen yet and no projects of the person's own.
+    var wantsFirstRun: Bool {
+        guard !AppDelegate.isTesting, !startedThisLaunch, !isRunning else { return false }
+        if forced { return true }
+        guard !completed else { return false }
+        let files = (try? FileManager.default.contentsOfDirectory(at: ProjectLibrary.directory, includingPropertiesForKeys: nil)) ?? []
+        return !files.contains { ProjectLibrary.extensions.contains($0.pathExtension.lowercased()) }
     }
 
-    private func startWhenClear(_ doc: UUID, demo: Bool, tries: Int) {
-        guard demo || !completed, !isRunning, snapshots[doc] != nil, tries < 300 else { return }
-        // Never under a card, and never while EditMax is in the background (the demo flag starts it there too).
-        if TelemetryPrompt.shared.isShowing || UpdatePrompt.shared.isShowing || NSApp.modalWindow != nil || (!demo && !NSApp.isActive) {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.startWhenClear(doc, demo: demo, tries: tries + 1) }
-            return
-        }
-        guard let window = UIDriver.window, DocumentRegistry.shared.activeID == doc || demo else { return }
-        start(doc, in: window)
+    /// After the splash, over Home: plays the demo on a scratch project; `then` runs when it ends or is skipped, at once
+    /// when there is no demo to play (a project already open, or not a first launch).
+    func startFirstRun(then: @escaping () -> Void) {
+        guard wantsFirstRun, NSDocumentController.shared.documents.isEmpty else { if !isRunning { then() }; return }
+        startedThisLaunch = true
+        play(then: then, delay: 1.2)
     }
 
-    /// Help ▸ Welcome Tour: from the start, on the project in front.
+    /// Help ▸ Welcome Tour.
     func replay() {
-        guard let doc = DocumentRegistry.shared.activeID, let window = UIDriver.window else { return }
-        close(finished: false)
-        start(doc, in: window)
+        guard !isRunning else { return }
+        play(then: nil, delay: 0)
     }
 
-    // MARK: Running
+    /// Scratch projects a quit left behind.
+    static func cleanLeftovers() { try? FileManager.default.removeItem(at: demoRoot) }
 
-    func start(_ doc: UUID, in window: NSWindow) {
-        guard let read = snapshots[doc] else { return }
-        running = (doc, window)
-        progress = TourProgress(read())
-        let card = self.card ?? TourPanel(clickThrough: false)
-        let overlay = self.overlay ?? TourPanel(clickThrough: true)
-        card.contentView = NSHostingView(rootView: TourCardHost(tour: self))
-        overlay.contentView = NSHostingView(rootView: TourCursorHost(tour: self))
-        self.card = card; self.overlay = overlay
-        if !offscreen {
-            window.addChildWindow(card, ordered: .above)
-            window.addChildWindow(overlay, ordered: .above)   // after the card: the cursor flies over it
+    private func play(then: (() -> Void)?, delay: Double) {
+        isRunning = true
+        self.then = then
+        muted = defaults.bool(forKey: Self.mutedKey)
+        task = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await Task.sleep(for: .seconds(delay))
+                let (doc, window) = try await self.openDemoProject()
+                try await self.run(DemoBeat.script, doc: doc, in: window)
+            } catch is CancellationError {
+            } catch {
+                DebugLog.error("demo", error, [:])
+            }
+            self.finish(skipped: false)
         }
-        layoutWindows()
-        card.orderFront(nil); overlay.orderFront(nil)
-        resizeObserver = NotificationCenter.default.addObserver(forName: NSWindow.didResizeNotification, object: window, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.layoutWindows(); self?.aim(fly: false) }
+    }
+
+    /// Writes an empty 16:9 project to a scratch folder, opens it, and waits for its window.
+    private func openDemoProject() async throws -> (UUID, NSWindow) {
+        let dir = Self.demoRoot.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        var p = try Templates.project(named: "YouTube 16:9 1080p")
+        p.name = "EditMax demo"
+        let url = dir.appendingPathComponent("EditMax demo.emx")
+        try EditMaxDocument.encoder.encode(p).write(to: url, options: .atomic)
+        demoURL = url
+        ProjectLibrary.shared.open(url)
+        for _ in 0..<150 {
+            try await Task.sleep(for: .milliseconds(100))
+            guard let (id, _) = parts.first(where: { $0.value.document?.fileURL?.standardizedFileURL == url.standardizedFileURL }),
+                  let window = NSDocumentController.shared.document(for: url)?.windowControllers.first?.window, window.isVisible else { continue }
+            try await Task.sleep(for: .milliseconds(700))   // the panes settle
+            return (id, window)
         }
-        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) { [weak self] e in
-            MainActor.assumeIsolated { self?.noteKey(e) }
-            return e   // only watched, never taken
+        throw EditError.invalid("the demo project did not open")
+    }
+
+    // MARK: Playing
+
+    /// Plays `beats` over `window`. The unit tests call it with an offscreen window and a `performer`.
+    func run(_ beats: [DemoBeat], doc: UUID?, in window: NSWindow) async throws {
+        isRunning = true
+        demoDoc = doc
+        attach(to: window)
+        flight = .resting(at: stageCenter)
+        withAnimation(.easeOut(duration: 0.4)) { shown = true }
+        DebugLog.event("demo-started", ["version": Self.version])
+        try await pause(0.5)
+        for beat in beats {
+            guard isRunning else { throw CancellationError() }
+            let began = Date()
+            let said = voice.say(beat.voice)
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.75)) { caption = beat.caption; keys = beat.keys; pressed = [] }
+            if let performer { try await performer(beat) } else { try await perform(beat) }
+            let left = (said ?? beat.readingTime) * pace - Date().timeIntervalSince(began)
+            if left > 0 { try await Task.sleep(for: .seconds(left)) }
+            try await pause(0.35)
         }
-        let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in MainActor.assumeIsolated { self?.tick() } }
-        RunLoop.main.add(timer, forMode: .common)
-        poll = timer
-        DebugLog.event("tour-started", ["version": Self.version])
-        aim(fly: true, from: cardEdge())
     }
 
-    func next() {
-        guard var p = progress, let s = read() else { return }
-        pendingAdvance?.cancel()
-        if p.next(s) { progress = p; aim(fly: true) } else { close(finished: true) }
+    /// Esc, Skip, or the window going away.
+    func skip() {
+        guard isRunning else { return }
+        DebugLog.event("demo-skipped", ["at": caption])
+        finish(skipped: true)
     }
 
-    func back() {
-        guard var p = progress, let s = read() else { return }
-        pendingAdvance?.cancel()
-        p.back(s); progress = p; aim(fly: true)
-    }
-
-    func go(_ i: Int) {
-        guard var p = progress, let s = read() else { return }
-        pendingAdvance?.cancel()
-        p.go(i, s); progress = p; aim(fly: true)
-    }
-
-    /// Done, the close button, or the window going away. The tour counts as seen either way; Help runs it again.
-    func close(finished: Bool) {
-        guard running != nil || progress != nil else { return }
-        if let step = progress?.step { DebugLog.event("tour-closed", ["finished": finished, "at": "\(step)"]) }
+    /// Ends the demo either way: the layer goes, the scratch project closes and is deleted, Home comes back, then `then`.
+    func finish(skipped: Bool) {
+        guard isRunning else { return }
+        isRunning = false
+        if !skipped { DebugLog.event("demo-finished", [:]) }
+        task?.cancel(); task = nil
+        voice.stop()
         defaults.set(Self.version, forKey: Self.completedKey)
-        pendingAdvance?.cancel(); pendingAdvance = nil
-        poll?.invalidate(); poll = nil
         if let m = keyMonitor { NSEvent.removeMonitor(m) }; keyMonitor = nil
         if let o = resizeObserver { NotificationCenter.default.removeObserver(o) }; resizeObserver = nil
-        for w in [card, overlay].compactMap({ $0 }) { w.parent?.removeChildWindow(w); w.orderOut(nil) }
-        running = nil; progress = nil; flight = nil; targetRect = nil; pressed = []
-    }
-
-    private func read() -> TourSnapshot? { running.flatMap { snapshots[$0.doc]?() } }
-
-    private func tick() {
-        guard var p = progress, let s = read() else { return }
-        if p.observe(s) {
-            progress = p
-            let at = p.index
-            let work = DispatchWorkItem { [weak self] in if self?.progress?.index == at { self?.next() } }
-            pendingAdvance = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + advanceAfter, execute: work)
+        withAnimation(.easeOut(duration: 0.25)) { shown = false }
+        if let overlay {
+            let hide = { [weak overlay] in if let overlay { overlay.parent?.removeChildWindow(overlay); overlay.orderOut(nil) } }
+            if offscreen { hide() } else { DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: hide) }
         }
-        aim(fly: false)   // a control that moved (a resize, a list that scrolled) keeps the cursor on it
+        if let doc = demoDoc { parts[doc]?.state?.chat?.input = "" }
+        demoDoc = nil
+        if let url = demoURL {
+            demoURL = nil
+            NSDocumentController.shared.document(for: url)?.close()
+            // Gone before Home lists projects again, and once more after anything a last autosave wrote.
+            let folder = url.deletingLastPathComponent()
+            try? FileManager.default.removeItem(at: folder)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { try? FileManager.default.removeItem(at: folder) }
+            if NSDocumentController.shared.documents.isEmpty { HomeWindow.shared.show() }
+        }
+        flight = nil; ring = nil; caption = ""; keys = []; pressed = []; ripples = []; pressing = false
+        window = nil
+        let then = self.then
+        self.then = nil
+        then?()
     }
 
-    private func noteKey(_ e: NSEvent) {
-        switch e.type {
-        case .flagsChanged:
-            if e.modifierFlags.contains(.command) { pressed.insert("⌘") } else { pressed.remove("⌘") }
-        case .keyDown, .keyUp:
-            let k = e.keyCode == 49 ? "Space" : (e.charactersIgnoringModifiers ?? "").uppercased()
-            guard e.type == .keyDown else { pressed.remove(k); return }
-            pressed.insert(k)
-            // A key pressed with ⌘ sends no key-up: let it go out by itself unless it is still repeating.
-            keyDownAt[k] = Date()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
-                guard let self, let at = self.keyDownAt[k], Date().timeIntervalSince(at) >= 0.55 else { return }
-                self.pressed.remove(k)
+    private func attach(to window: NSWindow) {
+        self.window = window
+        let overlay = self.overlay ?? TourPanel(clickThrough: false)
+        overlay.contentView = NSHostingView(rootView: DemoOverlay(tour: self))
+        self.overlay = overlay
+        if !offscreen { window.addChildWindow(overlay, ordered: .above) }
+        layout()
+        overlay.orderFront(nil)
+        resizeObserver = NotificationCenter.default.addObserver(forName: NSWindow.didResizeNotification, object: window, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.layout() }
+        }
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] e in
+            MainActor.assumeIsolated {
+                guard let self, self.isRunning else { return e }
+                if e.keyCode == 53 { self.skip(); return nil }   // Esc
+                return e.modifierFlags.contains(.command) ? e : nil   // the demo has the keyboard; ⌘Q and the like still work
             }
-        default: break
         }
     }
 
-    // MARK: Where things go
+    private func layout() {
+        guard let window, let overlay else { return }
+        overlay.setFrame(offscreen ? CGRect(origin: CGPoint(x: -10_000, y: -10_000), size: window.frame.size) : window.frame, display: true)
+    }
 
-    /// Points the cursor at the current step's control: a new flight when the step changed, else a quiet follow.
-    private func aim(fly: Bool, from: CGPoint? = nil) {
-        guard let p = progress, let s = read(), let window = running?.window, let overlay else { return }
-        let rect = targetRect(for: p.step, s, in: window, overlay: overlay)
-        bubble = p.step.bubble
-        guard let rect else { targetRect = nil; return }
-        let tip = Self.tip(on: rect)
-        if fly || flight == nil {
-            let origin = from ?? flight.map { $0.sample(at: Date()).point } ?? cardEdge() ?? tip
-            let f = TourFlight(from: origin, to: tip, start: Date())
-            flight = f
-            targetRect = rect
-            // Landed: draw once more so the cursor's timeline stops (it runs only while the cursor moves).
-            DispatchQueue.main.asyncAfter(deadline: .now() + f.duration + 0.05) { [weak self] in if self?.flight == f { self?.objectWillChange.send() } }
-        } else if rect != targetRect, let f = flight, f.sample(at: Date()).landed {
-            flight = TourFlight(from: f.to, to: tip, start: Date().addingTimeInterval(-10))   // already there: no swoop
-            targetRect = rect
+    private var stageCenter: CGPoint {
+        let s = overlay?.frame.size ?? window?.frame.size ?? .zero
+        return CGPoint(x: s.width / 2, y: s.height / 2)
+    }
+
+    private func pause(_ s: Double) async throws { try await Task.sleep(for: .seconds(max(0, s * pace))) }
+
+    // MARK: The beats
+
+    private func perform(_ beat: DemoBeat) async throws {
+        guard let doc = demoDoc, let p = parts[doc], let document = p.document, let state = p.state, let player = p.player else { return }
+        switch beat.action {
+        case .none:
+            break
+        case .importMedia:
+            if let r = try await waitFor("media.import") {
+                let at = CGPoint(x: r.midX, y: r.midY)
+                try await fly(to: at, ring: r)
+                try await tap(at: at)   // the + opens a file panel: the demo brings its own clips in instead
+            }
+            let paths = DemoBeat.media.compactMap { Bundle.main.path(forResource: ($0 as NSString).deletingPathExtension, ofType: "mp4") }
+            _ = try await ToolExecutor(document: document, origin: .user).importMedia(paths: paths)
+            try await pause(0.6)
+        case .addClips:
+            for name in DemoBeat.media.prefix(2) {
+                guard let r = try await waitFor("media.\(name)") else { continue }
+                let at = CGPoint(x: r.minX + min(27, r.width / 2), y: r.midY)   // on the thumbnail
+                try await fly(to: at, ring: r)
+                try await click("media.\(name)", at: at, in: r, count: 2)
+                try await pause(0.45)
+            }
+        case .play(let seconds):
+            guard let r = try await waitFor("toolbar.play") else { break }
+            let at = CGPoint(x: r.midX, y: r.midY)
+            try await fly(to: at, ring: r)
+            press("Space")
+            try await click("toolbar.play", at: at, in: r, count: 1)
+            try await pause(seconds)
+            try await click("toolbar.play", at: at, in: r, count: 1)
+        case .cut:
+            guard let track = document.project.tracks.first(where: { !$0.clips.isEmpty }), let clip = track.clips.first,
+                  let lane = try await waitFor("lane.\(track.name)") else { break }
+            let pps = CGFloat(state.pixelsPerSecond)
+            func x(_ t: Double) -> CGFloat { lane.minX + CGFloat(t) * pps }
+            let on = CGPoint(x: x(clip.start + clip.duration * 0.25), y: lane.midY)
+            try await fly(to: on, ring: nil)
+            try await tap(at: on)
+            state.selectedClipIDs = [clip.id]
+            try await pause(0.35)
+            // Drag the playhead along the ruler to where the cut goes.
+            let rulerY = rect("ruler")?.midY ?? lane.minY - 24
+            let cutAt = clip.start + clip.duration * 0.55
+            let from = CGPoint(x: x(player.currentTime), y: rulerY), to = CGPoint(x: x(cutAt), y: rulerY)
+            try await fly(to: from, ring: nil)
+            withAnimation(.easeOut(duration: 0.08)) { pressing = true }
+            let glide = TourFlight(from: from, to: to, start: Date(), duration: 0.9, arc: false)
+            flight = glide
+            while true {
+                let s = glide.sample(at: Date())
+                document.seekRequest = (time: Double((s.point.x - lane.minX) / pps), play: false)
+                if s.landed { break }
+                try await Task.sleep(for: .milliseconds(33))
+            }
+            objectWillChange.send()
+            withAnimation(.spring(response: 0.25, dampingFraction: 0.5)) { pressing = false }
+            try await pause(0.3)
+            let mark = CGRect(x: to.x - 1, y: lane.minY, width: 2, height: lane.height)
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) { ring = Self.ring(around: CGPoint(x: to.x, y: lane.midY), in: mark.insetBy(dx: -12, dy: 0)) }
+            press("S")
+            _ = try await UIDriver.key("s", modifiers: [], in: window)
+            try await pause(0.4)
+        case .askChat(let text):
+            guard let r = try await chatTab() else { break }
+            let at = CGPoint(x: r.midX, y: r.midY)
+            try await fly(to: at, ring: r)
+            try await click("tab.chat", at: at, in: r, count: 1)
+            guard let field = try await waitFor("chat.input"), let chat = state.chat else { break }
+            let into = CGPoint(x: field.minX + min(40, field.width / 2), y: field.midY)
+            try await fly(to: into, ring: nil)
+            try await tap(at: into)
+            for ch in text {   // typed as a person would, never sent
+                chat.input.append(ch)
+                try await pause(Double.random(in: 0.03...0.075))
+            }
+        case .pointAtExport:
+            guard let r = exportButton() else { break }
+            try await fly(to: CGPoint(x: r.midX, y: r.midY), ring: r)   // the button opens a save panel: pointed at, not clicked
+            press("⌘"); try await pause(0.15); press("E")
+        case .outro:
+            withAnimation(.easeOut(duration: 0.2)) { ring = nil }
+            try await fly(to: stageCenter, ring: nil)
         }
     }
 
-    /// Where the tip lands: just inside the control's lower right, so the arrow sits beside it and the label stays readable.
-    static func tip(on r: CGRect) -> CGPoint {
-        CGPoint(x: r.maxX - min(r.width * 0.3, 12), y: r.maxY - min(r.height * 0.3, 6))
+    /// Moves the cursor to `p` along an arc, then rings the control there.
+    private func fly(to p: CGPoint, ring r: CGRect?) async throws {
+        let from = flight.map { $0.sample(at: Date()).point } ?? p
+        withAnimation(.easeOut(duration: 0.15)) { ring = nil }
+        let f = TourFlight(from: from, to: p, start: Date())
+        flight = f
+        try await Task.sleep(for: .seconds(f.duration * pace + 0.02))
+        objectWillChange.send()   // landed: the cursor's timeline stops
+        if let r { withAnimation(.spring(response: 0.32, dampingFraction: 0.68)) { ring = Self.ring(around: p, in: r) } }
+        try await pause(0.18)
     }
 
-    private func targetRect(for step: TourStep, _ s: TourSnapshot, in window: NSWindow, overlay: NSWindow) -> CGRect? {
-        if let id = step.target(s) {
-            guard let placed = UIRegistry.shared.elements(in: window).visible.first(where: { $0.id == id }) else { return nil }
-            return UIDriver.convert(placed.rect, from: window, to: overlay)
+    /// The cursor presses: it dips and a ripple spreads from its tip.
+    private func tap(at p: CGPoint, count: Int = 1) async throws {
+        for i in 0..<count {
+            withAnimation(.easeOut(duration: 0.07)) { pressing = true }
+            ripples.append(TourRipple(point: p))
+            try await Task.sleep(for: .milliseconds(Int(90 * min(pace, 1))))
+            withAnimation(.spring(response: 0.25, dampingFraction: 0.5)) { pressing = false }
+            if i + 1 < count { try await Task.sleep(for: .milliseconds(Int(80 * min(pace, 1)))) }
         }
-        // Export is a title-bar button: no probe there, so find it by its tooltip.
-        guard let frameView = window.contentView?.superview, let button = Self.find(in: frameView, where: { ($0.toolTip ?? "").hasPrefix("Export the movie") }) else { return nil }
+        let done = Set(ripples.map(\.id))
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak self] in self?.ripples.removeAll { done.contains($0.id) } }
+    }
+
+    /// Presses the control, with the cursor's press drawn at the same moment. The control's own handler runs, as the MCP
+    /// driver runs it while EditMax is in the background, so the demo behaves the same in front or behind; a control
+    /// without one gets an in-process click at the point.
+    private func click(_ id: String, at p: CGPoint, in r: CGRect, count: Int) async throws {
+        guard let window else { return }
+        async let shown: Void = tap(at: p, count: count)
+        if let handler = UIRegistry.shared.tap(id, count: count) {
+            try await Task.sleep(for: .milliseconds(Int(70 * min(pace, 1))))   // as the press lands
+            handler()
+        } else {
+            let target = try UIDriver.target(.string(id), dx: Double(p.x - r.midX), dy: Double(p.y - r.midY), in: window)
+            _ = try await UIDriver.click(target, count: count)
+        }
+        try await shown
+    }
+
+    /// A keycap in the line lights up.
+    private func press(_ key: String) {
+        withAnimation(.spring(response: 0.2, dampingFraction: 0.55)) { _ = pressed.insert(key) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) { _ = self?.pressed.remove(key) }
+        }
+    }
+
+    // MARK: Where things are
+
+    /// A control's frame in the cursor layer's top-left points.
+    private func rect(_ id: String) -> CGRect? {
+        guard let window, let overlay, let e = UIRegistry.shared.elements(in: window).visible.first(where: { $0.id == id }) else { return nil }
+        return UIDriver.convert(e.rect, from: window, to: overlay)
+    }
+
+    private func waitFor(_ id: String) async throws -> CGRect? {
+        for _ in 0..<30 {
+            if let r = rect(id) { return r }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        return nil
+    }
+
+    /// The Chat tab: the strip is one frame (`inspector.tabs`, padded 12 × 8) of equal tabs 4 points apart; the tabs
+    /// themselves only have handlers.
+    private func chatTab() async throws -> CGRect? {
+        guard let strip = try await waitFor("inspector.tabs") else { return nil }
+        return Self.tab(.chat, in: strip)
+    }
+
+    static func tab(_ tab: EditorState.InspectorTab, in strip: CGRect) -> CGRect {
+        let all = EditorState.InspectorTab.allCases, inner = strip.insetBy(dx: 12, dy: 8)
+        let n = CGFloat(all.count), i = CGFloat(all.firstIndex(of: tab) ?? 0)
+        let w = (inner.width - 4 * (n - 1)) / n
+        return CGRect(x: inner.minX + i * (w + 4), y: inner.minY, width: w, height: inner.height)
+    }
+
+    /// Export is a title-bar button: no probe there, so it is found by its tooltip.
+    private func exportButton() -> CGRect? {
+        guard let window, let overlay, let frameView = window.contentView?.superview,
+              let button = Self.find(in: frameView, where: { ($0.toolTip ?? "").hasPrefix("Export the movie") }) else { return nil }
         let screen = window.convertToScreen(button.convert(button.bounds, to: nil))
         return UIDriver.fromBase(overlay.convertFromScreen(screen), overlay)
     }
@@ -383,42 +515,23 @@ final class WelcomeTour: ObservableObject {
         return nil
     }
 
-    /// The card's left edge, in the cursor window's points: where the cursor sets off from at the start.
-    private func cardEdge() -> CGPoint? {
-        guard let card, let overlay else { return nil }
-        let r = UIDriver.fromBase(overlay.convertFromScreen(card.frame), overlay)
-        return CGPoint(x: r.minX + 40, y: r.midY)
+    /// An icon-sized box around the point the cursor clicks: never the whole row or tab.
+    static func ring(around p: CGPoint, in r: CGRect) -> CGRect {
+        let w = min(r.width, 30) + 8, h = min(r.height, 26) + 8
+        return CGRect(x: p.x - w / 2, y: p.y - h / 2, width: w, height: h)
     }
 
-    private func layoutWindows() {
-        guard let window = running?.window, let card, let overlay else { return }
-        let frame = offscreen ? CGRect(origin: CGPoint(x: -10_000, y: -10_000), size: window.frame.size) : window.frame
-        overlay.setFrame(frame, display: true)
-        let size = card.contentView?.fittingSize ?? CGSize(width: 440, height: 220)
-        let bounds = CGRect(origin: .zero, size: frame.size)
-        let local = Self.cardPlace(size: size, in: bounds, avoiding: targetRect)
-        let screen = overlay.convertToScreen(UIDriver.toBase(CGRect(origin: local, size: size), overlay))
-        card.setFrame(screen, display: true)
+    /// The person's own pointer size: the system arrow (without its shadow margin) times the size set in
+    /// Accessibility ▸ Display ▸ Pointer.
+    static var pointerSize: CGSize {
+        let image = NSCursor.arrow.image.size
+        let setting = UserDefaults(suiteName: "com.apple.universalaccess")?.double(forKey: "mouseDriverCursorSize") ?? 1
+        let s = min(max(setting, 1), 4)
+        return CGSize(width: (max(image.width, 14) - 4) * s, height: (max(image.height, 20) - 3) * s)
     }
-
-    /// The card's top-left in the window's top-left points: over the picture near the top, else the middle, else the
-    /// bottom, whichever keeps clear of the control the cursor points at (and room for its label).
-    static func cardPlace(size: CGSize, in bounds: CGRect, avoiding target: CGRect?) -> CGPoint {
-        let mid = bounds.midX - size.width / 2, shift = size.width * 0.45
-        let top = bounds.minY + bounds.height * 0.12
-        let candidates = [CGPoint(x: mid, y: top), CGPoint(x: mid + shift, y: top), CGPoint(x: mid - shift, y: top),
-                          CGPoint(x: mid, y: bounds.midY - size.height / 2), CGPoint(x: mid, y: bounds.maxY - size.height - 24)]
-            .map { CGPoint(x: min(max($0.x, bounds.minX), bounds.maxX - size.width), y: $0.y) }
-        guard let target else { return candidates[0] }
-        let keepOut = target.insetBy(dx: -150, dy: -40)
-        return candidates.first { !CGRect(origin: $0, size: size).intersects(keepOut) } ?? candidates[0]
-    }
-
-    /// A step change may move the card out of the new target's way.
-    func relayoutCard() { layoutWindows() }
 }
 
-/// A borderless, non-activating child window: the card (clickable) or the cursor layer (click-through).
+/// A borderless, non-activating child window over the project window.
 final class TourPanel: NSPanel {
     init(clickThrough: Bool) {
         super.init(contentRect: CGRect(x: 0, y: 0, width: 440, height: 220), styleMask: [.borderless, .nonactivatingPanel, .fullSizeContentView],
@@ -434,192 +547,182 @@ final class TourPanel: NSPanel {
         animationBehavior = .none
     }
     override var canBecomeMain: Bool { false }
-    override var canBecomeKey: Bool { false }   // the keyboard stays in the project window, where the steps happen
+    override var canBecomeKey: Bool { false }   // the keyboard stays in the project window
 }
 
-// MARK: - The card
+// MARK: - The layer
 
-private struct TourCardHost: View {
+private struct DemoOverlay: View {
     @ObservedObject var tour: WelcomeTour
-    var body: some View {
-        if let p = tour.progress {
-            TourCardView(progress: p, pressed: tour.pressed, next: { tour.next() }, back: { tour.back() }, go: { tour.go($0) },
-                         close: { tour.close(finished: false) })
-                .onChange(of: p.index) { _, _ in DispatchQueue.main.async { tour.relayoutCard() } }
-        }
-    }
-}
-
-struct TourCardView: View {
-    let progress: TourProgress
-    var pressed: Set<String> = []
-    var next: () -> Void = {}
-    var back: () -> Void = {}
-    var go: (Int) -> Void = { _ in }
-    var close: () -> Void = {}
-
-    private var step: TourStep { progress.step }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 8) {
-                Text("Welcome tour").font(.caption.weight(.semibold)).foregroundStyle(.secondary).textCase(.uppercase)
-                Text("\(step.rawValue + 1) of \(TourStep.allCases.count)").font(.caption).foregroundStyle(.tertiary).monospacedDigit()
-                Spacer()
-                Button(action: close) { Image(systemName: "xmark").font(.system(size: 10, weight: .bold)).frame(width: 18, height: 18) }
-                    .buttonStyle(.plain).foregroundStyle(.secondary).help("End the tour (Help ▸ Welcome Tour shows it again)")
-                    .pointer().uiFrame("tour.close").uiTap("tour.close", close)
-            }
-            VStack(alignment: .leading, spacing: 6) {
-                Text(step.title).font(.title3.weight(.semibold))
-                Text(step.body).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            }
-            HStack(spacing: 6) {
-                ForEach(step.keys, id: \.self) { k in TourKeycap(label: k, lit: pressed.contains(k)) }
-                if !step.keys.isEmpty { Spacer().frame(width: 4) }
-                status
-                Spacer(minLength: 0)
-            }
-            .frame(minHeight: 26)
-            HStack(spacing: 10) {
-                dots
-                Spacer(minLength: 12)
-                if step.rawValue > 0 {
-                    Button("Back", action: back).buttonStyle(.link).font(.callout).pointer().uiFrame("tour.back").uiTap("tour.back", back)
+        ZStack(alignment: .bottom) {
+            // Clicks land here, not on the project: the demo is driving.
+            Color.black.opacity(0.005).contentShape(Rectangle()).onTapGesture {}
+            if let f = tour.flight {
+                SwiftUI.TimelineView(.animation(minimumInterval: nil, paused: f.sample(at: Date()).landed)) { ctx in
+                    let s = f.sample(at: ctx.date)
+                    DemoCursorView(tip: s.point, angle: s.angle * 0.35, scale: 1 + (s.scale - 1) * 0.5, ring: tour.ring, caption: tour.caption,
+                                   keys: tour.keys, pressed: tour.pressed, pressing: tour.pressing, ripples: tour.ripples)
                 }
-                GlassGroup(spacing: 10) {
-                    Button(progress.isLast ? "Done" : "Next", action: next)
-                        .glassButtonStyle(prominent: progress.isDone || progress.isLast).controlSize(.large)
-                        .pointer().uiFrame("tour.next").uiTap("tour.next", next)
-                }
+                .id(f.start)
             }
+            DemoSkipPill(muted: $tour.muted, skip: { tour.skip() }).padding(.bottom, 18)
         }
-        .padding(22)
-        .frame(width: 440)
-        .liquidGlass(in: RoundedRectangle(cornerRadius: 26, style: .continuous))
-        .environment(\.controlActiveState, .key)   // the panel is never key; Next still draws in color
-        .padding(24)   // room for the shadow
-        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: progress)
-    }
-
-    @ViewBuilder private var status: some View {
-        if progress.isDone {
-            Label(progress.wasFoundDone ? "Already done" : "Nice", systemImage: "checkmark.circle.fill").font(.callout.weight(.semibold)).foregroundStyle(.green)
-                .transition(.scale(scale: 0.6).combined(with: .opacity))
-        } else {
-            Text(step.keys.isEmpty ? "Your turn" : "Your turn: press it").font(.callout).foregroundStyle(.secondary)
-        }
-    }
-
-    private var dots: some View {
-        HStack(spacing: 6) {
-            ForEach(TourStep.allCases) { s in
-                let reached = s.rawValue <= progress.reached
-                Circle()
-                    .fill(s == step ? Color.accentColor : Color.primary.opacity(reached ? 0.35 : 0.12))
-                    .frame(width: s == step ? 8 : 6, height: s == step ? 8 : 6)
-                    .frame(width: 12, height: 12)
-                    .contentShape(Rectangle())
-                    .onTapGesture { if reached { go(s.rawValue) } }
-                    .help(reached ? "Step \(s.rawValue + 1): \(s.title)" : "Step \(s.rawValue + 1), not reached yet")
-                    .pointer().uiFrame("tour.dot.\(s.rawValue + 1)")
-                    .uiTap("tour.dot.\(s.rawValue + 1)") { if reached { go(s.rawValue) } }
-            }
-        }
+        .opacity(tour.shown ? 1 : 0)
     }
 }
 
-private struct TourKeycap: View {
-    let label: String
-    let lit: Bool
-    var body: some View {
-        Text(label)
-            .font(.system(size: 12, weight: .semibold, design: .rounded))
-            .foregroundStyle(lit ? Color.white : Color.primary)
-            .padding(.horizontal, label.count > 1 ? 10 : 0)
-            .frame(minWidth: 26, minHeight: 24)
-            .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(lit ? Color.accentColor : Color.primary.opacity(0.08)))
-            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(Color.primary.opacity(lit ? 0 : 0.18), lineWidth: 1))
-            .offset(y: lit ? 1 : 0)
-            .animation(.easeOut(duration: 0.08), value: lit)
-    }
-}
-
-// MARK: - The guide cursor
-
-private struct TourCursorHost: View {
-    @ObservedObject var tour: WelcomeTour
-    var body: some View {
-        if let flight = tour.flight, let target = tour.targetRect {
-            SwiftUI.TimelineView(.animation(minimumInterval: nil, paused: flight.sample(at: Date()).landed)) { ctx in
-                let s = flight.sample(at: ctx.date)
-                TourCursorView(tip: s.point, angle: s.angle, scale: s.scale, target: s.landed ? target : nil, bubble: s.landed ? tour.bubble : nil)
-            }
-            .id(flight.start)   // a new flight restarts the timeline
-        }
-    }
-}
-
-/// The pointer, the ring around the control, and the label: drawn at given values, so a preview can freeze any moment.
-struct TourCursorView: View {
+/// The pointer, the ring around the control, the ripples and the one-line caption: drawn at given values, so a preview
+/// can freeze any moment.
+struct DemoCursorView: View {
     let tip: CGPoint
-    var angle: Double = 0
-    var scale: Double = 1
-    var target: CGRect?
-    var bubble: String?
-    @State private var pulse = false
+    var angle = 0.0
+    var scale = 1.0
+    var ring: CGRect?
+    var caption = ""
+    var keys: [String] = []
+    var pressed: Set<String> = []
+    var pressing = false
+    var ripples: [TourRipple] = []
+    var pointer = WelcomeTour.pointerSize
 
     var body: some View {
         GeometryReader { geo in
             ZStack(alignment: .topLeading) {
-                if let target {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .strokeBorder(Color.accentColor, lineWidth: 2)
-                        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.accentColor.opacity(0.10)))
-                        .shadow(color: Color.accentColor.opacity(pulse ? 0.7 : 0.25), radius: pulse ? 10 : 4)
-                        .frame(width: target.width + 10, height: target.height + 10)
-                        .position(x: target.midX, y: target.midY)
-                        .onAppear { withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) { pulse = true } }
-                        .transition(.opacity)
-                }
-                TourPointer()
-                    .scaleEffect(scale, anchor: .topLeading)
+                if let ring { DemoRing(rect: ring).transition(.scale(scale: 1.6).combined(with: .opacity)) }
+                ForEach(ripples) { DemoRipple(point: $0.point) }
+                TourPointer(size: pointer)
+                    .scaleEffect(scale * (pressing ? 0.8 : 1), anchor: .topLeading)
                     .rotationEffect(.degrees(angle), anchor: .topLeading)
                     .offset(x: tip.x, y: tip.y)
-                if let bubble, !bubble.isEmpty {
-                    // Beside the tip, on whichever side has room; the zero-width frame lets the text grow away from it.
-                    let leftward = tip.x + 200 > geo.size.width
-                    Text(bubble)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 10).padding(.vertical, 5)
-                        .background(Capsule().fill(Color.accentColor))
-                        .shadow(color: .black.opacity(0.25), radius: 6, y: 2)
-                        .fixedSize()
-                        .frame(width: 0, height: 0, alignment: leftward ? .trailing : .leading)
-                        .offset(x: tip.x + (leftward ? -6 : 24), y: tip.y + 30)
-                        .transition(.scale(scale: 0.5, anchor: leftward ? .trailing : .leading).combined(with: .opacity))
+                if !caption.isEmpty {
+                    // Beside the pointer on whichever side has room; the zero-size frame lets the line grow away from it.
+                    let left = tip.x + 300 > geo.size.width
+                    let up = tip.y + pointer.height + 44 > geo.size.height
+                    DemoBubble(caption: caption, keys: keys, pressed: pressed)
+                        .frame(width: 0, height: 0, alignment: left ? .trailing : .leading)
+                        .offset(x: tip.x + (left ? -10 : pointer.width + 8), y: tip.y + (up ? -16 : pointer.height + 10))
                 }
             }
             .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
         }
         .allowsHitTesting(false)
-        .animation(.spring(response: 0.35, dampingFraction: 0.6), value: bubble)
+        .animation(.spring(response: 0.35, dampingFraction: 0.72), value: caption)
+        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: ring)
     }
 }
 
-/// An arrow pointer with its tip at the view's top-left: EditMax's accent, outlined in white so it reads on any picture.
+/// The one blue row: what is happening, with the keys for it.
+struct DemoBubble: View {
+    let caption: String
+    var keys: [String] = []
+    var pressed: Set<String> = []
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Text(caption).font(.system(size: 13, weight: .semibold)).foregroundStyle(.white).lineLimit(1)
+            ForEach(keys, id: \.self) { DemoKeycap(label: $0, down: pressed.contains($0)) }
+        }
+        .padding(.leading, 12).padding(.trailing, keys.isEmpty ? 12 : 5).padding(.vertical, keys.isEmpty ? 6 : 4)
+        .background(Capsule().fill(LinearGradient(colors: [Color.accentColor.opacity(0.92), Color.accentColor], startPoint: .top, endPoint: .bottom)))
+        .overlay(Capsule().strokeBorder(.white.opacity(0.28), lineWidth: 0.5))
+        .shadow(color: Color.accentColor.opacity(0.45), radius: 12, y: 4)
+        .shadow(color: .black.opacity(0.25), radius: 2, y: 1)
+        .fixedSize()
+        .id(caption)
+        .transition(.asymmetric(insertion: .scale(scale: 0.7, anchor: .leading).combined(with: .opacity), removal: .opacity))
+    }
+}
+
+struct DemoKeycap: View {
+    let label: String
+    var down = false
+    var body: some View {
+        Text(label)
+            .font(.system(size: 11, weight: .bold, design: .rounded))
+            .foregroundStyle(down ? .white : Color.accentColor)
+            .padding(.horizontal, label.count > 1 ? 7 : 0)
+            .frame(minWidth: 20, minHeight: 20)
+            .background(RoundedRectangle(cornerRadius: 5, style: .continuous).fill(down ? Color.white.opacity(0.25) : Color.white))
+            .shadow(color: .black.opacity(down ? 0 : 0.25), radius: 0, y: down ? 0 : 1.5)
+            .offset(y: down ? 1.5 : 0)
+            .scaleEffect(down ? 0.92 : 1)
+    }
+}
+
+/// The box around the icon being clicked, breathing softly.
+private struct DemoRing: View {
+    let rect: CGRect
+    @State private var glow = false
+    var body: some View {
+        RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .strokeBorder(Color.accentColor, lineWidth: 2)
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.accentColor.opacity(0.12)))
+            .shadow(color: Color.accentColor.opacity(glow ? 0.75 : 0.3), radius: glow ? 9 : 4)
+            .frame(width: rect.width, height: rect.height)
+            .position(x: rect.midX, y: rect.midY)
+            .onAppear { withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) { glow = true } }
+    }
+}
+
+private struct DemoRipple: View {
+    let point: CGPoint
+    @State private var grown = false
+    var body: some View {
+        Circle()
+            .strokeBorder(Color.accentColor, lineWidth: grown ? 0.5 : 2.5)
+            .background(Circle().fill(Color.accentColor.opacity(grown ? 0 : 0.25)))
+            .frame(width: grown ? 38 : 6, height: grown ? 38 : 6)
+            .opacity(grown ? 0 : 1)
+            .position(point)
+            .onAppear { withAnimation(.easeOut(duration: 0.5)) { grown = true } }
+    }
+}
+
+/// Mute and Skip, small, at the foot of the window.
+struct DemoSkipPill: View {
+    @Binding var muted: Bool
+    var skip: () -> Void
+    var body: some View {
+        HStack(spacing: 10) {
+            Button { muted.toggle() } label: {
+                Image(systemName: muted ? "speaker.slash.fill" : "speaker.wave.2.fill").frame(width: 16)
+            }
+            .buttonStyle(.plain).help(muted ? "Turn the voice on" : "Mute the voice").pointer().uiFrame("demo.mute")
+            Divider().frame(height: 12)
+            Button(action: skip) {
+                HStack(spacing: 6) {
+                    Text("Skip demo")
+                    Text("esc").font(.system(size: 9.5, weight: .semibold, design: .rounded)).padding(.horizontal, 4).padding(.vertical, 1)
+                        .background(RoundedRectangle(cornerRadius: 3).strokeBorder(.secondary.opacity(0.6), lineWidth: 0.8))
+                }
+            }
+            .buttonStyle(.plain).help("End the demo (Help ▸ Welcome Tour plays it again)").pointer().uiFrame("demo.skip")
+        }
+        .font(.system(size: 11.5, weight: .medium))
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 12).padding(.vertical, 6)
+        .background(Capsule().fill(.ultraThinMaterial))
+        .overlay(Capsule().strokeBorder(.white.opacity(0.12), lineWidth: 0.5))
+        .shadow(color: .black.opacity(0.2), radius: 8, y: 3)
+    }
+}
+
+/// An arrow pointer with its tip at the view's top-left, the size of the person's own pointer: EditMax's accent,
+/// outlined in white so it reads on any picture.
 struct TourPointer: View {
     /// The direction the tip leads at rest, in degrees from +x with y downwards.
     static let restingHeading = -112.0
+    var size = CGSize(width: 13, height: 20)
     var body: some View {
         ArrowShape()
             .fill(Color.accentColor)
-            .overlay(ArrowShape().stroke(Color.white, style: StrokeStyle(lineWidth: 2, lineJoin: .round)))
-            .frame(width: 21, height: 31)   // larger than the Mac's own pointer, so the two are never confused
-            .shadow(color: .black.opacity(0.35), radius: 3, y: 1.5)
-            .shadow(color: Color.accentColor.opacity(0.55), radius: 9)
-            .frame(width: 21, height: 31, alignment: .topLeading)
+            .overlay(ArrowShape().stroke(Color.white, style: StrokeStyle(lineWidth: max(1.2, size.height / 14), lineJoin: .round)))
+            .frame(width: size.width, height: size.height)
+            .shadow(color: .black.opacity(0.35), radius: 2, y: 1)
+            .shadow(color: Color.accentColor.opacity(0.5), radius: 7)
+            .frame(width: size.width, height: size.height, alignment: .topLeading)
     }
 
     private struct ArrowShape: Shape {

@@ -20,7 +20,8 @@ final class TelemetryPrompt {
     private var waitingForFront: NSObjectProtocol?
 
     func askIfNeeded() {
-        guard Telemetry.isAvailable(), !Telemetry.shared.agreed, !isShowing else { return }
+        // The welcome demo asks for the card itself when it ends.
+        guard Telemetry.isAvailable(), !Telemetry.shared.agreed, !isShowing, !WelcomeTour.shared.isRunning else { return }
         // One card at a time: the update card first.
         if UpdatePrompt.shared.isShowing {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.askIfNeeded() }

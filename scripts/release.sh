@@ -1,7 +1,7 @@
 #!/bin/bash
 # Cuts a release on this Mac: scripts/release.sh 0.2.0
 # Nothing is built on GitHub. scripts/package.sh builds, signs and notarizes EditMax here; then the version is stamped
-# into project.yml, committed, tagged v0.2.0 and pushed, and the GitHub release is published with the DMG, the zip,
+# into project.yml and Info.plist, committed, tagged v0.2.0 and pushed, and the GitHub release is published with the DMG, the zip,
 # SHA256SUMS and appcast.xml. A build that is not notarized is never published (the website's Download button hands out
 # the latest release to everyone).
 #
@@ -64,7 +64,11 @@ APPCAST
 xmllint --noout build/release/appcast.xml
 
 sed -i '' -E "s/(CFBundleShortVersionString: )\"[^\"]+\"/\1\"$V\"/; s/(CFBundleVersion: )\"[^\"]+\"/\1\"$BUILD\"/" project.yml
-git diff --quiet project.yml || git commit -q -m "Release $V" project.yml
+# xcodegen writes Info.plist from project.yml; package.sh ran it before the stamp, so run it again to commit the new
+# version in both (else the next build leaves Info.plist changed). The Vendor/ directories it needs exist by now.
+xcodegen generate -q
+PLIST=EditMax/Resources/Info.plist
+git diff --quiet project.yml "$PLIST" || git commit -q -m "Release $V" project.yml "$PLIST"
 git tag -a "v$V" -m "EditMax $V"
 git push -q origin main "v$V"
 gh release create "v$V" "build/release/EditMax-$V.dmg" "build/release/EditMax-$V.zip" build/release/SHA256SUMS build/release/appcast.xml --verify-tag \

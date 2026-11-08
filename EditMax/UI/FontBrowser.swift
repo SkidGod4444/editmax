@@ -70,7 +70,7 @@ struct FontBrowser: View {
         .onChange(of: lib.catalog.count) { _, _ in if autoSelected { selectInitial(self.sections) } }
         .onDisappear { lib.cancelPendingPreviews() }
         .alert("Remove \(removing?.name ?? "")?", isPresented: .init(get: { removing != nil }, set: { if !$0 { removing = nil } })) {
-            Button("Remove", role: .destructive) { if let f = removing { lib.remove(family: f.name, source: f.source); note = "Removed \(f.name). Its files are in the Trash." } }
+            Button("Remove", role: .destructive) { if let f = removing { lib.remove(family: f.name, source: f.source); note = "Removed \(f.name). Its files are in the Archive." } }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("Its files go to the Archive: restore them from Home ▸ Archive within \(AppArchive.shared.periodText). Titles that use it show their style's font until it is back.")

@@ -85,17 +85,20 @@ enum ExportService {
     struct DiskTooSmall: LocalizedError, Equatable {
         let needed: Int64, free: Int64, folder: String
         var errorDescription: String? {
-            String(format: "This export may need up to %.1f GB free on the disk that holds %@; %.1f GB is free. The estimate follows the preset's bitrate, so a mostly still picture (a fixed camera, a screen recording) can need far less. Export anyway (it stops and removes the unfinished file if the disk gets below 0.5 GB free), free some space, export to another disk, or pick a smaller preset.",
-                   Double(needed) / 1e9, folder, Double(free) / 1e9)
+            "This export may need up to \(ExportService.size(needed)) free on the disk that holds \(folder); \(ExportService.size(free)) is free. The estimate follows the preset's bitrate, so a mostly still picture (a fixed camera, a screen recording) can need far less. Export anyway (it stops and removes the unfinished file if the disk gets below 0.5 GB free), free some space, export to another disk, or pick a smaller preset."
         }
+    }
+
+    /// A disk amount as a person reads it: GB from 0.1 GB, MB below that (a USB stick with 5 MB free read "0.0 GB").
+    nonisolated static func size(_ bytes: Int64) -> String {
+        bytes >= 100_000_000 ? String(format: "%.1f GB", Double(bytes) / 1e9) : "\(Int((Double(max(0, bytes)) / 1e6).rounded())) MB"
     }
 
     /// The disk got below `stopBelow` while the export wrote; the unfinished file was removed.
     struct DiskRanLow: LocalizedError, Equatable {
         let free: Int64, written: Int64, folder: String
         var errorDescription: String? {
-            String(format: "Export stopped: the disk that holds %@ got down to %.1f GB free after %.1f GB of the file was written. The unfinished file was removed. Free some space or export to another disk.",
-                   folder, Double(free) / 1e9, Double(written) / 1e9)
+            "Export stopped: the disk that holds \(folder) got down to \(ExportService.size(free)) free after \(ExportService.size(written)) of the file was written. The unfinished file was removed. Free some space or export to another disk."
         }
     }
 

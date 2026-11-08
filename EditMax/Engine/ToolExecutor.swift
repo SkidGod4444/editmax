@@ -75,7 +75,15 @@ struct ToolExecutor {
         return summary
     }
 
-    struct AssetInfo: Codable { var id: String, name: String, kind: String, duration: Double, width: Int?, height: Int?, path: String; var missing: Bool? = nil }   // missing: the file is not at its path (relink_media)
+    struct AssetInfo: Codable {
+        var id: String, name: String, kind: String, duration: Double, width: Int?, height: Int?, path: String
+        var missing: Bool? = nil   // the file is not at its path (relink_media)
+        /// Footage used in place on a camera card: the drawer said "back it up", an agent importing it heard nothing.
+        var note: String? = nil
+        static func cardNote(_ path: String) -> String? {
+            AssetLibrary.cameraCard(of: path).map { "Used in place on the camera card \($0), its only copy: back the card up before formatting it." }
+        }
+    }
     static func textOverlaps(_ p: Project) -> [String]? {
         let c = TextLayout.collisions(in: p.texts, canvas: p.settings.canvas)
         return c.isEmpty ? nil : c.map { "'\($0.a.text.prefix(24))' and '\($0.b.text.prefix(24))' overlap \(String(format: "%.1f", $0.start))–\(String(format: "%.1f", $0.end)) s" }
@@ -104,7 +112,7 @@ struct ToolExecutor {
         // Everything imported into any project is in the Assets library too (referenced where it is, as the project does).
         if !imported.isEmpty { document.noteLibraryUse(imported) }
         if !failures.isEmpty, imported.isEmpty { throw EditError.invalid(failures.joined(separator: "; ")) }
-        return imported.map { a in .init(id: a.id.short, name: a.name, kind: a.kind.rawValue, duration: r(a.duration), width: a.width, height: a.height, path: a.path) }
+        return imported.map { a in .init(id: a.id.short, name: a.name, kind: a.kind.rawValue, duration: r(a.duration), width: a.width, height: a.height, path: a.path, note: AssetInfo.cardNote(a.path)) }
     }
 
     // MARK: Clip edits

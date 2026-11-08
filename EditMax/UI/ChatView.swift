@@ -152,14 +152,28 @@ struct ChatView: View {
     private var hasAgentProblem: Bool { CodemaxRunner.bundledBinary == nil || (chat.selectedAgent.map { !$0.installed } ?? false) }
 
     // MARK: Empty state: a symbol, one line, one short note on how it runs, and three example requests as chips.
+    /// In a short chat pane the group was taller than the space and spilled over the agent picker above it: it now drops
+    /// the symbol, then the note, to fit, and never draws outside the list.
     private var emptyState: some View {
+        ViewThatFits(in: .vertical) {
+            emptyContent(symbol: true, note: true)
+            emptyContent(symbol: false, note: true)
+            emptyContent(symbol: false, note: false)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .clipped()
+    }
+
+    private func emptyContent(symbol: Bool, note: Bool) -> some View {
         VStack(spacing: 12) {
-            Image(systemName: "sparkles").font(.system(size: 36, weight: .light)).foregroundStyle(.tertiary).padding(.bottom, 4)
+            if symbol { Image(systemName: "sparkles").font(.system(size: 36, weight: .light)).foregroundStyle(.tertiary).padding(.bottom, 4) }
             Text("Tell \(workerName) what to change").font(.headline)
-            Text(chat.backend == .agent
-                 ? "Runs with its own login through EditMax's bundled agent runtime, no API key. It can only call EditMax's editing tools."
-                 : "Uses your own API key through EditMax's bundled sidecar, pay per token. It can only call EditMax's editing tools.")
-                .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center).frame(maxWidth: 320).fixedSize(horizontal: false, vertical: true)
+            if note {
+                Text(chat.backend == .agent
+                     ? "Runs with its own login through EditMax's bundled agent runtime, no API key. It can only call EditMax's editing tools."
+                     : "Uses your own API key through EditMax's bundled sidecar, pay per token. It can only call EditMax's editing tools.")
+                    .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center).frame(maxWidth: 320).fixedSize(horizontal: false, vertical: true)
+            }
             VStack(spacing: 8) {
                 ForEach(Array(Self.suggestions.enumerated()), id: \.offset) { i, s in
                     SuggestionChip(text: s, id: "chat.suggestion.\(i)") { chat.input = s }
@@ -169,7 +183,6 @@ struct ChatView: View {
         }
         .padding(.horizontal, 16).padding(.vertical, 24)
         .padding(.bottom, 56)   // keeps the group centred in the part of the list not under the input bar
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     /// The key box for the chosen provider's slot: what it needs, where the key is now (keychain or environment), save and remove.

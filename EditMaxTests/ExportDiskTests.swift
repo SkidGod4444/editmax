@@ -116,4 +116,13 @@ final class ExportDiskTests: XCTestCase {
             XCTAssertLessThan(Int64(r.bytes), ExportService.diskNeeded(estimate: est) - 500_000_000, "10 % over the estimate covers what was written")
         }
     }
+
+    func testSmallAmountsReadInMegabytes() {
+        XCTAssertEqual(ExportService.size(5_394_432), "5 MB", "a nearly full stick does not read 0.0 GB")
+        XCTAssertEqual(ExportService.size(0), "0 MB")
+        XCTAssertEqual(ExportService.size(300_000_000), "0.3 GB")
+        XCTAssertEqual(ExportService.size(20_000_000_000), "20.0 GB")
+        let m = ExportService.DiskRanLow(free: 5_394_432, written: 0, folder: "/Volumes/STICK").localizedDescription
+        XCTAssertTrue(m.contains("got down to 5 MB free after 0 MB"), m)
+    }
 }

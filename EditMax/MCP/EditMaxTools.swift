@@ -423,11 +423,13 @@ enum EditMaxTools {
         var duration: Double?
         var used_in: [String]
         var missing: Bool?
+        var note: String?
         @MainActor init(_ item: LibraryItem) {
             id = item.id.short; name = item.name; path = item.path; kind = item.kind.rawValue
             duration = item.duration.map { ($0 * 1000).rounded() / 1000 }
             used_in = item.usedIn.values.sorted()
             missing = item.exists ? nil : true
+            note = item.exists ? ToolExecutor.AssetInfo.cardNote(item.path) : nil
         }
     }
 

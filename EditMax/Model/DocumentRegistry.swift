@@ -22,7 +22,10 @@ final class DocumentRegistry: ObservableObject {
         if documents.isEmpty, !AppDelegate.isTesting {   // tests register documents too; Home never shows for them
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                 // Not while a launch is still waiting for the project it opens: that wait shows Home itself if none comes.
-                if self.documents.isEmpty, !AppDelegate.quitting, !HomeWindow.shared.isVisible, !HomeWindow.shared.waitingForLaunchProject { HomeWindow.shared.show() }
+                // Never under the splash: after it has faded.
+                SplashScreen.shared.afterDismiss {
+                    if self.documents.isEmpty, !AppDelegate.quitting, !HomeWindow.shared.isVisible, !HomeWindow.shared.waitingForLaunchProject { HomeWindow.shared.show() }
+                }
             }
         }
     }

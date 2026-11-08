@@ -122,6 +122,7 @@ struct EditorRootView: View {
         }
         .onDisappear { DocumentRegistry.shared.unregister(document); AgentFollow.shared.unregister(document.id); WelcomeTour.shared.unregister(document.id); player.pause() }
         .background(WindowFocusObserver { DocumentRegistry.shared.activate(document) })
+        .background(LaunchUntitledHider(untitled: fileURL == nil))
         .modifier(EditingSheets(document: document))   // relink on open, consolidate (RelinkSheet.swift)
         .onReceive(NotificationCenter.default.publisher(for: .editmaxCompare)) { _ in
             if DocumentRegistry.shared.active?.id == document.id, document.project.hasColorGrade { player.toggleCompare() }
@@ -309,6 +310,27 @@ struct EditCommands: Commands {
 }
 
 /// Marks the document active when its window becomes key, so agents default to what the user is looking at.
+/// On a plain launch SwiftUI's DocumentGroup opens an empty untitled project by itself (AppKit's
+/// `applicationShouldOpenUntitledFile` is not asked), and the launch closes it 0.3 s later. Its window stays transparent,
+/// without the zoom-open animation, until then, so nothing flashes behind the splash. One restored with edits is shown again.
+struct LaunchUntitledHider: NSViewRepresentable {
+    let untitled: Bool
+    func makeNSView(context: Context) -> NSView { Hider(untitled: untitled) }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+    final class Hider: NSView {
+        let untitled: Bool
+        init(untitled: Bool) { self.untitled = untitled; super.init(frame: .zero) }
+        required init?(coder: NSCoder) { nil }
+        override func viewWillMove(toWindow w: NSWindow?) {
+            super.viewWillMove(toWindow: w)
+            guard let w, untitled, !AppDelegate.isTesting, !AppDelegate.launchSettled else { return }
+            w.animationBehavior = .none
+            w.alphaValue = 0
+            DebugLog.event("launch-untitled-hidden", ["visible": w.isVisible])
+        }
+    }
+}
+
 struct WindowFocusObserver: NSViewRepresentable {
     let onFocus: () -> Void
     func makeNSView(context: Context) -> NSView {

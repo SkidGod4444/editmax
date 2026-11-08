@@ -78,7 +78,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // machinery never sees an app without windows (that is what makes it present an Open panel). A launch that opens
         // or restores a project waits for that project instead, and shows Home only if none arrives (no flash of Home).
         let isDefault = notification.userInfo?[NSApplication.launchIsDefaultUserInfoKey] as? Bool ?? true
-        let plan = HomeWindow.launchPlan(isDefaultLaunch: isDefault, projectOpen: !NSDocumentController.shared.documents.isEmpty,
+        let plan = HomeWindow.launchPlan(isDefaultLaunch: isDefault, projectOpen: HomeWindow.projectOpen,   // an empty untitled one is no project
                                          projectInArguments: ProcessInfo.processInfo.arguments.contains(where: { $0.hasSuffix(".emx") || $0.hasSuffix(".editmax") }))
         DebugLog.event("launch-plan", ["default": isDefault, "plan": "\(plan)"])
         switch plan {
@@ -91,7 +91,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // Home instead. An untitled document with edits (restored from a crash) stays.
             let docs = NSDocumentController.shared.documents
             DebugLog.event("launch-docs", ["count": docs.count, "untitled": docs.filter { $0.fileURL == nil }.count, "edited": docs.filter(\.isDocumentEdited).count])
-            for d in docs where d.fileURL == nil && !d.isDocumentEdited { d.close() }
+            for d in docs where d.fileURL == nil {
+                if !d.isDocumentEdited { d.close(); continue }
+                for w in d.windowControllers.compactMap(\.window) { w.alphaValue = 1; w.animationBehavior = .documentWindow }   // kept: shown after all
+            }
+            Self.launchSettled = true
             // With a splash up, Home waits until it has faded: the splash plays, then the app opens. (A launch waiting for
             // its project leaves this to the wait.)
             guard plan == .showNow else { return }
@@ -127,5 +131,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     /// Set once the app is quitting, so windows closing on the way out do not bring Home back up.
     static var quitting = false
+    /// False until the launch has closed the empty untitled project DocumentGroup opens by itself (0.3 s in); until then
+    /// an untitled project's window is kept transparent (`LaunchUntitledHider`), so it never flashes open.
+    static var launchSettled = false
     func applicationWillTerminate(_ notification: Notification) { Self.quitting = true }
 }

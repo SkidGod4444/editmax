@@ -282,6 +282,16 @@ struct AssistantSettings: View {
                 }
                 .pointer().uiFrame("settings.assistant.followAgent")
             }
+            Section {
+                Picker("Push to talk", selection: $s.pushToTalk) {
+                    ForEach(PushToTalk.Key.allCases) { Text($0.label).tag($0.rawValue) }
+                }
+                .pointer().uiFrame("settings.assistant.pushToTalk")
+            } header: {
+                Text("Voice")
+            } footer: {
+                Text("Hold the key and speak to the agent; let go to stop. Your words stay in the chat field until you press Return, so you can fix a word first. ⇧⌘D or the microphone button also start and stop listening.")
+            }
         }
         .formStyle(.grouped)
     }

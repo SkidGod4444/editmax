@@ -6,7 +6,7 @@ import AppKit
 enum EditorCommand: String {
     case split, transition, marker, closeGaps, deleteRange, reframe, slowMotion, normalSpeed, fast
     case zoomIn, zoomOut, importMedia
-    case askAgent, dictate, stopAgent
+    case askAgent, dictate, stopAgent, talkStart, talkStop
     case showInspector, showChat, showAgents, showHistory
 }
 
@@ -54,6 +54,11 @@ extension EditorActions {
             if c == .dictate { state.chat?.toggleDictation() }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { state.chat?.focusRequest += 1 }   // once the field is on screen
         case .stopAgent: if state.chat?.isRunning == true { state.chat?.stop() }
+        case .talkStart:   // push to talk: the chat comes up and listens while the key is held
+            if state.chat == nil { state.chat = ChatSession(document: document) }
+            if !state.focusMode { state.inspectorTab = .chat }
+            state.chat?.startDictation()
+        case .talkStop: state.chat?.stopDictation()
         case .showInspector: state.focusMode = false; state.inspectorTab = .inspector
         case .showChat: state.focusMode = false; state.inspectorTab = .chat
         case .showAgents: state.focusMode = false; state.inspectorTab = .agents
@@ -113,6 +118,8 @@ struct AgentCommands: Commands {
             Button("Ask the Agent…") { postEditorCommand(.askAgent) }.keyboardShortcut("l", modifiers: .command)
             Button("Speak to the Agent") { postEditorCommand(.dictate) }.keyboardShortcut("d", modifiers: [.command, .shift])
             Button("Stop the Agent") { postEditorCommand(.stopAgent) }.keyboardShortcut(".", modifiers: .command)
+            Divider()
+            PushToTalkMenuLine()
         }
     }
 }
@@ -144,6 +151,15 @@ struct HelpCommands: Commands {
             Button("Welcome Tour") { WelcomeTour.shared.replay() }
             Button("Keyboard Shortcuts") { openWindow(id: KeyboardShortcutsView.windowID) }.keyboardShortcut("/", modifiers: .command)
         }
+    }
+}
+
+/// Agent ▸ the push-to-talk key, as a line: a held key cannot be a menu shortcut, so the menu says where it is.
+private struct PushToTalkMenuLine: View {
+    @ObservedObject private var settings = AppSettings.shared
+    var body: some View {
+        let key = PushToTalk.Key(rawValue: settings.pushToTalk) ?? .rightOption
+        if let s = key.symbol { Text("Push to Talk: hold \(s)") } else { Text("Push to Talk: off (Settings ▸ Assistant)") }
     }
 }
 
@@ -184,6 +200,7 @@ struct KeyboardShortcutsView: View {
         Section(title: "Agent", rows: [
             Row(keys: "⌘L", what: "Ask the agent (opens the chat)"),
             Row(keys: "⇧⌘D", what: "Speak instead of typing; again to stop"),
+            Row(keys: "Hold right ⌥", what: "Push to talk: listens while held, stops when you let go (Settings ▸ Assistant picks the key)"),
             Row(keys: "Return  or  ⌘↩", what: "Send (stops listening first)"),
             Row(keys: "⌘.", what: "Stop the agent"),
         ]),

@@ -278,7 +278,7 @@ private struct MicButton: View {
         .glassButtonStyle(prominent: on).buttonBorderShape(.circle).tint(on ? .red : .secondary)
         .background { if dictation.state == .listening { MicRing(level: dictation.level) } }
         .focusable(false)
-        .help(on ? "Stop listening (⇧⌘D). Return sends." : "Speak instead of typing (⇧⌘D)")
+        .help(on ? "Stop listening (⇧⌘D). Return sends." : "Speak instead of typing (⇧⌘D, or hold \(PushToTalk.shared.key.symbol ?? "the push-to-talk key"))")
         .accessibilityLabel(on ? "Stop listening" : "Dictate")
         .pointer().uiFrame("chat.mic")
     }

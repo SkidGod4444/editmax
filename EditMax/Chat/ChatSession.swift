@@ -205,7 +205,11 @@ final class ChatSession: ObservableObject {
     }
 
     /// The microphone button and ⇧⌘D: start listening after what is typed, or stop.
-    func toggleDictation() { dictation.toggle(current: input) }
+    func toggleDictation() { dictation.toggle(current: input, hints: Dictation.hints(for: document.project)) }
+
+    /// Push to talk: listening starts when the key is held and stops when it comes up (PushToTalk).
+    func startDictation() { if !dictation.isActive { dictation.start(into: input, hints: Dictation.hints(for: document.project)) } }
+    func stopDictation() { if dictation.isActive { Task { await dictation.finish() } } }
 
     func send() {
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines)

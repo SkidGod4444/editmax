@@ -28,7 +28,7 @@ import Speech
     var isActive: Bool { state != .idle }
 
     /// Starts listening, keeping `current` (what is typed already) in front of what is heard.
-    func start(into current: String) {
+    func start(into current: String, hints: [String] = []) {
         guard state == .idle else { return }
         base = current; finalized = ""; volatile = ""; text = current; problem = nil
         state = .preparing
@@ -41,6 +41,7 @@ import Speech
                 let e = try await Self.makeEngine()
                 self.engine = e
                 try await e.start(
+                    hints: hints,
                     onText: { [weak self] heard, final in self?.heard(heard, final: final) },
                     onLevel: { [weak self] l in self?.level.value = l })
                 guard self.state == .preparing else { await e.stop(); return }   // stopped while the model loaded
@@ -74,8 +75,8 @@ import Speech
         return text
     }
 
-    func toggle(current: String) {
-        if state == .idle { start(into: current) } else { Task { await finish() } }
+    func toggle(current: String, hints: [String] = []) {
+        if state == .idle { start(into: current, hints: hints) } else { Task { await finish() } }
     }
 
     private func heard(_ s: String, final: Bool) {
@@ -96,8 +97,44 @@ import Speech
         return a + " " + b
     }
 
-    /// What was typed before listening, then what was heard.
-    nonisolated static func merge(base: String, heard: String) -> String { join(base, heard) }
+    /// What was typed before listening, then what was heard, with editing words the recognizer gets wrong put right.
+    nonisolated static func merge(base: String, heard: String) -> String { join(base, corrected(heard)) }
+
+    /// Words the recognizer hears as something else in this trade. Narrow on purpose: "YT" only before a word that
+    /// says it is the platform ("my Whitey channel" was "my YT channel"), so the same sound elsewhere stays as heard.
+    nonisolated static let corrections: [(pattern: String, with: String)] = [
+        (#"\b(?:whitey|why ?tee|why t|wide t|y\.? ?t\.?)(?=\s+(?:channel|channels|video|videos|short|shorts|thumbnail|thumbnails|title|upload|uploads|audience|community|studio)\b)"#, "YT"),
+        (#"\byou tube\b"#, "YouTube"),
+        (#"\btick ?tock\b"#, "TikTok"),
+        (#"\bcap cut\b"#, "CapCut"),
+        (#"\bb[ -]roll\b"#, "B-roll"),
+        (#"\bluts?\b"#, "LUT"),
+        (#"\blufs\b"#, "LUFS"),
+        (#"\bd[ -]log\b"#, "D-Log"),
+    ]
+
+    nonisolated static func corrected(_ s: String) -> String {
+        var s = s
+        for c in corrections { s = s.replacingOccurrences(of: c.pattern, with: c.with, options: [.regularExpression, .caseInsensitive]) }
+        return s
+    }
+
+    /// Words to listen for: the trade's (platforms, formats, tools) and this project's own names (files, tracks,
+    /// titles), so "YT", a clip called "KL-drone" or "B-roll" come out as written. At most 100, as the recognizers take.
+    static func hints(for project: Project?) -> [String] {
+        var words = ["YT", "YouTube", "YouTube Shorts", "Shorts", "Reels", "Instagram Reels", "TikTok", "EditMax", "B-roll", "J-cut", "L-cut",
+                     "LUT", "LUFS", "D-Log", "D-Log M", "Rec. 709", "ProRes", "HEVC", "H.264", "4K", "9:16", "16:9", "keyframe",
+                     "cross dissolve", "lower third", "color grade", "auto-reframe", "jump cut", "speed ramp", "slow motion",
+                     "voiceover", "timeline", "playhead", "cinematic", "vlog", "GRWM", "POV", "hook", "captions", "CapCut",
+                     "DaVinci Resolve", "Final Cut"]
+        if let project {
+            words += project.tracks.map(\.name).filter { !$0.isEmpty }
+            words += project.assets.prefix(40).map { ($0.name as NSString).deletingPathExtension }
+            words += project.texts.map(\.text).filter { $0.split(separator: " ").count <= 4 }.prefix(20)
+        }
+        var seen = Set<String>()
+        return Array(words.filter { !$0.isEmpty && seen.insert($0.lowercased()).inserted }.prefix(100))
+    }
 
     // MARK: Engines
 
@@ -126,7 +163,8 @@ import Speech
 /// One way of turning the microphone into text. Callbacks arrive on the main actor.
 @MainActor protocol DictationEngine: AnyObject {
     var name: String { get }
-    func start(onText: @escaping @MainActor (String, Bool) -> Void, onLevel: @escaping @MainActor (Float) -> Void) async throws
+    /// `hints`: words likely in the speech (the recognizer leans toward them).
+    func start(hints: [String], onText: @escaping @MainActor (String, Bool) -> Void, onLevel: @escaping @MainActor (Float) -> Void) async throws
     /// Stops the microphone and waits for the final words.
     func stop() async
     /// Stops at once; nothing more arrives.
@@ -162,7 +200,7 @@ enum MicTap {
 
     init(locale: Locale) { self.locale = locale }
 
-    func start(onText: @escaping @MainActor (String, Bool) -> Void, onLevel: @escaping @MainActor (Float) -> Void) async throws {
+    func start(hints: [String], onText: @escaping @MainActor (String, Bool) -> Void, onLevel: @escaping @MainActor (Float) -> Void) async throws {
         let transcriber = DictationTranscriber(locale: locale, preset: .progressiveShortDictation)
         if await AssetInventory.status(forModules: [transcriber]) != .installed,
            let request = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
@@ -176,6 +214,11 @@ enum MicTap {
         let analyzer = SpeechAnalyzer(modules: [transcriber])
         self.analyzer = analyzer
         try await analyzer.prepareToAnalyze(in: format)
+        if !hints.isEmpty {   // "YT", the project's clip names: heard as written, not as "Whitey"
+            let context = AnalysisContext()
+            context.contextualStrings[.general] = hints
+            do { try await analyzer.setContext(context) } catch { DebugLog.event("dictation-hints-failed", ["error": error.localizedDescription]) }
+        }
         // Results are read before audio arrives, or the analyzer has nowhere to put them.
         results = Task {
             do { for try await r in transcriber.results { onText(String(r.text.characters), r.isFinal) } }
@@ -247,7 +290,7 @@ enum MicTap {
         recognizer = r
     }
 
-    func start(onText: @escaping @MainActor (String, Bool) -> Void, onLevel: @escaping @MainActor (Float) -> Void) async throws {
+    func start(hints: [String], onText: @escaping @MainActor (String, Bool) -> Void, onLevel: @escaping @MainActor (Float) -> Void) async throws {
         let status = await withCheckedContinuation { c in SFSpeechRecognizer.requestAuthorization { c.resume(returning: $0) } }
         guard status == .authorized else {
             throw EditError.invalid("EditMax needs permission for speech recognition. Allow it in System Settings → Privacy & Security → Speech Recognition.")
@@ -257,6 +300,7 @@ enum MicTap {
         request.shouldReportPartialResults = true
         request.requiresOnDeviceRecognition = recognizer.supportsOnDeviceRecognition
         request.addsPunctuation = true
+        request.contextualStrings = hints
         self.request = request
         task = recognizer.recognitionTask(with: request) { [weak self] result, error in
             let text = result?.bestTranscription.formattedString

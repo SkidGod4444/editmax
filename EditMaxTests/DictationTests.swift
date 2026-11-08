@@ -35,3 +35,50 @@ final class DictationTests: XCTestCase {
         XCTAssertEqual(d.state, .idle)
     }
 }
+
+/// Hold right ⌥ alone to talk; with a letter it is a typed character, and letting go stops.
+final class PushToTalkTests: XCTestCase {
+    func testHoldingTheKeyAloneTalksAndLettingGoStops() {
+        var m = PushToTalk.Machine()
+        XCTAssertEqual(m.keyDown(), .arm)
+        XCTAssertEqual(m.held(), .start)
+        XCTAssertEqual(m.otherInput(), .none, "typing while talking does not cut it off")
+        XCTAssertEqual(m.keyUp(), .stop)
+        XCTAssertEqual(m.phase, .idle)
+    }
+
+    func testAChordOrATapNeverTalks() {
+        var m = PushToTalk.Machine()
+        XCTAssertEqual(m.keyDown(), .arm)
+        XCTAssertEqual(m.otherInput(), .disarm, "⌥E is a character")
+        XCTAssertEqual(m.held(), .none)
+        XCTAssertEqual(m.keyUp(), .none)
+        XCTAssertEqual(m.keyDown(), .arm)
+        XCTAssertEqual(m.keyUp(), .disarm, "a quick tap")
+        XCTAssertEqual(m.held(), .none)
+    }
+}
+
+/// "my Whitey channel" was "my YT channel": the trade's words come out as written, the same sound elsewhere stays.
+@MainActor
+final class DictationWordsTests: XCTestCase {
+    func testTheTradesWordsComeOutAsWritten() {
+        XCTAssertEqual(Dictation.corrected("Edit this into a short and dramatic cinematic look video for my Whitey channel??"),
+                       "Edit this into a short and dramatic cinematic look video for my YT channel??")
+        XCTAssertEqual(Dictation.corrected("post it to my why tee shorts"), "post it to my YT shorts")
+        XCTAssertEqual(Dictation.corrected("add some b roll and a lut"), "add some B-roll and a LUT")
+        XCTAssertEqual(Dictation.corrected("upload to you tube and tick tock"), "upload to YouTube and TikTok")
+        XCTAssertEqual(Dictation.corrected("Whitey came over"), "Whitey came over", "only before a platform word")
+        XCTAssertEqual(Dictation.merge(base: "Hey,", heard: "make it for my Whitey channel"), "Hey, make it for my YT channel")
+    }
+
+    func testHintsCarryTheProjectsOwnNames() {
+        var p = Project()
+        p.assets.append(Asset(name: "KL-drone-sunset.MP4", path: "/tmp/KL-drone-sunset.MP4", kind: .video, duration: 4))
+        let h = Dictation.hints(for: p)
+        XCTAssertTrue(h.contains("YT"))
+        XCTAssertTrue(h.contains("KL-drone-sunset"))
+        XCTAssertLessThanOrEqual(h.count, 100)
+        XCTAssertEqual(h.count, Set(h.map { $0.lowercased() }).count, "no word twice")
+    }
+}

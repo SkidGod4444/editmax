@@ -22,6 +22,7 @@ final class AppSettings: ObservableObject {
         static let followAgent = "followAgent"
         static let notchDrawer = "notchDrawer", watchDownloads = "watchDownloads"
         static let archiveDays = "archiveDays"
+        static let pushToTalk = "pushToTalk"
     }
 
     /// A Bool default with a default: UserDefaults reads an unset key as false.
@@ -51,6 +52,8 @@ final class AppSettings: ObservableObject {
     @Published var chatAgent: String { didSet { d.set(chatAgent, forKey: Key.chatAgent); broadcast() } }
     @Published var chatProvider: String { didSet { d.set(chatProvider, forKey: Key.chatProvider); broadcast() } }
     @Published var chatModel: String { didSet { d.set(chatModel, forKey: Key.chatModel); broadcast() } }
+    /// The key held to speak to the agent (PushToTalk.Key): rightOption (default), rightCommand or off.
+    @Published var pushToTalk: String { didSet { d.set(pushToTalk, forKey: Key.pushToTalk) } }
 
     private init() {
         showSplash = Self.bool(Key.showSplash, default: true)
@@ -67,6 +70,7 @@ final class AppSettings: ObservableObject {
         chatAgent = d.string(forKey: Key.chatAgent) ?? "claude"
         chatProvider = d.string(forKey: Key.chatProvider) ?? "claude-agent"
         chatModel = d.string(forKey: Key.chatModel) ?? ""
+        pushToTalk = d.string(forKey: Key.pushToTalk) ?? PushToTalk.Key.rightOption.rawValue
     }
 
     /// The chat header writes the same keys; Settings re-reads them when it comes up.

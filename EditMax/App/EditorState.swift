@@ -71,6 +71,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Debug check: `-EditMaxTourDemo YES` plays the demo in a background launch too, which never gets the splash.
         if WelcomeTour.shared.forced { DispatchQueue.main.asyncAfter(deadline: .now() + 3) { WelcomeTour.shared.startFirstRun { TelemetryPrompt.shared.askIfNeeded() } } }
         DriveWatcher.shared.start()   // footage on drives goes offline and comes back with them
+        PushToTalk.shared.install()   // hold right ⌥ to speak to the agent
         AppSettings.shared.applyAppearance()
         SplashScreen.renderIfRequested()
         if ProcessInfo.processInfo.arguments.contains("-splash-preview") { SplashScreen.shared.show(); SplashScreen.shared.dismissWhenReady() }

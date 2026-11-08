@@ -41,8 +41,11 @@ enum WaveformExtractor {
         if let data = try? Data(contentsOf: cacheFile), !data.isEmpty {
             return data.withUnsafeBytes { Array($0.bindMemory(to: Float.self)) }
         }
+        await BackgroundReads.shared.acquire(url)
         let started = Date()
-        let result = try await extract(url)
+        let read = await Task { try await extract(url) }.result
+        await BackgroundReads.shared.release(url)
+        let result = try read.get()
         try? fm.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
         try? result.withUnsafeBufferPointer { Data(buffer: $0) }.write(to: cacheFile)
         DebugLog.event("waveform", ["file": url.lastPathComponent, "peaks": result.count, "seconds": (Date().timeIntervalSince(started) * 100).rounded() / 100])

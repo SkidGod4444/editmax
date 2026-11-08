@@ -29,7 +29,9 @@ final class ThumbnailStore: ObservableObject {
         inFlight.insert(asset.id)
         let url = asset.url, id = asset.id, duration = max(0.1, asset.duration)
         Task.detached(priority: .utility) {
+            await BackgroundReads.shared.acquire(url)
             let strip = await Self.generate(url: url, duration: duration)
+            await BackgroundReads.shared.release(url)
             await MainActor.run { self.strips[id] = strip; self.inFlight.remove(id) }
         }
     }

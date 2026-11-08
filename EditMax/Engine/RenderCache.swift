@@ -48,9 +48,13 @@ final class ProxyStore: ObservableObject {
                     session.outputFileType = .mp4
                     let tmp = url.deletingPathExtension().appendingPathExtension("part.mp4")
                     try? FileManager.default.removeItem(at: tmp)
+                    // Every proxy reads its whole file: they take turns with thumbnails and waveforms on the drive.
+                    await BackgroundReads.shared.acquire(a.url)
                     let poll = Task { while !Task.isCancelled { await MainActor.run { self?.status[a.id] = .building(Double(session.progress)) }; try? await Task.sleep(for: .milliseconds(300)) } }
-                    try await session.export(to: tmp, as: .mp4)
+                    let done = await Task { try await session.export(to: tmp, as: .mp4) }.result
                     poll.cancel()
+                    await BackgroundReads.shared.release(a.url)
+                    try done.get()
                     try? FileManager.default.removeItem(at: url)
                     try FileManager.default.moveItem(at: tmp, to: url)
                     self?.status[a.id] = .ready(url)

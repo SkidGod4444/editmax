@@ -32,7 +32,7 @@ enum EditMaxTools {
              inputSchema: schema(["paths": strs("Absolute file paths (~ is expanded)"), "copy": .object(["type": "boolean", "description": "Copy into EditMax's Assets folder (default false)"])], required: ["paths"])),
         Tool(name: "insert_clip", description: "Place an asset on the timeline as a new clip. By default it is appended after the last clip on V1 (the bottom video track) or A1 (the top audio track).",
              inputSchema: schema(["asset": str("Asset id prefix or file name"), "track": str("Track id or name such as V1 or A1 (optional)"),
-                                  "at": num("Timeline start in seconds (optional; default = end of track)"),
+                                  "at": num("Timeline start in seconds (optional; default = end of track). A ripple insert, as in other editors: every clip, text and marker at or after it, on every track, moves right by the clip length. To lay a music bed under clips already placed, omit it on an empty audio track"),
                                   "source_in": num("Seconds into the source file to start from (default 0)"),
                                   "duration": num("Length in seconds (default = remaining source length)"), "project": projectArg], required: ["asset"])),
         Tool(name: "split_clip", description: "Cut a clip into two at a timeline time.",

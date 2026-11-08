@@ -55,11 +55,11 @@ targets:
       properties:
         CFBundleDisplayName: EditMax
         CFBundleIconFile: AppIcon
-        CFBundleShortVersionString: "0.1.1"
+        CFBundleShortVersionString: "0.2.0"
         NSHumanReadableCopyright: "© 2026 Saidev Dhal"
         # Asked once by the macOS 15 caption path (SFSpeechRecognizer); without it that request ends the app.
         NSSpeechRecognitionUsageDescription: "EditMax turns the speech in your footage into captions, on this Mac."
-        CFBundleVersion: "50"
+        CFBundleVersion: "137"
         LSMinimumSystemVersion: "15.0"
         NSHighResolutionCapable: true
         # Updates (AppUpdater): the appcast every release carries, its EdDSA key, daily background checks that download

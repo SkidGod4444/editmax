@@ -294,6 +294,14 @@ final class ChatSession: ObservableObject {
         Self.agentInstructions + " The user's project id is \(document.id.short); pass project: \"\(document.id.short)\" to every editmax tool."
     }
 
+    /// One card per failure, in plain words. A failed turn reports its error twice (an error event, then the turn's
+    /// result), which showed the friendly card and the raw `incomplete_tool_call` text under it.
+    func appendError(_ raw: String) {
+        let text = Self.plainError(raw)
+        if let last = items.last, last.kind == .error, last.text == text { return }
+        items.append(Item(kind: .error, text: text))
+    }
+
     /// Agent-harness errors in words for the person editing. The raw text stays in the debug log for us.
     static func plainError(_ message: String) -> String {
         let m = message.lowercased()
@@ -349,7 +357,7 @@ final class ChatSession: ObservableObject {
             // A protocol breakdown or crash in the agent side of an updated codemax counts against the update.
             if backend == .agent, kind == "protocol" || kind == "crashed" { CodemaxUpdater.shared.noteAgentFailure("turn-\(kind)", detail: message) }
             Telemetry.shared.agentFailed(kind: kind, backend: backend == .agent ? "agent" : "api-key")
-            items.append(Item(kind: .error, text: kind == "quota" ? "Out of quota: \(message)" : kind == "auth" ? (backend == .apiKey ? "Key rejected: \(message)" : "Login needed: \(message)") : Self.plainError(message)))
+            appendError(kind == "quota" ? "Out of quota: \(message)" : kind == "auth" ? (backend == .apiKey ? "Key rejected: \(message)" : "Login needed: \(message)") : message)
         case .notice(let text):
             items.append(Item(kind: .note, text: text))
         case .usage(let input, let output, let cost):
@@ -411,11 +419,11 @@ final class ChatSession: ObservableObject {
                 self.currentAssistant = nil
                 let r = try await self.runner.prompt(prompt)
                 if !r.agent.isEmpty, r.agent != self.configuredAgent { self.configuredAgent = r.agent; self.agent = r.agent }
-                if let e = r.error { self.items.append(Item(kind: .error, text: e)) }
+                if let e = r.error { self.appendError(e) }
                 else if r.stopReason == "cancelled" { self.items.append(Item(kind: .note, text: "Stopped.")) }
                 self.finishOpenTools()
             } catch {
-                self.items.append(Item(kind: .error, text: error.localizedDescription))
+                self.appendError(error.localizedDescription)
                 self.finishOpenTools()
             }
         }
@@ -454,13 +462,13 @@ final class ChatSession: ObservableObject {
                 }
                 self.currentAssistant = nil
                 let r = try await self.apiRunner.prompt(prompt)
-                if let e = r.error { self.items.append(Item(kind: .error, text: e)) }
+                if let e = r.error { self.appendError(e) }
                 else if r.stopReason == "cancelled" { self.items.append(Item(kind: .note, text: "Stopped.")) }
                 else if r.stopReason == "max_tokens" { self.items.append(Item(kind: .note, text: "Reply was cut off at the token limit.")) }
                 else if r.stopReason == "refusal" { self.items.append(Item(kind: .note, text: "The model declined this request.")) }
                 self.finishOpenTools()
             } catch {
-                self.items.append(Item(kind: .error, text: error.localizedDescription))
+                self.appendError(error.localizedDescription)
                 self.finishOpenTools()
             }
         }

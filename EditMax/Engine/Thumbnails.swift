@@ -52,9 +52,13 @@ final class ThumbnailStore: ObservableObject {
         let gen = AVAssetImageGenerator(asset: asset)
         gen.appliesPreferredTrackTransform = true
         gen.maximumSize = CGSize(width: 320, height: 88)
-        gen.requestedTimeToleranceBefore = .zero
-        gen.requestedTimeToleranceAfter = CMTime(seconds: 0.5, preferredTimescale: 600)
         let interval = max(0.5, duration / overviewFrames)
+        // The nearest keyframe within half a step: an exact frame of long-GOP 4K HEVC means reading and decoding from
+        // the keyframe before it, which over a whole strip reads most of the file (minutes from a slow USB drive). At
+        // one frame per `interval`, half a step either side is invisible in the strip; the zoomed-in frames stay exact.
+        let tolerance = CMTime(seconds: interval / 2, preferredTimescale: 600)
+        gen.requestedTimeToleranceBefore = tolerance
+        gen.requestedTimeToleranceAfter = tolerance
         var times: [CMTime] = []
         var t = 0.0
         while t < duration { times.append(CMTime(seconds: t, preferredTimescale: 600)); t += interval }

@@ -182,3 +182,24 @@ final class ProviderKeyTests: XCTestCase {
         XCTAssertFalse(ChatSession.keyRequired(provider("local", keyOptional: true, needsClaude: false)))
     }
 }
+
+/// A failed agent turn shows one card in plain words, not the friendly card plus the adapter's raw error under it.
+@MainActor
+final class ChatErrorTests: XCTestCase {
+    func testAFailedTurnShowsOnePlainCard() {
+        let chat = ChatSession(document: EditMaxDocument())
+        chat.appendError("Internal error: Claude ended the turn without returning results for tool calls: srvtoolu_01 {\"errorKind\":\"incomplete_tool_call\"}")
+        chat.appendError("Claude ended the turn without returning results for tool calls: srvtoolu_01 {\"errorKind\":\"incomplete_tool_call\"}")
+        let errors = chat.items.filter { $0.kind == .error }
+        XCTAssertEqual(errors.count, 1)
+        XCTAssertFalse(errors[0].text.contains("srvtoolu"), "no raw ids in front of the user")
+        XCTAssertTrue(errors[0].text.contains("continue"))
+    }
+
+    func testDifferentFailuresStillShowEach() {
+        let chat = ChatSession(document: EditMaxDocument())
+        chat.appendError("429 rate limit")
+        chat.appendError("The operation timed out.")
+        XCTAssertEqual(chat.items.filter { $0.kind == .error }.count, 2)
+    }
+}

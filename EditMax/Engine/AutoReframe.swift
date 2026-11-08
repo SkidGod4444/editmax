@@ -8,8 +8,10 @@ import CoreGraphics
 /// keyframed so the subject stays in view.
 ///
 /// Analysis samples the clip's source range at a small size (≈ 416 px) every `sampleInterval` seconds of timeline
-/// and asks Vision for a subject box per sample: the largest person (`VNDetectHumanRectanglesRequest`), else the
-/// largest attention-based salient object, else the frame centre. The subject centre is smoothed (centred moving
+/// and asks Vision for a subject box per sample: faces first (`VNDetectFaceRectanglesRequest`: a group that fits the
+/// frame is kept together, else the main face, with its eyes above the centre where the frame can pan vertically),
+/// then the largest person (`VNDetectHumanRectanglesRequest`), else the largest attention-based salient object, else
+/// the frame centre. The subject centre is smoothed (centred moving
 /// average), dead-banded (a keyframe only when it moves more than 2 % of the frame) and speed-limited, then mapped
 /// to the compositor's transform (see `FrameRenderer.render`): scale = cover factor / fit, x and y offsets as
 /// fractions of the frame, clamped so the picture's edge never leaves the frame.
@@ -32,7 +34,7 @@ enum AutoReframe {
     }
 
     /// One analysed sample: clip-local time and the subject centre in source-normalized coordinates (0…1, y down).
-    struct Sample { var local: Double; var person: CGPoint?; var salient: CGPoint? }
+    struct Sample { var local: Double; var person: CGPoint?; var salient: CGPoint?; var faces: [CGRect] = [] }
 
     struct Analysis { var samples: [Sample]; var orientedSize: CGSize }
 
@@ -43,6 +45,10 @@ enum AutoReframe {
     static let maxPanSpeed = 0.6               // frame widths (or heights) per second
     static let minKeyframeGap = 0.4            // seconds between keyframes
     static let maxKeyframes = 240
+    /// A face smaller than this (fraction of the picture height) is a crowd in the distance, not the subject.
+    static let minFaceHeight = 0.06
+    /// Faces under this share of the main face's area are in the background and may be cut.
+    static let groupFaceArea = 0.2
 
     // MARK: Analysis
 
@@ -80,7 +86,7 @@ enum AutoReframe {
         gen.requestedTimeToleranceBefore = CMTime(seconds: interval / 2, preferredTimescale: 600)
         gen.requestedTimeToleranceAfter = CMTime(seconds: interval / 2, preferredTimescale: 600)
 
-        var found: [Int: (CGPoint?, CGPoint?)] = [:]
+        var found: [Int: (CGPoint?, CGPoint?, [CGRect])] = [:]
         var index = 0
         for await result in gen.images(for: times) {
             // One result per requested time, in order (a freeze-frame ramp repeats times, so arrival order is the truth).
@@ -92,20 +98,22 @@ enum AutoReframe {
         var samples: [Sample] = []
         for (i, local) in locals.enumerated() {
             let r = found[i]
-            samples.append(Sample(local: local, person: r?.0, salient: r?.1))
+            samples.append(Sample(local: local, person: r?.0, salient: r?.1, faces: r?.2 ?? []))
         }
         DebugLog.event("auto-reframe-analysis", ["file": url.lastPathComponent, "samples": samples.count, "decoded": found.count,
                                                  "seconds": (Date().timeIntervalSince(started) * 100).rounded() / 100])
         return Analysis(samples: samples, orientedSize: oriented)
     }
 
-    /// The person centre and the salient-object centre in one frame (source-normalized, y down); nil where nothing was found.
-    nonisolated private static func detect(_ img: CGImage, mode: Mode) -> (CGPoint?, CGPoint?) {
+    /// The person centre, the salient-object centre and the face boxes in one frame (source-normalized, y down); nil or
+    /// empty where nothing was found.
+    nonisolated private static func detect(_ img: CGImage, mode: Mode) -> (CGPoint?, CGPoint?, [CGRect]) {
         var requests: [VNRequest] = []
         let people = VNDetectHumanRectanglesRequest()
         people.upperBodyOnly = true   // head and torso: what the viewer wants kept in frame
+        let faces = VNDetectFaceRectanglesRequest()
         let saliency = VNGenerateAttentionBasedSaliencyImageRequest()
-        if mode != .saliency { requests.append(people) }
+        if mode != .saliency { requests.append(people); requests.append(faces) }
         if mode != .person { requests.append(saliency) }
         let handler = VNImageRequestHandler(cgImage: img, orientation: .up, options: [:])
         try? handler.perform(requests)
@@ -122,7 +130,33 @@ enum AutoReframe {
             }
             if sw > 0 { salient = CGPoint(x: sx / sw, y: sy / sw) }
         }
-        return (person, salient)
+        let faceBoxes = mode == .saliency ? [] : (faces.results ?? []).map { o -> CGRect in
+            let b = o.boundingBox
+            return CGRect(x: b.minX, y: 1 - b.maxY, width: b.width, height: b.height)   // y down, like the centres
+        }
+        return (person, salient, faceBoxes)
+    }
+
+    /// Where to aim for one sample's faces (source-normalized, y down), or nil when none is big enough to be the subject.
+    /// `window` is the part of the source the frame shows. Faces that fit in it together are kept together (a selfie of
+    /// two); otherwise the main face, preferring the one aimed at before so the pan does not hop between people. The aim
+    /// sits a little below the face, so where the frame can pan vertically the eyes land above the centre (headroom).
+    static func faceAim(_ faces: [CGRect], window: CGSize, previous: CGPoint? = nil) -> CGPoint? {
+        guard let largest = faces.max(by: { $0.width * $0.height < $1.width * $1.height }), Double(largest.height) >= minFaceHeight else { return nil }
+        let area = { (r: CGRect) in Double(r.width * r.height) }
+        let kept = faces.filter { area($0) >= groupFaceArea * area(largest) }
+        // Everyone's whole face with a little room: shoulders may be cut to keep a second person, a face may not.
+        let group = kept.map { $0.insetBy(dx: -$0.width * 0.15, dy: 0) }.reduce(CGRect.null) { $0.union($1) }
+        var target: CGRect
+        if Double(group.width) <= Double(window.width) * 0.95 {
+            target = group
+        } else {
+            var main = largest
+            if let p = previous, let near = kept.min(by: { hypot($0.midX - p.x, $0.midY - p.y) < hypot($1.midX - p.x, $1.midY - p.y) }),
+               area(near) >= 0.6 * area(largest) { main = near }
+            target = main
+        }
+        return CGPoint(x: target.midX, y: min(1, target.midY + window.height * 0.12))
     }
 
     /// Vision boxes are normalized with the origin at the bottom-left; the subject centre is kept y-down (0 = top).
@@ -132,15 +166,24 @@ enum AutoReframe {
 
     /// Chooses one mode for the whole clip (a mix would jump between what each one calls the subject) and returns the
     /// subject centre per sample with holes filled from the neighbours. Hit rate = fraction of samples with a detection.
-    static func path(_ analysis: Analysis, mode: Mode) -> (points: [CGPoint], mode: String, hitRate: Double) {
+    static func path(_ analysis: Analysis, mode: Mode, window: CGSize = CGSize(width: 1, height: 1)) -> (points: [CGPoint], mode: String, hitRate: Double) {
         let n = analysis.samples.count
         guard n > 0 else { return ([], "centre", 0) }
+        var faceAims: [CGPoint?] = []
+        var previous: CGPoint? = nil
+        for s in analysis.samples {
+            let a = mode == .saliency ? nil : faceAim(s.faces, window: window, previous: previous)
+            faceAims.append(a); if let a { previous = a }
+        }
+        let faceHits = faceAims.filter { $0 != nil }.count
         let personHits = analysis.samples.filter { $0.person != nil }.count
         let salientHits = analysis.samples.filter { $0.salient != nil }.count
         var raw: [CGPoint?]
         var used: String
         var hits: Int
-        if mode != .saliency, Double(personHits) / Double(n) >= 0.3 {
+        if mode != .saliency, Double(faceHits) / Double(n) >= 0.3 {
+            raw = faceAims; used = "face"; hits = faceHits
+        } else if mode != .saliency, Double(personHits) / Double(n) >= 0.3 {
             raw = analysis.samples.map(\.person); used = "person"; hits = personHits
         } else if mode != .person, salientHits > 0 {
             raw = analysis.samples.map(\.salient); used = "saliency"; hits = salientHits
@@ -326,7 +369,10 @@ extension AutoReframe {
         let needX = g.xRange.upperBound - g.xRange.lowerBound > 0.005
         let needY = g.yRange.upperBound - g.yRange.lowerBound > 0.005
 
-        let (points, usedMode, hitRate) = path(analysis, mode: m)
+        // The part of the source the frame shows at the cover scale (source-normalized), for keeping faces together.
+        let window = CGSize(width: min(1, Double(frame.width) / (Double(analysis.orientedSize.width) * g.s)),
+                            height: min(1, Double(frame.height) / (Double(analysis.orientedSize.height) * g.s)))
+        let (points, usedMode, hitRate) = path(analysis, mode: m, window: window)
         let times = analysis.samples.map(\.local)
         var xs: [(time: Double, value: Double)] = [], ys: [(time: Double, value: Double)] = []
         if usedMode != "centre", !sameAspect {   // a matching aspect renders fitted at scale 1, where no pan is possible
@@ -343,7 +389,7 @@ extension AutoReframe {
         else if !needX && !needY { notes.append("the cover scale fills the frame with no room to pan") }
         if original.transform.rotation != 0 { notes.append("the clip is rotated; the edge clamp assumes no rotation") }
         if original.transform.cropLeft + original.transform.cropRight + original.transform.cropTop + original.transform.cropBottom > 0 { notes.append("crops honoured in the scale and the clamp") }
-        if usedMode == "centre" { notes.append("no person or salient object found; the picture is centred") }
+        if usedMode == "centre" { notes.append("no face, person or salient object found; the picture is centred") }
         if k < 1 { notes.append("strength \(k): the pan follows \(Int(k * 100))% of the subject's displacement") }
         let coverage = usedMode == "centre" ? "no subject found in \(analysis.samples.count) samples"
             : "\(usedMode) found in \(Int((hitRate * 100).rounded()))% of \(analysis.samples.count) samples\(hitRate < 1 ? "; gaps filled from the neighbours" : "")"

@@ -196,6 +196,7 @@ final class AudioTapContext {
         guard let filters, let frame, let hum, let chain, frames > 0 else { return }
         // A jump in time (a seek, a loop): no envelope, delay line or filter state carries across it.
         if nextTime >= 0, abs(t - nextTime) > 0.02 {
+            if TapStats.enabled { TapStats.shared.jumped(from: nextTime, to: t) }
             chain.reset(); hum.reset(); gateEnv = 0; gateGain = 1
             for i in 0..<(channels * 4) { filters[i].x1 = 0; filters[i].x2 = 0; filters[i].y1 = 0; filters[i].y2 = 0 }
         }
@@ -257,6 +258,43 @@ final class AudioTapContext {
     }
 }
 
+/// What the taps saw while `enabled` (a test turns it on to say why two reads of the same mix differ): prepares, time
+/// jumps that reset the dynamics, and source reads that came back short or failed.
+final class TapStats: @unchecked Sendable {
+    nonisolated(unsafe) static var enabled = false
+    static let shared = TapStats()
+    private let lock = NSLock()
+    private var prepares = 0, callbacks = 0, short = 0, failed = 0, nonFinite = 0, frames = 0
+    private var minFrames = Int.max, maxFrames = 0, firstT = Double.nan, lastEnd = Double.nan
+    private var jumps: [String] = [], jumpCount = 0
+
+    func reset() {
+        lock.lock(); defer { lock.unlock() }
+        prepares = 0; callbacks = 0; short = 0; failed = 0; nonFinite = 0; frames = 0
+        minFrames = .max; maxFrames = 0; firstT = .nan; lastEnd = .nan; jumps = []; jumpCount = 0
+    }
+    func prepared() { lock.lock(); prepares += 1; lock.unlock() }
+    func read(asked: Int, got: Int, status: OSStatus, time t: Double, sampleRate: Double) {
+        lock.lock(); defer { lock.unlock() }
+        callbacks += 1
+        guard status == noErr else { failed += 1; return }
+        if got < asked { short += 1 }
+        if !t.isFinite { nonFinite += 1 } else { if firstT.isNaN { firstT = t }; lastEnd = t + Double(got) / sampleRate }
+        frames += got; minFrames = min(minFrames, got); maxFrames = max(maxFrames, got)
+    }
+    func jumped(from expected: Double, to t: Double) {
+        lock.lock(); defer { lock.unlock() }
+        jumpCount += 1
+        if jumps.count < 6 { jumps.append(String(format: "%.4f→%.4f", expected, t)) }
+    }
+    var summary: String {
+        lock.lock(); defer { lock.unlock() }
+        return "taps: \(prepares) prepares, \(callbacks) reads (\(failed) failed, \(short) short, \(nonFinite) without a time), "
+            + "\(frames) frames in \(minFrames == .max ? 0 : minFrames)–\(maxFrames) a read, "
+            + String(format: "%.4f–%.4f s, ", firstT, lastEnd) + "\(jumpCount) time jumps \(jumps)"
+    }
+}
+
 enum AudioTap {
     /// A tap for one composition audio track, running the clip settings of whatever clip is playing at each buffer's
     /// time, then the track's strip (fader, bus, master).
@@ -270,14 +308,16 @@ enum AudioTap {
             prepare: { tap, maxFrames, format in
                 let c = Unmanaged<AudioTapContext>.fromOpaque(MTAudioProcessingTapGetStorage(tap)).takeUnretainedValue()
                 c.prepare(sampleRate: format.pointee.mSampleRate, channels: Int(format.pointee.mChannelsPerFrame))
+                if TapStats.enabled { TapStats.shared.prepared() }
             },
             unprepare: { _ in },
             process: { tap, numberFrames, flags, bufferListInOut, numberFramesOut, flagsOut in
                 var range = CMTimeRange.zero
                 let status = MTAudioProcessingTapGetSourceAudio(tap, numberFrames, bufferListInOut, flagsOut, &range, numberFramesOut)
-                guard status == noErr else { return }
                 let c = Unmanaged<AudioTapContext>.fromOpaque(MTAudioProcessingTapGetStorage(tap)).takeUnretainedValue()
                 let t = range.start.seconds
+                if TapStats.enabled { TapStats.shared.read(asked: Int(numberFrames), got: Int(numberFramesOut.pointee), status: status, time: t, sampleRate: c.sampleRate) }
+                guard status == noErr else { return }
                 let interleaved = UnsafeMutableAudioBufferListPointer(bufferListInOut).count == 1 && c.channels > 1
                 c.run(bufferListInOut, frames: Int(numberFramesOut.pointee), interleaved: interleaved, time: t.isFinite ? t : 0)
             })

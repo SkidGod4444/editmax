@@ -49,6 +49,34 @@ final class LongAudioTests: XCTestCase {
         XCTAssertEqual(streamed.integrated, -20, accuracy: 0.1, "BS.1770: a 1 kHz tone peaking at −20 dBFS in both channels")
     }
 
+    /// What the pieces stand on: a read that starts part-way through the mix gives the samples a whole read has there.
+    /// (On CI's macOS 26 the pieces measured 0.36 LU off one read while every peak matched; this says where it reads.)
+    func testAReadThatStartsPartWayGivesTheSamplesAWholeReadHasThere() async throws {
+        let levels = [-30.0, -18, -12, -24]
+        let sig = S.concat(levels.map { S.sine(1000, seconds: 3, dbfs: $0) })
+        let left = zip(sig, S.voice(seconds: 12, level: 0.05)).map { $0 + $1 }
+        _ = try await x.importMedia(paths: [try S.writeWAV([left, sig], to: S.scratch.appendingPathComponent("steps-part.wav")).path])
+        _ = try x.insertClip(asset: "steps-part.wav", track: nil)
+        let whole = try await Loudness.render(doc.project)
+        for start in [1.0, 5.0, 8.0] {
+            let part = try await Loudness.readSpan(doc.project, from: start, to: start + 2)
+            let s0 = Int(start * 48_000)
+            XCTAssertEqual(part.count / 2, 2 * 48_000, accuracy: 48, "\(start) s: two seconds")
+            // 0.1 s from 0.5 s into the read, left channel, against the whole read shifted by `lag` frames.
+            func error(_ lag: Int) -> Float {
+                (0..<4_800).map { i -> Float in
+                    let p = 24_000 + i, w = s0 + p + lag
+                    return w >= 0 && w < whole.count / 2 && 2 * p < part.count ? abs(part[2 * p] - whole[2 * w]) : 1
+                }.max() ?? 1
+            }
+            let here = error(0)
+            var best = (lag: 0, err: here)
+            if here > 1e-5 { for lag in -4_800...4_800 where lag != 0 { let e = error(lag); if e < best.err { best = (lag, e) } } }
+            XCTAssertLessThan(here, 1e-5, String(format: "%.0f s: a read from here gives other samples (max error %.5f); the best match is %d frames (%.2f ms) off, error %.5f",
+                                                 start, here, best.lag, Double(best.lag) / 48, best.err))
+        }
+    }
+
     func testAMixReadInPiecesMeasuresWhatOneReadMeasures() async throws {
         // 12 s, 3 s a level; the −12 dBFS stretch drives the master limiter, and the cut at 8 s falls inside it.
         let levels = [-30.0, -18, -12, -24]
@@ -58,11 +86,26 @@ final class LongAudioTests: XCTestCase {
         _ = try await x.importMedia(paths: [try S.writeWAV([left, sig], to: S.scratch.appendingPathComponent("steps.wav")).path])
         _ = try x.insertClip(asset: "steps.wav", track: nil)
         doc.project.mix.masterLimiter = LimiterSettings(ceiling: -14, release: 100, lookahead: 1.5)
+        // The one read is recorded, with what its taps saw: CI (and this Mac once, under heavy load) measured it 0.36 to
+        // 0.43 LU off the pieces while every peak matched, and it would not repeat. A mismatch says where and why.
+        final class Recording: @unchecked Sendable { var samples: [Float] = [] }
+        let rec = Recording()
+        TapStats.enabled = true; TapStats.shared.reset()
+        Loudness.debugBuffer = { rec.samples.append(contentsOf: $0) }
+        defer { TapStats.enabled = false; Loudness.debugBuffer = nil }
         let one = try await Loudness.meter(doc.project, nil, parts: 1)
+        Loudness.debugBuffer = nil
+        let oneTaps = TapStats.shared.summary
         let three = try await Loudness.meter(doc.project, nil, parts: 3)   // 0–4 s, 4–8 s, 8–12 s, each after 3 s of lead-in
         print("LONG-AUDIO pieces: one \(one) three \(three)")
+        var why = ""
+        if abs(three.integrated - one.integrated) > 0.01 {
+            TapStats.shared.reset()
+            let again = try await Loudness.render(doc.project)
+            why = Self.whereReadsDiffer(rec.samples, again) + "; one read's " + oneTaps + "; a fresh read's " + TapStats.shared.summary
+        }
         XCTAssertEqual(three.duration, one.duration, accuracy: 1e-9)
-        XCTAssertEqual(three.integrated, one.integrated, accuracy: 0.01)
+        XCTAssertEqual(three.integrated, one.integrated, accuracy: 0.01, why)
         XCTAssertEqual(three.range, one.range, accuracy: 0.05)
         XCTAssertEqual(three.truePeak, one.truePeak, accuracy: 0.01)
         XCTAssertEqual(three.samplePeak, one.samplePeak, accuracy: 0.01)
@@ -70,6 +113,48 @@ final class LongAudioTests: XCTestCase {
         XCTAssertEqual(three.shortTermMax, one.shortTermMax, accuracy: 0.01)
         XCTAssertEqual(three.rms, one.rms, accuracy: 0.01)
         XCTAssertLessThan(one.truePeak, -13.5, "the limiter was on in both")
+    }
+
+    func testWhereReadsDifferNamesTheSecondsAndTheShift() {
+        let tone = (0..<(3 * 48_000)).flatMap { i -> [Float] in let v = Float(0.5 * sin(Double(i) * 0.05)); return [v, v] }
+        XCTAssertTrue(Self.whereReadsDiffer(tone, tone).contains("sample for sample"))
+        var late = tone   // from 1 s on, 10 frames late
+        for f in stride(from: 3 * 48_000 - 1, through: 48_000 + 10, by: -1) { late[2 * f] = tone[2 * (f - 10)]; late[2 * f + 1] = tone[2 * (f - 10) + 1] }
+        var quiet = tone; for i in (2 * 48_000)..<(4 * 48_000) { quiet[i] *= 0.5 }   // the second second at −6 dB
+        let shifted = Self.whereReadsDiffer(late, tone), softer = Self.whereReadsDiffer(quiet, tone)
+        XCTAssertTrue(shifted.contains("first difference at 1.0002 s") && shifted.contains("best lag there -10 frames"), shifted)
+        XCTAssertTrue(softer.hasSuffix("seconds that differ: 1 s -6.02 dB"), softer)
+    }
+
+    /// Where read `a` differs from read `b` of the same mix: frame counts, the first differing frame, and the seconds
+    /// whose level differs (dB, both channels), so a failure on another Mac says what changed.
+    static func whereReadsDiffer(_ a: [Float], _ b: [Float]) -> String {
+        let n = min(a.count, b.count) / 2
+        var first = -1
+        for i in 0..<(2 * n) where abs(a[i] - b[i]) > 1e-6 { first = i / 2; break }
+        guard first >= 0 else { return "the recorded read (\(a.count / 2) frames) matches a fresh read (\(b.count / 2) frames) sample for sample" }
+        func db(_ x: [Float], _ s: Int) -> Double {
+            let lo = 2 * s * 48_000, hi = min(x.count, lo + 2 * 48_000)
+            guard hi > lo else { return -.infinity }
+            var sum = 0.0; for i in lo..<hi { sum += Double(x[i]) * Double(x[i]) }
+            return 10 * log10(max(sum / Double(hi - lo), 1e-20))
+        }
+        let seconds = (0..<((n + 47_999) / 48_000)).compactMap { s -> String? in
+            let d = db(a, s) - db(b, s)
+            return abs(d) > 0.01 ? String(format: "%d s %+.2f dB", s, d) : nil
+        }
+        // A shift in time: the lag (within 50 ms) that best lines up 0.1 s after the first difference.
+        var lag = (k: 0, err: Float.infinity)
+        let at = min(first + 2_400, n - 4_800)
+        if at > 2_400 {
+            for k in -2_400...2_400 {
+                var e: Float = 0
+                for i in stride(from: 0, to: 4_800, by: 4) where at + i + k >= 0 && at + i + k < n { e = max(e, abs(a[2 * (at + i)] - b[2 * (at + i + k)])) }
+                if e < lag.err { lag = (k, e) }
+            }
+        }
+        return String(format: "recorded read %d frames, fresh read %d; first difference at %.4f s; best lag there %d frames (error %.5f); seconds that differ: ",
+                      a.count / 2, b.count / 2, Double(first) / 48_000, lag.k, lag.err) + seconds.joined(separator: ", ")
     }
 
     /// Times measuring a long file: set TEST_RUNNER_EDITMAX_LONG_FILE to its path, and use an optimized build (the

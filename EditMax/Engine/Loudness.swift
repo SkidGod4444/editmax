@@ -201,6 +201,9 @@ enum Loudness {
     /// Lead-in before each later piece, metered and dropped: a whole number of 100 ms hops.
     static let leadIn = 3.0
 
+    /// Sees every buffer a read hands over (tests record a read with it; nil in the app).
+    nonisolated(unsafe) static var debugBuffer: (@Sendable (UnsafeBufferPointer<Float>) -> Void)?
+
     static func meter(_ project: Project, _ progress: (@Sendable (Double) -> Void)?, parts forced: Int? = nil) async throws -> LoudnessMeter.Result {
         let total = project.duration
         let n = forced ?? parts(total)
@@ -303,6 +306,14 @@ enum Loudness {
         let wanted: Double, leadIn: Double
     }
 
+    /// The mix from `from` to `to` seconds, read the way a piece reads it (tests hold it against a whole read).
+    static func readSpan(_ project: Project, from: Double, to: Double) async throws -> [Float] {
+        let r = try await open(project, from: from, to: to, leadIn: 0)
+        var out: [Float] = []
+        try pump(r) { out.append(contentsOf: $0) }
+        return out
+    }
+
     private static func open(_ project: Project, from: Double, to: Double?, leadIn: Double) async throws -> Read {
         let out = try await CompositionBuilder.build(project)
         let tracks = try await out.composition.loadTracks(withMediaType: .audio)
@@ -352,7 +363,11 @@ enum Loudness {
                     var len = 0; var ptr: UnsafeMutablePointer<CChar>?
                     guard CMBlockBufferGetDataPointer(bb, atOffset: 0, lengthAtOffsetOut: nil, totalLengthOut: &len, dataPointerOut: &ptr) == noErr, let ptr,
                           len >= 8 else { return true }
-                    try ptr.withMemoryRebound(to: Float.self, capacity: len / 4) { try body(UnsafeBufferPointer(start: $0, count: len / 8 * 2)) }
+                    try ptr.withMemoryRebound(to: Float.self, capacity: len / 4) {
+                        let buf = UnsafeBufferPointer(start: $0, count: len / 8 * 2)
+                        debugBuffer?(buf)
+                        try body(buf)
+                    }
                     frames += len / 8
                     return true
                 }

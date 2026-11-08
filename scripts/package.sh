@@ -52,6 +52,12 @@ else echo "package: no codemax LICENSE at $CODEMAX_LICENSE; its AGPL text must s
 SPARKLE_LICENSE="$DD/SourcePackages/checkouts/Sparkle/LICENSE"
 if [ -f "$SPARKLE_LICENSE" ]; then cp "$SPARKLE_LICENSE" "$LIC/Sparkle-LICENSE"
 else echo "package: no Sparkle LICENSE at $SPARKLE_LICENSE; its MIT notice must ship with the framework" >&2; exit 1; fi
+# PostHog's SDK, and the crash reporter and WebP library it vendors, are compiled into the executable.
+PH="$DD/SourcePackages/checkouts/posthog-ios"
+for pair in "LICENSE:PostHog-LICENSE" "vendor/PHPLCrashReporter/LICENSE:PLCrashReporter-LICENSE" "vendor/libwebp/COPYING:libwebp-COPYING" "vendor/libwebp/PATENTS:libwebp-PATENTS"; do
+  if [ -f "$PH/${pair%%:*}" ]; then cp "$PH/${pair%%:*}" "$LIC/${pair##*:}"
+  else echo "package: no ${pair%%:*} in the PostHog SDK at $PH; its notice must ship with the app" >&2; exit 1; fi
+done
 
 sign() {   # sign <path> [entitlements]
   local args=(--force --options runtime --sign "$IDENTITY")
@@ -103,5 +109,30 @@ if [ -n "$NOTARIZE" ]; then
   touch "$OUT/notarized"
 fi
 ditto -c -k --keepParent "$APP" "$OUT/EditMax-$VERSION.zip"
+
+# Crash reports (EditMax/Support/Telemetry.swift) name the functions in a crash only with this build's debug symbols.
+# The dSYM is always kept in build/dsyms (a later upload needs exactly this build's), and is uploaded to PostHog with
+# the SDK's own script when POSTHOG_CLI_API_KEY is set: a personal API key with "error tracking write" and
+# "organization read", a secret like the notary password, so it lives in .release.env and is never printed. The
+# upload needs posthog-cli (`brew install posthog/tap/posthog-cli`) and POSTHOG_CLI_PROJECT_ID.
+DSYM_DIR="$DD/Build/Products/Release"
+if [ -d "$DSYM_DIR/EditMax.app.dSYM" ]; then
+  mkdir -p "$ROOT/build/dsyms"
+  ditto -c -k --keepParent "$DSYM_DIR/EditMax.app.dSYM" "$ROOT/build/dsyms/EditMax-$VERSION-$BUILD.dSYM.zip"
+  if [ -n "${POSTHOG_CLI_API_KEY:-}" ]; then
+    # The built app's Info.plist names the release (bundle id, version, build) the crash reports carry.
+    CONFIGURATION=Release DEBUG_INFORMATION_FORMAT=dwarf-with-dsym DWARF_DSYM_FOLDER_PATH="$DSYM_DIR" DWARF_DSYM_FILE_NAME=EditMax.app.dSYM \
+      TARGET_BUILD_DIR="$DSYM_DIR" EXECUTABLE_PATH=EditMax.app/Contents/MacOS/EditMax EXECUTABLE_NAME=EditMax \
+      INFOPLIST_FILE="$APP/Contents/Info.plist" PRODUCT_BUNDLE_IDENTIFIER=io.openhorizon.editmax \
+      MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$BUILD" \
+      POSTHOG_CLI_HOST="${POSTHOG_CLI_HOST:-https://us.posthog.com}" \
+      "$DD/SourcePackages/checkouts/posthog-ios/build-tools/upload-symbols.sh" \
+      || echo "package: the dSYM upload to PostHog failed; upload build/dsyms/EditMax-$VERSION-$BUILD.dSYM.zip by hand" >&2
+  else
+    echo "package: POSTHOG_CLI_API_KEY is not set, so crashes in $VERSION ($BUILD) show without function names until build/dsyms/EditMax-$VERSION-$BUILD.dSYM.zip is uploaded"
+  fi
+else
+  echo "package: no dSYM at $DSYM_DIR; crash reports from this build cannot be symbolicated" >&2
+fi
 ( cd "$OUT" && shasum -a 256 EditMax-*.dmg EditMax-*.zip > SHA256SUMS && cat SHA256SUMS )
 echo "package: EditMax $VERSION ($BUILD) -> $OUT"

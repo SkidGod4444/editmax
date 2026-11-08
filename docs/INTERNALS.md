@@ -417,6 +417,22 @@ GitHub counts every download of a release asset; the README badge shows the tota
 `gh api repos/SkidGod4444/editmax/releases --jq '.[] | "\(.tag_name): \([.assets[].download_count] | add)"'` breaks it
 down per release.
 
+## Crash reports and usage
+
+`Support/Telemetry.swift` runs PostHog's SDK (posthog-ios, US cloud, the public project token in the source). It starts
+only once the person has pressed Agree on `TelemetryPrompt` (the first-launch card, after the splash and any update card;
+it returns each launch until agreed; `Telemetry.terms` raised shows it again) and only in a release build: never in the
+unit tests, on CI (`CI`), or in a Debug build unless `EDITMAX_POSTHOG=1` (`EDITMAX_POSTHOG_DEBUG=1` adds the SDK log).
+The SDK's crash handler (its vendored PLCrashReporter; off while a debugger is attached) saves a crash and sends it at
+the next launch. Configured off: lifecycle and screen events, swizzling (MenuCapture already swizzles NSMenu), GeoIP,
+person profiles. Events are the six in `Telemetry.Event` with bucketed values (`lengthBucket`, `bucket`);
+`Telemetry.failed` reports a handled error as `domain code` only (an error's text can hold a file name) at export,
+smooth slow motion, voice isolation and agent-runtime failures; a full disk, an offline drive, Cancel and other
+`EditError`s count as `export_failed` with a reason and no exception. Every event passes `Telemetry.Sanitizer` in the
+SDK's `beforeSend`: our string properties with a `/` or over 64 characters are dropped, and `/Users/<name>` becomes
+`/Users/~` at any depth (crash image paths). `scripts/package.sh` keeps each release's dSYM in `build/dsyms` and uploads
+it with the SDK's `upload-symbols.sh` when `POSTHOG_CLI_API_KEY` is in `.release.env`.
+
 ## Logs and diagnostics
 
 `~/Library/Application Support/EditMax/logs/editmax.log` is the session as JSON lines: every interaction (`ui-click`

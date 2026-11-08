@@ -377,6 +377,27 @@ a page on how their tools work and where their limits are.
 - The in-app agent chat needs an agent installed on the Mac (Claude Code, Codex, OpenCode, Cursor, Grok or
   Antigravity) or an API key.
 
+## Privacy
+
+EditMax sends crash reports and anonymous feature counts to [PostHog](https://posthog.com) (US cloud), starting once
+you press **Agree** on the card it shows at first launch. They are what lets problems get found and fixed, so they are
+part of using EditMax; Settings ▸ General ▸ Privacy shows the state.
+
+What is sent:
+- **Crashes:** where EditMax crashed (the functions on each thread), sent at the next launch.
+- **Failures:** an export, a render or the agent runtime failing, as the error's code only, never its text.
+- **Counts:** EditMax started, a project opened, an export finished or failed, a transcript finished, an assistant
+  message sent. Each carries only fixed choices and rough sizes: the export preset, the video length in bands (under a
+  minute, 1–10 min, 10–60 min, 1–3 h, longer), the clip count in bands, which assistant backend.
+- **About the Mac:** EditMax's version, the macOS version, the Mac model (like "MacBook Pro", never its name), the
+  language and time zone, the screen size, whether it is on Wi-Fi. No location: PostHog's lookup of a place from the
+  IP address is off.
+
+Never sent: your footage, sound or pictures, file and folder names, project names, transcripts, captions, titles, chat
+messages, API keys, or anything you type. Your user name is removed from file paths in crash reports. There is no
+account and no sign-in: each Mac gets a random ID that says nothing about you. Development builds, the tests and CI send
+nothing.
+
 ## Contributing
 
 Issues and pull requests are welcome. Keep the conventions in [docs/INTERNALS.md](docs/INTERNALS.md#ui-conventions),

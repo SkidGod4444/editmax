@@ -81,6 +81,9 @@ final class ChatSession: ObservableObject {
     private var currentAssistant: UUID?
     private var toolItems: [String: UUID] = [:]
     private var turnUsage = (input: 0, output: 0, cost: 0.0)
+    /// The agent wrote text this turn. A turn that then ends with a tool call left open (Claude Code's
+    /// `incomplete_tool_call`, as when a server tool such as the advisor never answers) gave its reply: a note, not a failure.
+    var turnReplied = false
 
     let document: EditMaxDocument
     private var task: Task<Void, Never>?
@@ -311,9 +314,20 @@ final class ChatSession: ObservableObject {
     /// One card per failure, in plain words. A failed turn reports its error twice (an error event, then the turn's
     /// result), which showed the friendly card and the raw `incomplete_tool_call` text under it.
     func appendError(_ raw: String) {
+        if turnReplied, Self.leftAToolOpen(raw) {
+            let note = "The reply above is complete. A last step the agent started did not finish and was left out."
+            if items.last?.text != note { items.append(Item(kind: .note, text: note)) }
+            return
+        }
         let text = Self.plainError(raw)
         if let last = items.last, last.kind == .error, last.text == text { return }
         items.append(Item(kind: .error, text: text))
+    }
+
+    /// Claude Code's "ended the turn without returning results for tool calls".
+    static func leftAToolOpen(_ message: String) -> Bool {
+        let m = message.lowercased()
+        return m.contains("incomplete_tool_call") || m.contains("without returning results for tool calls")
     }
 
     /// Agent-harness errors in words for the person editing. The raw text stays in the debug log for us.
@@ -346,6 +360,7 @@ final class ChatSession: ObservableObject {
     private func handle(_ ev: CodemaxRunner.Event) {
         switch ev {
         case .text(let t):
+            turnReplied = true
             if let id = currentAssistant, let i = items.firstIndex(where: { $0.id == id }) { items[i].text += t }
             else { let it = Item(kind: .assistant, text: t); currentAssistant = it.id; items.append(it) }
         case .toolCall(let id, let title, let input):
@@ -368,9 +383,12 @@ final class ChatSession: ObservableObject {
             configuredAgent = to; agent = to; currentAssistant = nil
         case .error(let kind, let message):
             currentAssistant = nil
-            // A protocol breakdown or crash in the agent side of an updated codemax counts against the update.
-            if backend == .agent, kind == "protocol" || kind == "crashed" { CodemaxUpdater.shared.noteAgentFailure("turn-\(kind)", detail: message) }
-            Telemetry.shared.agentFailed(kind: kind, backend: backend == .agent ? "agent" : "api-key")
+            let replied = turnReplied && Self.leftAToolOpen(message)
+            // A protocol breakdown or crash in the agent side of an updated codemax counts against the update; a
+            // finished reply with a tool call left open is the model's doing, not the runtime's.
+            if backend == .agent, !replied, kind == "protocol" || kind == "crashed" { CodemaxUpdater.shared.noteAgentFailure("turn-\(kind)", detail: message) }
+            Telemetry.shared.agentFailed(kind: replied ? "tool_left_open" : kind, backend: backend == .agent ? "agent" : "api-key",
+                                         detail: Telemetry.errorKind(in: message))
             appendError(kind == "quota" ? "Out of quota: \(message)" : kind == "auth" ? (backend == .apiKey ? "Key rejected: \(message)" : "Login needed: \(message)") : message)
         case .notice(let text):
             items.append(Item(kind: .note, text: text))
@@ -430,7 +448,7 @@ final class ChatSession: ObservableObject {
                         if rolled { self.items.append(Item(kind: .note, text: "The updated agent runtime could not start \(info.name) (\(msg)); rolled back to the previous copy and trying again.")) }
                     }
                 }
-                self.currentAssistant = nil
+                self.currentAssistant = nil; self.turnReplied = false
                 let r = try await self.runner.prompt(prompt)
                 if !r.agent.isEmpty, r.agent != self.configuredAgent { self.configuredAgent = r.agent; self.agent = r.agent }
                 if let e = r.error { self.appendError(e) }
@@ -474,7 +492,7 @@ final class ChatSession: ObservableObject {
                     self.configuredAPI = wanted; self.apiStatus = Self.status(self.apiRunner.version, info, prefix: "sidecar")
                     self.items.append(Item(kind: .note, text: "Switched to \(info.name)\(info.model.map { " · \($0)" } ?? "")."))
                 }
-                self.currentAssistant = nil
+                self.currentAssistant = nil; self.turnReplied = false
                 let r = try await self.apiRunner.prompt(prompt)
                 if let e = r.error { self.appendError(e) }
                 else if r.stopReason == "cancelled" { self.items.append(Item(kind: .note, text: "Stopped.")) }

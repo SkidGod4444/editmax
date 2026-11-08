@@ -196,6 +196,28 @@ final class ChatErrorTests: XCTestCase {
         XCTAssertTrue(errors[0].text.contains("continue"))
     }
 
+    /// The PostHog "EditMax.Agent.protocol" report: the agent wrote its whole reply, then a server tool it had called
+    /// (the advisor, from the person's own Claude Code settings) never answered, and the finished turn read as failed.
+    func testAReplyThatLeftAToolOpenIsANoteNotAnError() {
+        let chat = ChatSession(document: EditMaxDocument())
+        chat.turnReplied = true
+        let raw = "Internal error: Claude ended the turn without returning results for tool calls: srvtoolu_01 {\"errorKind\":\"incomplete_tool_call\"}"
+        chat.appendError(raw)
+        chat.appendError(raw)   // the turn's result repeats it
+        XCTAssertTrue(chat.items.filter { $0.kind == .error }.isEmpty)
+        XCTAssertEqual(chat.items.filter { $0.kind == .note }.count, 1)
+        chat.turnReplied = false
+        chat.appendError(raw)
+        XCTAssertEqual(chat.items.filter { $0.kind == .error }.count, 1, "with no reply it is still a failure")
+    }
+
+    func testTheHarnessErrorKindNamesTheIssue() {
+        XCTAssertEqual(Telemetry.errorKind(in: "Claude ended the turn: srvtoolu_01 {\"errorKind\":\"incomplete_tool_call\"}"), "incomplete_tool_call")
+        XCTAssertEqual(Telemetry.errorKind(in: "{\"errorKind\" : \"max_turns\"}"), "max_turns")
+        XCTAssertNil(Telemetry.errorKind(in: "The operation timed out."))
+        XCTAssertNil(Telemetry.errorKind(in: "{\"errorKind\":\"/Users/me/secret.mov\"}"), "never a path or text")
+    }
+
     func testDifferentFailuresStillShowEach() {
         let chat = ChatSession(document: EditMaxDocument())
         chat.appendError("429 rate limit")

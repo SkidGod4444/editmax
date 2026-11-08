@@ -100,13 +100,27 @@ final class Telemetry: ObservableObject {
         PostHogSDK.shared.captureException(plain, properties: ["where": place])
     }
 
-    /// The agent runtime's failure, by its kind ("protocol", "crashed", "quota"…), never its message.
-    func agentFailed(kind: String, backend: String) {
+    /// The agent runtime's failure, by its kind ("protocol", "crashed", "quota"…) and the harness's own error kind
+    /// (`incomplete_tool_call`), never its message. The detail names the issue in PostHog: "EditMax.Agent.protocol 0"
+    /// said nothing.
+    func agentFailed(kind: String, backend: String, detail: String? = nil) {
         guard started else { return }
-        let k = kind.range(of: #"^[a-z_-]{1,24}$"#, options: .regularExpression) != nil ? kind : "other"
-        capture(.agentTurn, ["backend": backend, "failed": k])
-        if k == "protocol" || k == "crashed" { failed(NSError(domain: "EditMax.Agent.\(k)", code: 0), at: "agent") }
+        let k = Self.slug(kind) ?? "other"
+        var props: [String: Any] = ["backend": backend, "failed": k]
+        let d = detail.flatMap(Self.slug)
+        if let d { props["detail"] = d }
+        capture(.agentTurn, props)
+        if k == "protocol" || k == "crashed" { failed(NSError(domain: "EditMax.Agent.\(k)" + (d.map { ".\($0)" } ?? ""), code: 0), at: "agent") }
     }
+
+    /// `{"errorKind":"incomplete_tool_call"}` in a harness error: the kind alone, which carries no user text.
+    nonisolated static func errorKind(in message: String) -> String? {
+        guard let r = message.range(of: #""errorKind"\s*:\s*"([a-z_]{1,32})""#, options: .regularExpression) else { return nil }
+        let quoted = message[r].split(separator: "\"")
+        return quoted.count >= 3 ? String(quoted[quoted.count - 1]) : nil
+    }
+
+    nonisolated private static func slug(_ s: String) -> String? { s.range(of: #"^[a-z_-]{1,32}$"#, options: .regularExpression) != nil ? s : nil }
 
     /// A count as a coarse bucket, so no event carries an exact length that could tell projects apart.
     nonisolated static func bucket(_ n: Double, _ edges: [Double]) -> String {

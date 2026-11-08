@@ -1,6 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
+import posthog from "posthog-js";
 import { useState } from "react";
 import { ease } from "./motion";
 
@@ -22,7 +23,15 @@ export function ConnectTabs() {
   const [copied, setCopied] = useState(false);
   const t = tabs.find((x) => x.id === tab)!;
   const copy = async () => {
-    try { await navigator.clipboard.writeText(t.code); setCopied(true); setTimeout(() => setCopied(false), 1600); } catch { /* no clipboard: nothing to show */ }
+    try {
+      await navigator.clipboard.writeText(t.code);
+      if (process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN && process.env.NEXT_PUBLIC_POSTHOG_HOST) {
+        posthog.capture("mcp_connection_instructions_copied", { client: t.id });
+        posthog.logger.info("mcp connection instructions copied", { client: t.id });
+      }
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    } catch { /* no clipboard: nothing to show */ }
   };
   return (
     <div className="glass mx-auto mt-14 max-w-3xl overflow-hidden rounded-3xl">

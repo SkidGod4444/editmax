@@ -72,6 +72,14 @@ Repointing is one undoable edit. Waveform and thumbnail caches are refreshed for
 
 Dissolves and fades are not reported as cuts. Agents use `detect_scenes` with `action: none | split | markers`.
 
+**Describing a video.** `describe_video` (`Engine/VideoContext.swift`) gives an agent the whole of a file before it cuts: one scene-detector pass over the range, then two frames per segment through AVAssetImageGenerator (768 px).
+- **Segments.** Each shot is cut into equal parts of about a 24th of the range (at least 2 s), so a long take is described more than once. At most 48 pictures are described, evenly spread; the rest keep their times and motion.
+- **Each picture.** Brightness, clipping and colour come from `ColorScopes.stats` on a 160 px copy. Vision finds faces, people (whole body), the attention-saliency subject, classification labels (confidence 0.3 and up, top 6) and fast text recognition.
+- **Motion and camera.** Motion is the mean scene-detector difference inside the segment. The camera move is a translational image registration between the middle frame and one a third of a second later: a picture shift under 4 % of the frame per second is static.
+- **Sound.** The tracks are mixed to 48 kHz stereo for `LoudnessMeter` (integrated, true peak, range) and an RMS curve of at most 120 steps.
+- **Speech** comes from the asset's cached transcript, or a new one with `transcript: true`.
+- **Cache.** Results and the contact sheet (JPEG) are stored in `~/Library/Application Support/EditMax/context`, keyed by path, size, modification date and the request; the newest 400 are kept.
+
 **INTERNALS.** The code is `Engine/SceneDetection.swift`. AVAssetReader asks the decoder for about 96 px wide BGRA frames, and the code samples a grid if the decoder ignores the size. Each frame gets two signatures:
 - A 4×4×4 RGB histogram with soft (trilinear) binning. Hard bins produced false cuts when a flat colour's exposure drifted across a bin edge.
 - A 4×4 brightness grid.

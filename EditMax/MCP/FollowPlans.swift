@@ -118,7 +118,7 @@ enum FollowPlans {
         "list_projects", "inspect_timeline", "list_assets", "list_history", "list_templates", "inspect_sequence", "inspect_mix",
         "list_archive", "restore_from_archive",
         "get_transcript", "search_transcript", "detect_silence", "measure_loudness", "frame_stats",
-        "capture_frame", "capture_scopes", "capture_matte", "key_matte",
+        "capture_frame", "capture_scopes", "capture_matte", "key_matte", "describe_video",
         "export_video", "export_batch", "export_chapters", "export_timeline", "save_template",
         "import_media", "make_proxies", "consolidate_media", "set_playhead",
         "list_library", "add_to_library",   // the Assets library is not in the project window

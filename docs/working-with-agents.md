@@ -70,7 +70,7 @@ full id, or the first eight characters of an id.
 
 | Area | Tools |
 |---|---|
-| Inspect | `list_projects`, `inspect_timeline`, `list_assets`, `list_history`, `capture_frame`, `frame_stats`, `inspect_sequence` |
+| Inspect | `list_projects`, `inspect_timeline`, `list_assets`, `list_history`, `capture_frame`, `frame_stats`, `inspect_sequence`, `describe_video` |
 | Cut | `import_media`, `insert_clip`, `split_clip`, `move_clip`, `trim_clip`, `remove_clips`, `close_gaps`, `ripple_delete`, `add_track`, `move_track`, `set_playhead`, `roll_edit`, `slip_clip`, `slide_clip`, `set_split_edit`, `insert_edit`, `overwrite_edit`, `match_frame`, `detect_scenes`, `relink_media`, `consolidate_media` |
 | Picture | `set_clip_transform`, `set_clip_fades`, `set_transition`, `set_keyframe`, `remove_keyframe`, `auto_reframe`, `stabilize_clip`, `set_smooth_slow_motion` |
 | Color | `set_clip_color`, `set_color_wheels`, `set_color_curve`, `add_grade_layer`, `update_grade_layer`, `remove_grade_layer`, `move_grade_layer`, `set_layer_mask`, `capture_matte`, `match_color`, `capture_scopes`, `set_project_color` |

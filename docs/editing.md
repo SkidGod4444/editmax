@@ -198,6 +198,7 @@ Letter keys never fire while a text field has the focus.
 | J and L cuts | `set_split_edit` |
 | Source viewer | `insert_edit`, `overwrite_edit` (any three points; four is fit to fill), `match_frame` |
 | Scene cuts | `detect_scenes` (`action`: `none`, `split` or `markers`) |
+| Look at a video | `describe_video` (`asset`, `clip` or `path`; shots, what each picture shows, camera move, sound, a contact sheet) |
 | Keyframes | `set_keyframe`, `remove_keyframe` |
 | Slow motion | `set_smooth_slow_motion` (`off`, `blend` or `optical_flow`, with `wait`) |
 | Transcript | `get_transcript`, `search_transcript`, `cut_transcript` |

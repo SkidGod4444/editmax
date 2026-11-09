@@ -282,6 +282,12 @@ enum EditMaxTools {
              inputSchema: schema(["clip": str("Clip id prefix or name (give clip or asset)"), "asset": str("Asset id prefix or name: scan the whole file (action none only)"),
                                   "sensitivity": num("0...1 (default 0.5); higher finds smaller jumps"), "min_scene": num("Shortest shot in seconds (default 0.5); cuts closer than this to the previous one are dropped"),
                                   "action": str("none (default), split or markers"), "project": projectArg])),
+        Tool(name: "describe_video", description: "Everything in a video (or audio) file, read without changing anything, so you know what it holds before you cut: the file (size, fps, codec, bit depth, HDR, camera, date, GPS place), its shots (hard cuts) split into segments of a few seconds, and for each segment the picture at its middle: brightness, clipped and crushed share, saturation and colour, faces and people with boxes, the salient subject, what Vision recognises (labels such as sky, airplane, beach with confidence), readable text, motion (0-1, how busy) and the camera move (static, pans, tilts). The sound gets loudness (LUFS), true peak, range and a level curve. With a contact sheet image (one labelled frame per segment) by default. Give asset (the whole file), clip (its source range, with timeline times), or path (any file on this Mac, no project needed: look at footage before importing it). Speech is included when the asset is already transcribed; transcript true transcribes it first. The first call reads the whole file once (about real time / 10 for HD, close to real time for 4K HEVC or ProRes) plus two frames per segment; results are cached per file, so asking again is instant.",
+             inputSchema: schema(["asset": str("Asset id prefix or file name: the whole file"), "clip": str("Clip id prefix or name: its source range, with timeline times"), "path": str("Absolute path of a video or audio file on this Mac (~ is expanded); works with no project open"),
+                                  "sheet": .object(["type": "boolean", "description": "Return the contact sheet, a JPEG (default true)"]), "max_width": int("Contact sheet width in pixels, 320-4096 (default 1600)"),
+                                  "sensitivity": num("Shot-cut sensitivity 0...1 (default 0.5), as detect_scenes"), "transcript": .object(["type": "boolean", "description": "Transcribe the speech first when it is not yet (default false; on this Mac, a while for long files)"]),
+                                  "language": str("Language tag for transcription (default: the Mac's language)"), "project": projectArg]),
+             annotations: .init(readOnlyHint: true)),
         Tool(name: "insert_edit", description: "Three/four-point insert: put a range of an asset on the timeline and push everything after it right (on every track, so sync holds; a clip under timeline in is split). Give three of source_in, source_out, timeline_in, timeline_out and the fourth follows from the length; give all four to fit the source range into the timeline range by changing the clip's speed (fit to fill, 0.1–10×). Timeline in defaults to the playhead. A range past the media, shorter than a frame, or before 0 is refused. One undoable edit; returns the placed clip, its points and speed.",
              inputSchema: schema(["asset": str("Asset id prefix or name"), "source_in": num("Source in, seconds of the asset"), "source_out": num("Source out, seconds of the asset"),
                                   "timeline_in": num("Timeline in, seconds (default: the playhead when the app shows one)"), "timeline_out": num("Timeline out, seconds"),
@@ -357,7 +363,7 @@ enum EditMaxTools {
     ]
 
     /// Tools whose results carry what is said or shown in the footage.
-    private static let contentTools: Set<String> = ["get_transcript", "search_transcript", "cut_transcript", "remove_words", "add_captions"]
+    private static let contentTools: Set<String> = ["get_transcript", "search_transcript", "cut_transcript", "remove_words", "add_captions", "describe_video"]
     /// Free-text arguments (titles, searched phrases, words to remove) are the user's or the footage's content:
     /// the log records how long they were, never what they said.
     private static let textArgs: Set<String> = ["text", "phrase", "query", "words", "from_word", "to_word", "lines", "names", "role"]
@@ -390,7 +396,7 @@ enum EditMaxTools {
                 if params.name == "ui_key", let k = params.arguments?["key"]?.stringValue { f["pressed"] = k }
                 DebugLog.event("mcp-call", f)
                 var content: [Tool.Content] = [.text(payload.text)]
-                if let img = payload.image { content.append(.image(data: img.base64EncodedString(), mimeType: "image/png")) }
+                if let img = payload.image { content.append(.image(data: img.base64EncodedString(), mimeType: payload.imageType)) }
                 // structuredContent must be a JSON object; list results are wrapped so strict clients (Claude Code) accept them.
                 var structured = payload.value
                 if case .array(let items)? = structured { structured = .object(["items": .array(items)]) }
@@ -415,7 +421,7 @@ enum EditMaxTools {
         }
     }
 
-    struct Payload { var text: String; var value: Value?; var image: Data? = nil }
+    struct Payload { var text: String; var value: Value?; var image: Data? = nil; var imageType = "image/png" }
 
     /// One Assets library item as list_library and add_to_library return it.
     struct LibraryInfo: Codable {
@@ -473,6 +479,13 @@ enum EditMaxTools {
             struct P: Codable { var id: String, name: String, active: Bool, duration: Double, clips: Int }
             let reg = DocumentRegistry.shared
             return try payload(reg.documents.map { P(id: $0.id.short, name: $0.displayName, active: $0.id == reg.activeID, duration: $0.project.duration, clips: $0.project.allClips.count) })
+        }
+        // A file on this Mac needs no project.
+        if name == "describe_video", let path = s("path"), !path.isEmpty {
+            guard s("asset") == nil, s("clip") == nil else { throw MCPError.invalidParams("give asset, clip or path (one of them)") }
+            let (info, png) = try await ToolExecutor.describeFile(path: path, sensitivity: d("sensitivity"), sheet: a["sheet"]?.boolValue ?? true, maxWidth: i("max_width"),
+                                                                  transcript: b("transcript"), language: s("language"))
+            return Payload(text: try encodeText(info), value: try? Value(info), image: png, imageType: "image/jpeg")
         }
         // The Assets library spans projects, so it needs none open.
         switch name {
@@ -791,6 +804,10 @@ enum EditMaxTools {
             return try payload(try x.pointEdit(overwrite: name == "overwrite_edit", asset: try req("asset"), sourceIn: d("source_in"), sourceOut: d("source_out"), timelineIn: d("timeline_in"), timelineOut: d("timeline_out"), track: s("track")))
         case "match_frame":
             return try payload(try x.matchFrame(clip: s("clip"), time: d("time")))
+        case "describe_video":
+            let (info, png) = try await x.describeVideo(asset: s("asset"), clip: s("clip"), sensitivity: d("sensitivity"), sheet: a["sheet"]?.boolValue ?? true,
+                                                        maxWidth: i("max_width"), transcript: b("transcript"), language: s("language"))
+            return Payload(text: try encodeText(info), value: try? Value(info), image: png, imageType: "image/jpeg")
         case "set_smooth_slow_motion":
             return try payload(try await x.setSmoothSlowMotion(try req("clip"), mode: try req("mode"), wait: b("wait")))
         default: throw MCPError.methodNotFound("Unknown tool \(name)")

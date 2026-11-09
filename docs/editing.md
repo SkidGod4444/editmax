@@ -119,6 +119,12 @@ With nothing selected, the inspector's **Cleanup** card has two buttons:
 Both ripple every track. Do cleanup before **Add captions** in the **Captions** card, so the captions land on the final
 cut.
 
+## Move a title on the viewer
+
+While the video is paused, point at a title on the viewer to see its box, click it to select it, and drag it to move
+it. The title follows the pointer in the picture and snaps to the frame's centre lines (a pink guide shows). Dragging
+a caption moves its whole set, so captions stay in one place. Each drag is one step to undo.
+
 ## Keep titles and captions apart
 
 A title added where a caption or another title is already on screen moves to the nearest free space. If two texts

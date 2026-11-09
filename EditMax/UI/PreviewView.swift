@@ -324,6 +324,7 @@ struct ProgramMonitor: View {
                     .allowsHitTesting(false)
                 }
             }
+            .overlay { if viewing == nil { TextDragOverlay(document: document, player: player, state: state, aspect: aspect) } }   // drag titles on the picture
             .overlay { if player.compareMode != .off { CompareOverlay(player: player, aspect: aspect) } }
     }
 

@@ -36,6 +36,34 @@ struct TextLayer {
     let image: CIImage
     let size: CGSize
     var raster: TitleRaster? = nil   // animated titles and lower thirds (TitleAnimation.swift)
+
+    /// The same title centred on `p` (normalized, y down): its picture does not depend on where it sits.
+    func moved(to p: CGPoint) -> TextLayer {
+        var t = text; t.x = p.x; t.y = p.y
+        return TextLayer(text: t, image: image, size: size, raster: raster)
+    }
+}
+
+/// Where titles being dragged on the viewer are drawn (normalized centres, y down), before the move is an edit. The
+/// player draws a paused frame again at once, while a rebuild after an edit takes a few hundred milliseconds, so this is
+/// what lets a title follow the pointer. A position stays until a build that has it is on screen (`settle`), so letting
+/// go never flashes the title back to where it was. Preview only: exports and the agent's frame tools never read it.
+final class LiveTextPositions: @unchecked Sendable {
+    static let shared = LiveTextPositions()
+    private let lock = NSLock()
+    private var _moves: [UUID: CGPoint] = [:]
+    var moves: [UUID: CGPoint] { lock.withLock { _moves } }
+    func set(_ moves: [UUID: CGPoint]) { lock.withLock { _moves = moves } }
+    func clear() { lock.withLock { _moves = [:] } }
+    /// Drops the positions a freshly built `texts` already has (or whose text is gone).
+    func settle(_ texts: [TextOverlay]) {
+        lock.withLock {
+            _moves = _moves.filter { id, p in
+                guard let t = texts.first(where: { $0.id == id }) else { return false }
+                return abs(t.x - p.x) > 1e-6 || abs(t.y - p.y) > 1e-6
+            }
+        }
+    }
 }
 
 final class EditMaxInstruction: NSObject, AVVideoCompositionInstructionProtocol {
@@ -128,10 +156,11 @@ final class CompareState: @unchecked Sendable {
 class EditMaxPreviewCompositor: EditMaxCompositor {
     override func image(_ inst: EditMaxInstruction, at t: Double, source: (CMPersistentTrackID) -> CVPixelBuffer?) -> CIImage {
         let mode = CompareState.shared.mode
-        guard mode != .off else { return FrameRenderer.frame(inst, at: t, source: source) }
-        let before = FrameRenderer.frame(inst, at: t, bypassColor: true, source: source)
+        let moved = LiveTextPositions.shared.moves
+        guard mode != .off else { return FrameRenderer.frame(inst, at: t, moved: moved, source: source) }
+        let before = FrameRenderer.frame(inst, at: t, bypassColor: true, moved: moved, source: source)
         if mode == .before { return before }
-        let after = FrameRenderer.frame(inst, at: t, source: source)
+        let after = FrameRenderer.frame(inst, at: t, moved: moved, source: source)
         let size = inst.renderSize, x = (size.width * CompareState.shared.split).rounded()
         let left = before.cropped(to: CGRect(x: 0, y: 0, width: x, height: size.height))
         let right = after.cropped(to: CGRect(x: x, y: 0, width: size.width - x, height: size.height))
@@ -150,7 +179,8 @@ class EditMaxCompositor10: EditMaxCompositor {
 
 /// Pure frame maths on CIImages (origin bottom-left, as Core Image has it). Also used by the still-frame capture.
 enum FrameRenderer {
-    static func frame(_ inst: EditMaxInstruction, at t: Double, bypassColor: Bool = false, source: (CMPersistentTrackID) -> CVPixelBuffer?) -> CIImage {
+    static func frame(_ inst: EditMaxInstruction, at t: Double, bypassColor: Bool = false, moved: [UUID: CGPoint] = [:],
+                      source: (CMPersistentTrackID) -> CVPixelBuffer?) -> CIImage {
         let size = inst.renderSize
         let canvasRect = CGRect(origin: .zero, size: size)
         var canvas = CIImage(color: .black).cropped(to: canvasRect)
@@ -158,7 +188,8 @@ enum FrameRenderer {
             guard let img = picture(layer, at: t, size: size, bypassColor: bypassColor, source: source) else { continue }
             canvas = Effects.composite(img, over: canvas, mode: layer.current.clip.effects.blend)   // blend modes (EffectsRender.swift)
         }
-        for tl in inst.texts where tl.text.start <= t && t < tl.text.end {
+        for var tl in inst.texts where tl.text.start <= t && t < tl.text.end {
+            if let p = moved[tl.text.id] { tl = tl.moved(to: p) }   // dragged on the viewer (LiveTextPositions)
             if let drawn = TitleAnimator.draw(tl, at: t, size: size, over: canvas) { canvas = drawn; continue }   // animated titles (TitleAnimation.swift)
             let origin = CGPoint(x: size.width * tl.text.x - tl.size.width / 2, y: size.height * (1 - tl.text.y) - tl.size.height / 2)
             canvas = tl.image.transformed(by: CGAffineTransform(translationX: origin.x.rounded(), y: origin.y.rounded())).composited(over: canvas)

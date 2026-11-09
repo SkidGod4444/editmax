@@ -121,6 +121,7 @@ final class PlayerController: ObservableObject {
                 Task { await PlaybackWarmup.shared.warm(spans) }
                 renderSize = out.renderSize
                 lastOutput = out
+                LiveTextPositions.shared.settle(project.texts)   // a title let go on the viewer is in this build now
                 buildError = nil
                 if scopesEnabled { attachScopes() }
                 if keep.isValid, keep.seconds < out.duration.seconds { await item.seek(to: keep, toleranceBefore: .zero, toleranceAfter: .zero) }
@@ -219,6 +220,9 @@ final class PlayerController: ObservableObject {
     private var redrawScheduled = false
     /// The player's own word: running or waiting to run, as opposed to the published flag the UI binds to.
     var isRunning: Bool { player.timeControlStatus != .paused }
+    /// Draws the paused frame again with the titles where they are being dragged (`LiveTextPositions`); a playing
+    /// player draws them on its next frame anyway.
+    func redrawMovedText() { redrawIfPaused() }
     private func redrawIfPaused() {
         guard !isRunning, !redrawScheduled else { return }
         redrawScheduled = true

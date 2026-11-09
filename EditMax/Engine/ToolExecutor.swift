@@ -493,7 +493,9 @@ struct ToolExecutor {
             url.appendPathExtension(preset.fileExtension)
         }
         AppArchive.shared.keepBeforeReplacing(url)   // an earlier render of that name goes to the Archive, not away
+        let silenced = await Mixer.silencedTracks(in: project)
         var r = try await ExportService.export(project, to: url, preset: preset, ignoreDiskEstimate: ignoreDiskEstimate, progress: progress)
+        r.warnings = Mixer.exportWarnings(silenced)
         if chapters, !project.markers.isEmpty {
             AppArchive.shared.keepBeforeReplacing(Chapters.sidecarURL(nextTo: url))
             r.chapters = try? Chapters.write(project, nextTo: url).path

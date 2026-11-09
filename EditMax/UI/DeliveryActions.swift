@@ -8,6 +8,60 @@ extension Notification.Name {
     static let editmaxExportTimeline = Notification.Name("io.openhorizon.editmax.exportTimeline")
 }
 
+/// Before an export: a track whose sound would be left out (muted, silent because another track is soloed, in a muted
+/// bus) is easy to miss in the timeline, so say so and offer to turn it back on. True to go on with the export.
+@MainActor
+enum SoundCheck {
+    /// Projects (by library ID) whose silent tracks the user chose not to be asked about again, with the list they saw.
+    static let quietKey = "soundCheck.quiet"
+
+    /// The silent tracks as one string: the same tracks for the same reasons give the same signature.
+    static func signature(_ list: [Mixer.Silenced]) -> String {
+        list.map { "\($0.track)|\($0.reason.rawValue)|\($0.bus ?? "")" }.sorted().joined(separator: "\n")
+    }
+    /// True when the user ticked "Don't ask again" for exactly these silent tracks in this project. A track muted or
+    /// unmuted since then changes the list, so the question comes back.
+    static func isQuiet(_ list: [Mixer.Silenced], project: UUID?, defaults: UserDefaults = .standard) -> Bool {
+        guard let project else { return false }
+        return (defaults.dictionary(forKey: quietKey)?[project.uuidString] as? String) == signature(list)
+    }
+    static func remember(_ list: [Mixer.Silenced], project: UUID, defaults: UserDefaults = .standard) {
+        var all = defaults.dictionary(forKey: quietKey) ?? [:]
+        all[project.uuidString] = signature(list)
+        defaults.set(all, forKey: quietKey)
+    }
+
+    static func confirm(_ document: EditMaxDocument) async -> Bool {
+        let list = await Mixer.silencedTracks(in: document.project)
+        let project = document.libraryProjectID
+        guard !list.isEmpty, !isQuiet(list, project: project) else { return true }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = list.count == 1 ? list[0].text : "\(list.count) tracks are silent"
+        alert.informativeText = (list.count == 1 ? "Its sound" : list.map { "• " + $0.text }.joined(separator: "\n") + "\n\nTheir sound") + " will be left out of the exported file."
+        // Return exports as the project is: a mute is often on purpose (camera sound under a music bed), so the default
+        // never changes the project. Turning the sound on is a click away; Escape cancels.
+        alert.addButton(withTitle: "Export Anyway")
+        alert.addButton(withTitle: "Turn Sound On")
+        alert.addButton(withTitle: "Cancel")
+        if project != nil {
+            alert.showsSuppressionButton = true
+            alert.suppressionButton?.title = list.count == 1 ? "Don't ask again about this track in this project" : "Don't ask again about these tracks in this project"
+        }
+        let choice = alert.runModal()
+        switch choice {
+        case .alertFirstButtonReturn:
+            if let project, alert.suppressionButton?.state == .on { remember(list, project: project) }
+            return true
+        case .alertSecondButtonReturn:
+            document.apply("Turn sound on for export", origin: .user) { p in Mixer.turnSoundOn(list, in: &p) }
+            return true
+        default:
+            return false
+        }
+    }
+}
+
 /// File > Export Chapters…, Batch Export… and Export Timeline… for one window: the panels, then the work through `ToolExecutor`.
 /// Progress and results show in the same export status banner as Export Video.
 @MainActor
@@ -49,6 +103,10 @@ struct DeliveryActions {
             alert.runModal()
             return
         }
+        Task { if await SoundCheck.confirm(document) { chooseBatchFolder() } }
+    }
+
+    private func chooseBatchFolder() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false

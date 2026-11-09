@@ -211,6 +211,10 @@ struct EditorRootView: View {
     }
 
     private func exportVideo() {
+        Task { if await SoundCheck.confirm(document) { chooseExportFile() } }
+    }
+
+    private func chooseExportFile() {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.mpeg4Movie]
         panel.nameFieldStringValue = document.displayName + ".mp4"

@@ -127,14 +127,19 @@ through the fade.
 
 The **Mixer** button in the timeline toolbar opens a pane beside the timeline:
 
-- **Tracks:** mute (**M**), solo (**S**, hear only soloed tracks), a level meter with gain reduction, a bus picker,
-  gain (−60 to +12 dB) and pan.
+- **Tracks:** mute (the speaker), solo (the headphones: hear only soloed tracks), a level meter with gain reduction, a
+  bus picker, gain (−60 to +12 dB) and pan. They are the same switches as the speaker and headphones in the track
+  header: changing one changes the other.
 - **Buses:** a bus groups tracks, like dialogue or music, so you set their level together. Each has a name, mute,
   **Comp** and **Limit**, gain, threshold and ceiling. Type a name under **New bus** and press **+** to make one, then
   pick it in each track's bus picker.
 - **Master:** gain (−24 to +24 dB), the limiter and its ceiling, **Measure** and **Normalize**.
 
 Solo silences every other track in exports too, not only in the preview. The meters run only while the mixer is open.
+
+A track that is left out says so under its name in the timeline: **Muted** or **Hidden** in orange, or **Silent** when
+another track is soloed or its bus is muted (hover it for the reason). Before an export, EditMax lists every track with
+sound that would be left out; see [export](export.md#muted-tracks).
 
 One clip's gain (−24 to +24 dB) and pan are in its **Gain & pan** card.
 

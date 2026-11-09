@@ -63,6 +63,8 @@ enum BatchExport {
         var chapters: String?
         /// Video clips auto-reframed for this template (nil when the template keeps the project's aspect or reframing was off).
         var reframed: Int?
+        /// Tracks whose sound is left out of every file (see `Mixer.silencedTracks`).
+        var warnings: [String]? = nil
     }
 
     /// "YouTube 16:9 1080p" → "youtube-16-9-1080p".
@@ -194,6 +196,9 @@ extension ToolExecutor {
         let dir = URL(fileURLWithPath: (directory as NSString).expandingTildeInPath, isDirectory: true)
         var copy = document.project
         copy.name = document.displayName
-        return try await BatchExport.export(copy, to: dir, templates: templates, preset: preset, chapters: chapters, reframe: reframe, ignoreDiskEstimate: ignoreDiskEstimate, progress: progress)
+        let warnings = Mixer.exportWarnings(await Mixer.silencedTracks(in: copy))
+        var items = try await BatchExport.export(copy, to: dir, templates: templates, preset: preset, chapters: chapters, reframe: reframe, ignoreDiskEstimate: ignoreDiskEstimate, progress: progress)
+        for i in items.indices { items[i].warnings = warnings }
+        return items
     }
 }

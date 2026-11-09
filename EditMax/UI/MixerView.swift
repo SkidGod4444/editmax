@@ -168,8 +168,10 @@ struct MixerPane: View {
             HStack(spacing: 6) {
                 Text(t.name).font(.system(size: 12, weight: .medium)).lineLimit(1).frame(width: 64, alignment: .leading)
                     .foregroundStyle(silenced || t.isMuted ? .secondary : .primary)
-                pill("M", on: t.isMuted, color: .orange, help: t.isMuted ? "Unmute" : "Mute", id: "mixer.\(t.name).mute") { Task { _ = try? await plain.setTrackMix(t.id.uuidString, gain: nil, pan: nil, solo: nil, mute: !t.isMuted, bus: nil) } }
-                pill("S", on: t.mix.solo, color: .yellow, help: t.mix.solo ? "Unsolo" : "Solo: hear only soloed tracks", id: "mixer.\(t.name).solo") { Task { _ = try? await plain.setTrackMix(t.id.uuidString, gain: nil, pan: nil, solo: !t.mix.solo, mute: nil, bus: nil) } }
+                iconPill(t.isMuted || silenced ? "speaker.slash" : "speaker.wave.2", on: t.isMuted, color: .orange,
+                         help: t.isMuted ? "Muted: left out of the sound and of exports; click to unmute" : silenced ? "Silent: another track is soloed or its bus is muted; click to mute it as well" : "Mute this track",
+                         id: "mixer.\(t.name).mute") { Task { _ = try? await plain.setTrackMix(t.id.uuidString, gain: nil, pan: nil, solo: nil, mute: !t.isMuted, bus: nil) } }
+                iconPill("headphones", on: t.mix.solo, color: .yellow, help: t.mix.solo ? "Soloed: only soloed tracks are heard; click to unsolo" : "Solo: hear only this track (and any other soloed one)", id: "mixer.\(t.name).solo") { Task { _ = try? await plain.setTrackMix(t.id.uuidString, gain: nil, pan: nil, solo: !t.mix.solo, mute: nil, bus: nil) } }
                 meter(t.id)
                 Picker("Bus", selection: Binding(get: { t.mix.bus?.uuidString ?? "none" }, set: { v in Task { _ = try? await plain.setTrackMix(t.id.uuidString, gain: nil, pan: nil, solo: nil, mute: nil, bus: v) } })) {
                     Text("Master").tag("none")
@@ -190,7 +192,7 @@ struct MixerPane: View {
         return VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Text(b.name).font(.system(size: 12, weight: .medium)).lineLimit(1).frame(width: 64, alignment: .leading)
-                pill("M", on: b.isMuted, color: .orange, help: b.isMuted ? "Unmute the bus" : "Mute the bus", id: "mixer.bus.\(b.name).mute") { _ = try? plain.setBus(b.id.uuidString, rename: nil, gain: nil, mute: !b.isMuted, compressor: nil, removeCompressor: false, limiter: nil, removeLimiter: false, remove: false) }
+                iconPill(b.isMuted ? "speaker.slash" : "speaker.wave.2", on: b.isMuted, color: .orange, help: b.isMuted ? "Muted: every track in this bus is silent; click to unmute" : "Mute the bus (every track in it)", id: "mixer.bus.\(b.name).mute") { _ = try? plain.setBus(b.id.uuidString, rename: nil, gain: nil, mute: !b.isMuted, compressor: nil, removeCompressor: false, limiter: nil, removeLimiter: false, remove: false) }
                 Text(members.isEmpty ? "no tracks" : members.joined(separator: ", ")).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
                 Spacer(minLength: 4)
                 pill("Comp", on: b.compressor != nil, color: .accentColor, width: 38, help: b.compressor == nil ? "Compressor (threshold −18 dB, 3:1) on each track of the bus" : "Turn the bus compressor off", id: "mixer.bus.\(b.name).compressor") {
@@ -304,6 +306,19 @@ struct MixerPane: View {
         Button(action: action) {
             Text(label).font(.system(size: 10, weight: .bold)).frame(width: width, height: 18)
                 .foregroundStyle(on ? (color == .accentColor ? Color.white : Color.black) : Color.secondary)
+                .background(RoundedRectangle(cornerRadius: 4, style: .continuous).fill(on ? color : Color.primary.opacity(0.08)))
+                .padding(.vertical, 1)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).focusable(false).help(help).pointer().uiFrame(id)
+    }
+
+    /// The track header's mute and solo icons (speaker, headphones) in the mixer's pill, so the same switch looks the same
+    /// in both places.
+    private func iconPill(_ symbol: String, on: Bool, color: Color, help: String, id: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol).font(.system(size: 10, weight: .semibold)).frame(width: 22, height: 18)
+                .foregroundStyle(on ? Color.black : Color.secondary)
                 .background(RoundedRectangle(cornerRadius: 4, style: .continuous).fill(on ? color : Color.primary.opacity(0.08)))
                 .padding(.vertical, 1)
                 .contentShape(Rectangle())

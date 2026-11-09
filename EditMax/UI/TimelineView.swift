@@ -184,11 +184,28 @@ struct TimelineView: View {
     }
 
     /// Name 12 pt semibold over the kind 10 pt secondary; mute/hide in a fixed trailing column so the icons line up across rows.
-    private func headerTitle(_ name: String, kind: String) -> some View {
+    /// `status` replaces the kind when the track is left out of the sound or picture ("Muted", "Hidden", "Silent: solo"),
+    /// so a muted row cannot pass for a normal one.
+    private func headerTitle(_ name: String, kind: String, status: (text: String, color: Color, why: String)? = nil) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(name).font(.system(size: 12, weight: .semibold)).lineLimit(1).truncationMode(.tail)
-            Text(kind).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+            if let status {
+                Text(status.text).font(.system(size: 10, weight: .semibold)).foregroundStyle(status.color).lineLimit(1).help(status.why)
+            } else {
+                Text(kind).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+            }
         }
+    }
+
+    /// What the header says instead of the track's kind when it is not fully in the program; one short word, since the
+    /// header is narrow, and the reason in its tooltip.
+    static func headerStatus(_ track: Track, in project: Project) -> (text: String, color: Color, why: String)? {
+        if track.isHidden { return ("Hidden", .orange, "Hidden: its picture and sound are left out of playback and exports") }
+        if track.isMuted { return ("Muted", .orange, "Muted: its sound is left out of playback and exports") }
+        let soloing = project.tracks.contains { $0.mix.solo && !$0.isHidden }
+        if soloing && !track.mix.solo { return ("Silent", .secondary, "Silent because another track is soloed") }
+        if let bus = project.mix.bus(track.mix.bus), bus.isMuted { return ("Silent", .secondary, "Silent because its bus \(bus.name) is muted") }
+        return nil
     }
 
     /// `on` draws the icon in `tint` (orange for hide and mute, yellow for solo, as in the mixer); `faded` greys an icon
@@ -216,7 +233,7 @@ struct TimelineView: View {
                             .onChange(of: renameFocused) { _, now in if !now, renaming == track.id { commitRename(track) } }
                             .uiFrame("header.\(track.name).name")
                     } else {
-                        headerTitle(track.name, kind: track.kind == .video ? "Video" : "Audio")
+                        headerTitle(track.name, kind: track.kind == .video ? "Video" : "Audio", status: Self.headerStatus(track, in: document.project))
                             .onTapGesture(count: 2) { startRename(track) }
                             .uiTap("header.\(track.name).title", count: 2) { startRename(track) }
                     }
@@ -240,7 +257,7 @@ struct TimelineView: View {
                 .padding(.leading, 8).padding(.trailing, 4).frame(height: rowHeight)
                 .contentShape(Rectangle())
                 .onHover { hoveredHeader = $0 ? track.id : (hoveredHeader == track.id ? nil : hoveredHeader) }
-                .background(trackDropTarget == track.id ? Color.accentColor.opacity(0.15) : hoveredHeader == track.id ? Color.primary.opacity(0.06) : Color.clear)
+                .background(trackDropTarget == track.id ? Color.accentColor.opacity(0.15) : hoveredHeader == track.id ? Color.primary.opacity(0.06) : track.isMuted || track.isHidden ? Color.orange.opacity(0.10) : Color.clear)
                 .overlay(alignment: .leading) { if isActiveRow(track.id) { Rectangle().fill(Color.accentColor).frame(width: 2) } }
                 .overlay(alignment: .top) { if trackDropTarget == track.id { Rectangle().fill(Color.accentColor).frame(height: 2) } }
                 // Drag a header onto another to reorder: the top row covers the rows below it in the picture.

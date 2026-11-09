@@ -33,7 +33,11 @@ enum ExportService {
     static func fitsH264(width: Int, height: Int) -> Bool { max(width, height) <= 3840 && min(width, height) <= 2160 }
 
     /// chapters: the sidecar written beside the file, when asked for; estimatedBytes: what the disk check counted on.
-    struct Result: Codable { var path: String; var duration: Double; var bytes: Int; var chapters: String? = nil; var estimatedBytes: Int64? = nil }
+    struct Result: Codable {
+        var path: String; var duration: Double; var bytes: Int; var chapters: String? = nil; var estimatedBytes: Int64? = nil
+        /// Tracks whose sound is left out (muted, silenced by a solo, in a muted bus), so the agent can tell the user.
+        var warnings: [String]? = nil
+    }
 
     // MARK: Disk
 

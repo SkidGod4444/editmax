@@ -18,6 +18,14 @@ HDR (HLG or PQ) exports HDR; see [effects](effects.md).
 **Batch Export…** (⇧⌘E) renders one file per format you pick, such as landscape for YouTube and vertical for Shorts. Landscape
 clips are reframed for vertical and square formats automatically.
 
+## Muted tracks
+
+If a track with sound is muted, silent because another track is soloed, or in a muted bus, EditMax says so before the
+export starts. **Export Anyway** (Return) exports it as it is, **Turn Sound On** unmutes those tracks (one undoable
+step), **Cancel** (Escape) stops. Tick **Don't ask again** when the mute is on purpose, such as camera sound under music:
+that project stops asking until a different track goes silent. Tracks of silent clips (screen recordings without
+sound) and hidden tracks don't ask.
+
 ## Disk space
 
 Before an export starts, EditMax estimates the file size. If the disk is too small, it says so and offers
@@ -54,8 +62,8 @@ Quitting while an export runs asks first:
 
 | Tool | What it does |
 |---|---|
-| `export_video` | Renders one file. `ignore_disk_estimate` is the agent's Export Anyway. |
-| `export_batch` | Renders several formats at once. |
+| `export_video` | Renders one file. `ignore_disk_estimate` is the agent's Export Anyway. Its result lists, under `warnings`, each track whose sound was left out. |
+| `export_batch` | Renders several formats at once, with the same `warnings` on each file. |
 | `export_timeline` | Writes FCPXML or EDL. |
 | `export_chapters` | Writes the YouTube chapter list. |
 

@@ -336,3 +336,67 @@ final class MeterBank: @unchecked Sendable {
     }
     func existing(_ track: UUID) -> MeterSlot? { lock.lock(); defer { lock.unlock() }; return slots[track] }
 }
+
+// MARK: - Silenced tracks (export warning)
+
+extension Mixer {
+    /// A track whose clips' sound is left out of the mix, and so out of every export, and why.
+    struct Silenced: Codable, Equatable {
+        enum Reason: String, Codable { case muted, solo, bus }
+        var track: String
+        var reason: Reason
+        var bus: String? = nil
+        var text: String {
+            switch reason {
+            case .muted: return "\(track) is muted"
+            case .solo: return "\(track) is silent because another track is soloed"
+            case .bus: return "\(track) is silent because its bus \(bus ?? "") is muted"
+            }
+        }
+    }
+
+    /// Tracks with clips that carry sound but are not heard: muted, silenced by a solo on another track, or in a muted
+    /// bus. Hidden tracks are left out (hiding takes the picture as well, which is plain to see). A video track counts
+    /// only when one of its files has sound, so a muted row of silent screen recordings raises nothing.
+    static func silencedTracks(in project: Project) async -> [Silenced] {
+        let soloing = project.tracks.contains { $0.mix.solo && !$0.isHidden }
+        var out: [Silenced] = []
+        for t in project.tracks where !t.isHidden && !t.clips.isEmpty {
+            let reason: Silenced.Reason
+            if t.isMuted { reason = .muted }
+            else if soloing && !t.mix.solo { reason = .solo }
+            else if project.mix.bus(t.mix.bus)?.isMuted == true { reason = .bus }
+            else { continue }
+            if t.kind == .video, !(await hasSound(t, in: project)) { continue }
+            out.append(Silenced(track: t.name, reason: reason, bus: reason == .bus ? project.mix.bus(t.mix.bus)?.name : nil))
+        }
+        return out
+    }
+
+    private static func hasSound(_ t: Track, in project: Project) async -> Bool {
+        for c in t.clips {
+            guard let a = project.asset(c.assetID) else { continue }
+            if a.kind == .sequence || c.multicam != nil { return true }
+            guard a.kind == .video, FileManager.default.fileExists(atPath: a.path) else { continue }
+            if let tracks = try? await AVURLAsset(url: a.url).loadTracks(withMediaType: .audio), !tracks.isEmpty { return true }
+        }
+        return false
+    }
+
+    /// Hears every listed track again: unmutes the muted ones, clears every solo when one silenced a track, and unmutes
+    /// the buses that silenced one.
+    static func turnSoundOn(_ list: [Silenced], in p: inout Project) {
+        let names = Set(list.filter { $0.reason == .muted }.map(\.track))
+        for i in p.tracks.indices where names.contains(p.tracks[i].name) { p.tracks[i].isMuted = false }
+        if list.contains(where: { $0.reason == .solo }) { for i in p.tracks.indices { p.tracks[i].mix.solo = false } }
+        let buses = Set(list.compactMap { $0.reason == .bus ? $0.bus : nil })
+        for i in p.mix.buses.indices where buses.contains(p.mix.buses[i].name) { p.mix.buses[i].isMuted = false }
+    }
+
+    /// What an export result tells an agent when sound is left out; nil when everything with sound is heard.
+    static func exportWarnings(_ list: [Silenced]) -> [String]? {
+        guard !list.isEmpty else { return nil }
+        return list.map { $0.text + ": its sound is not in this file" }
+            + ["Tell the user. To include it: set_track_mix with mute false (or solo false on the soloed track, or set_bus mute false), then export again."]
+    }
+}

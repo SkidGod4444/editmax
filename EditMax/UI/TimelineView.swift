@@ -24,6 +24,7 @@ struct TimelineView: View {
     @FocusState private var renameFocused: Bool
     /// How far the lanes are scrolled down: the ruler and the corner above the headers are held at the top by it.
     @State private var vertical = PinnedOffset()
+    @ObservedObject private var keys = ShortcutStore.shared   // the play button's tooltip names the keys in use
     private var actions: EditorActions { EditorActions(document: document, state: state, player: player) }
 
     private let headerWidth: CGFloat = 150
@@ -66,6 +67,7 @@ struct TimelineView: View {
             }
             .background(Color(nsColor: .underPageBackgroundColor))
         }
+        .takesKeyboardOnClick()
     }
 
     /// Above the headers, level with the ruler: opaque, so header rows scrolled up pass under it.
@@ -93,7 +95,7 @@ struct TimelineView: View {
             // Transport: one compact group on a faint plate.
             HStack(spacing: 0) {
                 toolButton("backward.frame", help: "Previous frame", id: "toolbar.stepBack") { player.step(frames: -1, fps: fps) }
-                PlayerReader(player: player) { p in toolButton(p.isPlaying ? "pause.fill" : "play.fill", help: "Play or pause (space)", id: "toolbar.play", width: 28) { p.togglePlay() } }
+                PlayerReader(player: player) { p in toolButton(p.isPlaying ? "pause.fill" : "play.fill", help: "Play or pause (\(keys.display(.playPause))). Play the selected clips: \(keys.display(.playSelection))", id: "toolbar.play", width: 28) { p.togglePlay() } }
                 toolButton("forward.frame", help: "Next frame", id: "toolbar.stepForward") { player.step(frames: 1, fps: fps) }
             }
             .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -523,6 +525,7 @@ struct TimelineView: View {
                 .equatable()
                 .onAppear { if let asset { waveforms.request(asset); thumbnails.request(asset, using: clip.sourceIn...max(clip.sourceIn, clip.sourceOut)) } }
                 .contextMenu {
+            Button("Play Clip", systemImage: "play") { select(clip.id, keepGroup: false); player.play(from: clip.start, to: clip.end) }
             PlayerReader(player: player) { p in
                 Button("Split at playhead", systemImage: "scissors") { select(clip.id, keepGroup: false); try? x.splitClip(clip.id.uuidString, at: p.currentTime) }
                     .disabled(p.currentTime <= clip.start + 0.01 || p.currentTime >= clip.end - 0.01)

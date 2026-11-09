@@ -108,7 +108,7 @@ struct KeyCombo: Codable, Hashable {
 /// Everything a key can do in EditMax, with its default keys. New Project, Undo/Redo and the standard app keys (⌘Q,
 /// ⌘W, ⌘,…) stay fixed: they are macOS's, and listed as such.
 enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
-    case playPause, shuttleBack, pause, shuttleForward, stepBack, stepForward, stepBack10, stepForward10, goToStart, goToEnd, prevKeyframe, nextKeyframe
+    case playPause, playSelection, shuttleBack, pause, shuttleForward, stepBack, stepForward, stepBack10, stepForward10, goToStart, goToEnd, prevKeyframe, nextKeyframe
     case markIn, markOut, clearInOut, deleteInOut, addMarker
     case split, deleteSelection, transition, slowMotion, normalSpeed, fast, reframe, closeGaps
     case toolSelect, toolRoll, toolSlip, toolSlide, insertFromSource, overwriteFromSource, matchFrame
@@ -122,7 +122,7 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
 
     var group: Group {
         switch self {
-        case .playPause, .shuttleBack, .pause, .shuttleForward, .stepBack, .stepForward, .stepBack10, .stepForward10, .goToStart, .goToEnd, .prevKeyframe, .nextKeyframe: .playback
+        case .playPause, .playSelection, .shuttleBack, .pause, .shuttleForward, .stepBack, .stepForward, .stepBack10, .stepForward10, .goToStart, .goToEnd, .prevKeyframe, .nextKeyframe: .playback
         case .markIn, .markOut, .clearInOut, .deleteInOut, .addMarker: .marking
         case .split, .deleteSelection, .transition, .slowMotion, .normalSpeed, .fast, .reframe, .closeGaps,
              .toolSelect, .toolRoll, .toolSlip, .toolSlide, .insertFromSource, .overwriteFromSource, .matchFrame: .editing
@@ -135,6 +135,7 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
     var title: String {
         switch self {
         case .playPause: "Play or pause"
+        case .playSelection: "Play the selected clips (or In to Out)"
         case .shuttleBack: "Play backward (again: faster)"
         case .pause: "Pause"
         case .shuttleForward: "Play forward (again: faster)"
@@ -192,6 +193,7 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
         typealias K = KeyCombo
         switch self {
         case .playPause: return [K("space")]
+        case .playSelection: return [K("/")]
         case .shuttleBack: return [K("j")]
         case .pause: return [K("k")]
         case .shuttleForward: return [K("l")]

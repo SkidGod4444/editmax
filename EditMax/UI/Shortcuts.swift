@@ -13,6 +13,7 @@ struct KeyMonitor: NSViewRepresentable {
 final class KeyMonitorView: NSView {
     var handler: ((NSEvent) -> Bool)?
     private var monitor: Any?
+    private var clickMonitor: Any?
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         guard monitor == nil, window != nil else { return }
@@ -20,9 +21,61 @@ final class KeyMonitorView: NSView {
             guard let self, let w = self.window, e.window == w, !(w.firstResponder is NSTextView) else { return e }
             return self.handler?(e) == true ? nil : e
         }
+        // A click on the timeline or the player gives the keyboard back to the editor (see `KeyboardAreaView`).
+        clickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] e in
+            if let w = self?.window, e.window == w { EditorKeyboard.takeBack(at: e.locationInWindow, in: w) }
+            return e
+        }
         UIRegistry.shared.keyHandler = { [weak self] e in self?.handler?(e) ?? false }   // the MCP driver's direct path
     }
-    deinit { if let monitor { NSEvent.removeMonitor(monitor) } }
+    deinit {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        if let clickMonitor { NSEvent.removeMonitor(clickMonitor) }
+    }
+}
+
+/// Marks a part of the editor (the timeline, the player) where a click gives the keyboard back to the editor. While a
+/// text field has the keyboard, every editor key is left to it (`KeyMonitorView`), and in AppKit a click on a plain view
+/// does not take the keyboard away: after typing to the agent, Space went on typing spaces into the chat box however
+/// often the timeline was clicked, so nothing played or paused. A click in one of these areas ends the typing; the text
+/// stays in its field.
+final class KeyboardAreaView: NSView {
+    static let all = NSHashTable<KeyboardAreaView>.weakObjects()
+    /// It marks a place; it never takes a click.
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
+private struct KeyboardArea: NSViewRepresentable {
+    func makeNSView(context: Context) -> KeyboardAreaView { let v = KeyboardAreaView(); KeyboardAreaView.all.add(v); return v }
+    func updateNSView(_ v: KeyboardAreaView, context: Context) {}
+}
+
+extension View {
+    /// A click anywhere in this view ends typing in a text field, so the editor's keys work again (`KeyboardAreaView`).
+    func takesKeyboardOnClick() -> some View { background(KeyboardArea()) }
+}
+
+@MainActor
+enum EditorKeyboard {
+    /// True when a click at `point` (window coordinates) should end typing: a text field has the keyboard, the click lands
+    /// in a keyboard area of that window, and not on a text field (typing a track's new name goes on).
+    static func shouldTakeBack(at point: NSPoint, in w: NSWindow) -> Bool {
+        guard w.firstResponder is NSTextView else { return false }
+        var v = w.contentView?.hitTest(point)
+        while let view = v {
+            if view is NSTextView || view is NSTextField { return false }
+            v = view.superview
+        }
+        return KeyboardAreaView.all.allObjects.contains { a in
+            a.window === w && !a.isHiddenOrHasHiddenAncestor && a.convert(a.bounds, to: nil).contains(point)
+        }
+    }
+
+    static func takeBack(at point: NSPoint, in w: NSWindow) {
+        guard shouldTakeBack(at: point, in: w) else { return }
+        w.makeFirstResponder(nil)
+        DebugLog.event("keyboard-to-editor", [:])
+    }
 }
 
 /// The editing commands behind the toolbar buttons, the keys and the menus, in one place.
@@ -39,6 +92,23 @@ struct EditorActions {
         let ts = document.project.allClips.filter { state.selectedClipIDs.contains($0.id) }.flatMap { c in c.keyframeTimes.map { c.start + $0 } }.sorted()
         let t = forward ? ts.first { $0 > player.currentTime + 0.001 } : ts.last { $0 < player.currentTime - 0.001 }
         if let t { player.pause(); player.seek(to: t) }
+    }
+
+    /// What Play Selection plays: the selected clips (or title) from the first start to the last end, else the In to Out
+    /// range; nil when there is neither.
+    var selectionRange: ClosedRange<Double>? {
+        let clips = document.project.allClips.filter { state.selectedClipIDs.contains($0.id) }
+        if let s = clips.map(\.start).min(), let e = clips.map(\.end).max(), e > s { return s...e }
+        if let id = state.selectedTextID, let t = document.project.texts.first(where: { $0.id == id }), t.end > t.start { return t.start...t.end }
+        if let i = state.inPoint, let o = state.outPoint, o > i { return i...o }
+        return nil
+    }
+
+    /// Plays the selection once and stops at its end. While anything plays it pauses, as Space does; with nothing selected
+    /// and no In to Out range it plays from the playhead.
+    func playSelection() {
+        if player.isPlaying { player.pause(); return }
+        if let r = selectionRange { player.play(from: r.lowerBound, to: r.upperBound) } else { player.play() }
     }
 
     func splitAtPlayhead() { for id in state.selectedClipIDs { try? x.splitClip(id.uuidString, at: player.currentTime) } }
@@ -91,6 +161,7 @@ struct EditorActions {
         let post = { (n: Notification.Name) in NotificationCenter.default.post(name: n, object: nil) }
         switch a {
         case .playPause: player.togglePlay()
+        case .playSelection: playSelection()
         case .shuttleBack: player.shuttle(backward: true)
         case .pause: player.pause()
         case .shuttleForward: player.shuttle(backward: false)

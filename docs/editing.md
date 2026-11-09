@@ -171,9 +171,13 @@ name ("name 2.mov").
 
 ## Keyboard
 
+While you type in a text field (the chat box, a track name), the keys below type into it. Click the timeline or the
+player to use them again.
+
 | Keys | Action |
 |---|---|
 | Space, J / K / L | Play and pause, shuttle (repeat J or L to double, up to 8×) |
+| / | Play the selected clips once and stop (or In to Out when nothing is selected); also **Play Clip** in a clip's right-click menu |
 | ← / → (⇧ for 10), Home / End | Step frames, go to start or end |
 | S, ⌫ | Split at the playhead, delete the selection |
 | M, I / O / X | Marker, in and out points, clear the range |

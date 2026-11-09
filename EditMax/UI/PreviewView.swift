@@ -313,6 +313,7 @@ struct ProgramMonitor: View {
     /// The picture and what is drawn on it: the empty state and the before/after labels and divider.
     private var picture: some View {
         PreviewView(controller: player, canFullScreen: !noClips, fps: document.project.settings.fps)
+            .takesKeyboardOnClick()
             .overlay { if let still { Image(decorative: still, scale: 1).resizable().aspectRatio(contentMode: .fit).allowsHitTesting(false) } }
             .overlay {
                 if noClips {

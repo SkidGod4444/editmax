@@ -173,10 +173,30 @@ final class PlayerController: ObservableObject {
 
     func togglePlay() { isPlaying ? pause() : play() }
     func play() {
+        dropStop()
         if let item = player.currentItem, item.currentTime() >= item.duration - CMTime(value: 1, timescale: 30) { seek(to: 0) }
         player.play(); isPlaying = true; rate = 1
     }
-    func pause() { player.pause(); isPlaying = false; rate = 0 }
+    func pause() { dropStop(); player.pause(); isPlaying = false; rate = 0 }
+
+    /// Where Play Selection stops (nil when playing on to the end). Any other play or a pause drops it.
+    @Published private(set) var stopTime: Double?
+    private var stopObserver: Any?
+    /// Plays from `start` and pauses at `end` (Play Selection: one clip, or In to Out).
+    func play(from start: Double, to end: Double) {
+        guard end > start else { return }
+        dropStop()
+        seek(to: start)
+        stopTime = end
+        stopObserver = player.addBoundaryTimeObserver(forTimes: [NSValue(time: CMTime(seconds: end, preferredTimescale: 600))], queue: .main) { [weak self] in
+            MainActor.assumeIsolated { if let self, self.stopTime == end { self.pause() } }
+        }
+        player.play(); isPlaying = true; rate = 1
+    }
+    private func dropStop() {
+        if let stopObserver { player.removeTimeObserver(stopObserver) }
+        stopObserver = nil; stopTime = nil
+    }
     /// J/L shuttle: first press plays at 1× in that direction, each further press doubles up to 8×.
     func shuttle(backward: Bool) {
         let dir: Float = backward ? -1 : 1

@@ -55,13 +55,13 @@ targets:
       properties:
         CFBundleDisplayName: EditMax
         CFBundleIconFile: AppIcon
-        CFBundleShortVersionString: "0.2.1"
+        CFBundleShortVersionString: "0.2.2"
         NSHumanReadableCopyright: "© 2026 Saidev Dhal"
         # Asked once by the macOS 15 caption path (SFSpeechRecognizer); without it that request ends the app.
         NSSpeechRecognitionUsageDescription: "EditMax turns the speech in your footage into captions, and what you say to the agent into text, on this Mac."
         # The chat's microphone (Dictation.swift). Without it the first microphone request ends the app.
         NSMicrophoneUsageDescription: "EditMax listens when you press the microphone in the chat, so you can speak to the agent instead of typing."
-        CFBundleVersion: "157"
+        CFBundleVersion: "162"
         LSMinimumSystemVersion: "15.0"
         NSHighResolutionCapable: true
         # Updates (AppUpdater): the appcast every release carries, its EdDSA key, daily background checks that download

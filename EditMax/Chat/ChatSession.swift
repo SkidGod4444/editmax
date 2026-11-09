@@ -159,8 +159,11 @@ final class ChatSession: ObservableObject {
 
     private var agentsTask: Task<Void, Never>?
 
-    /// Asks codemax which agents are installed; picks the first installed one when the saved choice is missing.
-    func refreshAgents() {
+    /// Asks codemax which agents are installed; picks the first installed one when the saved choice is missing. While
+    /// codemax sets up an installed agent's engine (0.1.24+ downloads Antigravity's ACP server by itself), it asks
+    /// again every 10 s, for up to 5 minutes, so the agent turns ready without the refresh button.
+    func refreshAgents(recheck: Int = 0) {
+        if recheck == 0 { agentsTask?.cancel() }   // the refresh button: one checking loop, not two
         agentsTask = Task { [weak self] in
             guard let self else { return }
             do {
@@ -168,10 +171,19 @@ final class ChatSession: ObservableObject {
                 self.agents = try await self.runner.agents()
                 if self.agentStatus.isEmpty { self.agentStatus = "Agent runtime \(self.runner.version ?? "")" }
                 if !self.agentReady, let first = self.agents.first(where: { $0.installed }) { self.agent = first.id }
+                if Self.settingUp(self.agents), recheck < 30 {
+                    try? await Task.sleep(for: .seconds(10))
+                    if !Task.isCancelled { self.refreshAgents(recheck: recheck + 1) }
+                }
             } catch {
                 self.items.append(Item(kind: .error, text: error.localizedDescription))
             }
         }
+    }
+
+    /// An agent is on this Mac and codemax is fetching what it needs to drive it.
+    nonisolated static func settingUp(_ agents: [CodemaxRunner.AgentInfo]) -> Bool {
+        agents.contains { !$0.installed && ($0.problem?.hasPrefix("installing") ?? false) }
     }
 
     /// Asks the sidecar what each provider needs and what this Mac has (Claude Code, keys from the keychain or environment).

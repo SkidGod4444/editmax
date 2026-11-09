@@ -135,17 +135,31 @@ struct ChatView: View {
         return parts.count > 1 ? parts.dropFirst().joined(separator: " · ") : ""
     }
 
+    /// The line for an agent EditMax cannot drive. One that codemax found (it has a version) is on this Mac: it is being
+    /// set up, or something else is wrong with it, never "not found".
+    nonisolated static func agentProblemText(_ a: CodemaxRunner.AgentInfo) -> String {
+        guard let v = a.version else { return "\(a.name) was not found on this Mac" + (a.problem.map { " (\($0))" } ?? "") + "." }
+        if ChatSession.settingUp([a]) { return "\(a.name) \(v) is on this Mac. The agent runtime is \(a.problem ?? "setting it up")." }
+        return "\(a.name) \(v) is on this Mac, but EditMax cannot drive it yet" + (a.problem.map { ": \($0)" } ?? "") + "."
+    }
+
     /// Shown only when the agent backend cannot run: codemax missing, or the chosen agent is not installed.
     @ViewBuilder private var agentProblem: some View {
         if CodemaxRunner.bundledBinary == nil {
             Label("The agent runtime is missing from this build of EditMax.", systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.red)
         } else if let a = chat.selectedAgent, !a.installed {
             VStack(alignment: .leading, spacing: 4) {
-                Label("\(a.name) was not found on this Mac" + (a.problem.map { " (\($0))" } ?? "") + ".", systemImage: "exclamationmark.triangle")
+                Label(Self.agentProblemText(a), systemImage: ChatSession.settingUp([a]) ? "arrow.down.circle" : "exclamationmark.triangle")
                     .font(.caption).foregroundStyle(.secondary)
-                Text("Install it and press the refresh button, or pick another agent.").font(.caption).foregroundStyle(.secondary)
-                if let hint = ChatSession.installHints[a.id] {
-                    Text(hint).font(.system(size: 10, design: .monospaced)).textSelection(.enabled)
+                if ChatSession.settingUp([a]) {
+                    Text("EditMax checks again by itself.").font(.caption).foregroundStyle(.secondary)
+                } else if a.version != nil {
+                    Text("Press the refresh button, or pick another agent.").font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Text("Install it and press the refresh button, or pick another agent.").font(.caption).foregroundStyle(.secondary)
+                    if let hint = ChatSession.installHints[a.id] {
+                        Text(hint).font(.system(size: 10, design: .monospaced)).textSelection(.enabled)
+                    }
                 }
             }
         }

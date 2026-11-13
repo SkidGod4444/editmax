@@ -123,9 +123,61 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         return true
     }
+    /// A click on the Dock icon always ends with a window in front of the person. AppKit's `hasVisibleWindows` cannot
+    /// decide that: it is true while the notch drawer's panel is up (which is always), so with Home closed, a project
+    /// minimized, or the windows on another Space, the click used to do nothing at all. The app's own windows are
+    /// counted here instead (`reopenPlan`) and the chosen one is brought to this Space (`bringToThisSpace`).
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if !flag { HomeWindow.shared.show() }
+        if Self.isTesting { return false }
+        // A hidden app (⌘H) is shown again by the click itself; its windows only count once they are back.
+        MainActor.assumeIsolated {
+            if sender.isHidden { sender.unhide(nil); DispatchQueue.main.async { Self.reopen(systemSaysVisible: flag) } }
+            else { Self.reopen(systemSaysVisible: flag) }
+        }
         return false
+    }
+
+    /// What a Dock click does, from the windows a person would call EditMax's windows.
+    enum ReopenPlan: Equatable {
+        /// One is on screen: it comes to the front (and to this Space).
+        case front
+        /// None on screen, one in the Dock: it comes back out.
+        case unminimize
+        /// None at all: Home.
+        case home
+    }
+    nonisolated static func reopenPlan(visible: Int, minimized: Int) -> ReopenPlan { visible > 0 ? .front : minimized > 0 ? .unminimize : .home }
+
+    /// A project, Home, Settings: a titled window that is not see-through. Not a panel (the
+    /// notch drawer, the update and crash-report cards), the splash, a tour overlay, or the empty untitled project
+    /// kept transparent during launch.
+    @MainActor static func isAppWindow(_ w: NSWindow) -> Bool {
+        !(w is NSPanel) && w.styleMask.contains(.titled) && w.alphaValue > 0.01 && w.parent == nil   // not canBecomeMain: false while a window is out
+    }
+
+    /// The window comes to the person, on the Space they are on. macOS does not switch Spaces for the click: the notch
+    /// drawer's panel is on every Space, so to the system EditMax already has a window here. With Home on the desktop
+    /// and the person in a full-screen app, the click showed nothing. A window that is itself full screen keeps its
+    /// own Space and is only ordered front (the system goes to it); a project window gets its Space and full-screen
+    /// behaviour back once it has moved, so it can still go full screen.
+    @MainActor static func bringToThisSpace(_ w: NSWindow) {
+        if w.isMiniaturized { w.deminiaturize(nil) }
+        if w.isOnActiveSpace || w.styleMask.contains(.fullScreen) { BringForward.app(); w.makeKeyAndOrderFront(nil); return }
+        let before = w.collectionBehavior
+        BringForward.show(w)
+        if w.windowController?.document != nil { DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { w.collectionBehavior = before } }
+    }
+
+    @MainActor static func reopen(systemSaysVisible: Bool, windows: [NSWindow] = NSApp.windows) {
+        let own = windows.filter(isAppWindow)
+        let shown = own.filter { $0.isVisible && !$0.isMiniaturized }, minimized = own.filter(\.isMiniaturized)
+        let plan = reopenPlan(visible: shown.count, minimized: minimized.count)
+        let here = shown.filter(\.isOnActiveSpace)   // one already on this Space before one that has to be fetched
+        let chosen: NSWindow? = plan == .front ? ((here.isEmpty ? shown : here).first { $0.isMainWindow || $0.isKeyWindow } ?? here.first ?? shown[0])
+            : plan == .unminimize ? (minimized.first { $0.windowController?.document != nil } ?? minimized[0]) : nil   // a project before Home
+        DebugLog.event("dock-reopen", ["plan": "\(plan)", "systemSaysVisible": systemSaysVisible, "windows": windows.count, "own": own.count,
+                                       "window": chosen.map { "\(type(of: $0)) \($0.title)" } ?? "Home", "onThisSpace": chosen?.isOnActiveSpace ?? false])
+        if let chosen { bringToThisSpace(chosen) } else { HomeWindow.shared.show(); HomeWindow.shared.bringForward() }
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
     /// Quitting while an export renders asks first (QuitGuard); otherwise quits as before.

@@ -203,7 +203,10 @@ final class IsolatedAudio: ObservableObject {
         guard asset.kind != .image else { throw EditError.invalid("'\(asset.name)' is an image; it has no sound") }
         guard asset.sequenceID == nil else { throw EditError.invalid(Self.sequenceMessage) }
         let k = Self.key(for: asset, amount: amount)
-        while let t = inFlight[k] { _ = try? await t.value }
+        // The render's owner clears `inFlight[k]` when it resumes after the task. Waiting on a task that has already
+        // finished does not suspend, so without the yield this loop spun on the main actor, the owner never resumed,
+        // and the app froze (a clip's isolation set while the preview's own render of it was ending).
+        while let t = inFlight[k] { _ = try? await t.value; await Task.yield() }
         if Self.readyURL(for: asset, amount: amount) != nil { return }
         let missing = (wanted ?? Set(0..<Self.blockCount(asset.duration)))
             .filter { !FileManager.default.fileExists(atPath: Self.blockURL(for: asset, amount: amount, block: $0).path) }.sorted()

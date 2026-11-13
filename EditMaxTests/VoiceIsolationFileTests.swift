@@ -224,4 +224,23 @@ final class VoiceIsolationFileTests: XCTestCase {
         XCTAssertEqual(reader.status, .completed)
         XCTAssertEqual(frames, n)
     }
+
+    /// Two callers want the same render (a clip's setting, and the preview's own rebuild a moment later). The second
+    /// waits for the first; it used to wait in a loop that never let the first finish, and the app froze.
+    @MainActor func testTwoCallersOfOneRenderBothReturn() async throws {
+        guard IsolatedAudio.isAvailable else { throw XCTSkip(IsolatedAudio.unavailableMessage) }
+        let n = 2 * 48_000
+        let a = Array(S.voice(seconds: 3, level: 0.2).prefix(n))
+        let src = try S.writeWAV([a, a], to: S.scratch.appendingPathComponent("iso-two-\(UUID().uuidString).wav"))
+        let asset = Asset(name: src.lastPathComponent, path: src.path, kind: .audio, duration: 2)
+        let block = IsolatedAudio.blockURL(for: asset, amount: 0.6, block: 0)
+        defer { try? FileManager.default.removeItem(at: block); try? FileManager.default.removeItem(at: src) }
+        let iso = IsolatedAudio.shared
+        async let first: Void = iso.ensure(asset, amount: 0.6)
+        async let second: Void = iso.ensure(asset, amount: 0.6)
+        async let third: Void = iso.ensure(asset, amount: 0.6)
+        _ = try await (first, second, third)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: block.path))
+        XCTAssertFalse(iso.isRendering(asset, amount: 0.6))
+    }
 }

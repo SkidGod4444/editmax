@@ -15,7 +15,7 @@
   <a href="https://github.com/SkidGod4444/editmax/actions/workflows/test.yml"><img src="https://github.com/SkidGod4444/editmax/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-PolyForm%20Noncommercial-orange" alt="License: PolyForm Noncommercial 1.0.0"></a>
   <img src="https://img.shields.io/badge/macOS-15%2B-black" alt="macOS 15+">
-  <img src="https://img.shields.io/badge/MCP-115%20tools-blue" alt="115 MCP tools">
+  <img src="https://img.shields.io/badge/MCP-118%20tools-blue" alt="118 MCP tools">
 </p>
 
 <p align="center">
@@ -82,7 +82,8 @@ view. More in [docs/working-with-agents.md](docs/working-with-agents.md).
 | **[Speech](docs/editing.md)** | On-device transcription, captions in six styles, remove silences and filler words, cut by editing the transcript |
 | **[Assets](docs/assets.md) and [fonts](docs/fonts.md)** | Everything you imported in one place, a drop zone in the notch, all of Google Fonts |
 | **[Export](docs/export.md)** | MP4, 10-bit HEVC and ProRes, SDR or HDR, batch export for every social format, YouTube chapters, FCPXML and EDL for Resolve and Final Cut |
-| **[Agents](docs/working-with-agents.md)** | 115 MCP tools for all of the above plus the window itself, and an in-app chat |
+| **[Agents](docs/working-with-agents.md)** | 118 MCP tools for all of the above plus the window itself, and an in-app chat |
+| **[Plugins](docs/plugins.md)** | Skills and tools you add to the agent, from the hub or your own folder: Shorts from long talks, podcast clean-up, grading playbooks |
 
 **New in 0.2.0:** color wheels, curves and masks, effects and HDR, a mixer, pro trims, Assets and the notch, Google
 Fonts, Follow the agent, the welcome demo, automatic updates and smoother long projects. See the

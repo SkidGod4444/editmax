@@ -1,14 +1,15 @@
 import SwiftUI
 import AppKit
 
-/// The Settings window (⌘,): four tabs, each with one job, in standard grouped forms (no glass). Every value here is a
+/// The Settings window (⌘,): six tabs, each with one job, in standard grouped forms (no glass). Every value here is a
 /// UserDefaults key or a keychain item that another part of the app reads; nothing lives only in this window.
 /// - General: how EditMax looks and starts, the menu bar icon, EditMax updates.
 /// - Files: the projects folder, adding files (notch drawer, Downloads), deleted files (the Archive).
 /// - Assistant: who edits with you (an agent on this Mac, or a provider and its API keys), Follow the agent.
+/// - Plugins: skills and tools added to the agent, from this Mac or the hub (PluginsSettings.swift).
 /// - Advanced: the MCP server, the agent runtime, logs.
 struct SettingsView: View {
-    enum Pane: String, Hashable, CaseIterable { case general, files, assistant, shortcuts, advanced }
+    enum Pane: String, Hashable, CaseIterable { case general, files, assistant, plugins, shortcuts, advanced }
     static let paneKey = "settingsPane"
     /// The tab last shown, and the one `show(_:using:)` asks for.
     @AppStorage(Self.paneKey) private var pane: Pane = .general
@@ -26,6 +27,7 @@ struct SettingsView: View {
             Tab(value: Pane.general) { GeneralSettings() } label: { tab("General", "gearshape") }
             Tab(value: Pane.files) { FilesSettings() } label: { tab("Files", "folder") }
             Tab(value: Pane.assistant) { AssistantSettings() } label: { tab("Assistant", "sparkles") }
+            Tab(value: Pane.plugins) { PluginsSettings() } label: { tab("Plugins", "puzzlepiece.extension") }
             Tab(value: Pane.shortcuts) { ShortcutsSettings() } label: { tab("Shortcuts", "keyboard") }
             Tab(value: Pane.advanced) { AdvancedSettings() } label: { tab("Advanced", "wrench.and.screwdriver") }
         }

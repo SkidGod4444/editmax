@@ -32,7 +32,7 @@ export type EngineEvent =
 
 export interface McpServer {
   name: string;
-  transport: { type: "http" | "sse"; url: string; headers?: Record<string, string> } | { type: "stdio"; command: string; args?: string[]; env?: Record<string, string> };
+  transport: { type: "http" | "sse"; url: string; headers?: Record<string, string> } | { type: "stdio"; command: string; args?: string[]; env?: Record<string, string>; cwd?: string };
 }
 
 export interface EngineInfo {

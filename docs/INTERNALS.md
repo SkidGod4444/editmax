@@ -11,11 +11,13 @@ file covers how it is built, the engine's rules, and the gotchas that cost time 
 | `EditMax/Engine` | `ToolExecutor` (every edit, shared by the UI, the MCP server and the chat), `CompositionBuilder` + `Compositor` (AVComposition, Core Image on the GPU), `PlayerController`, `ExportService`, `MediaImporter`, `Captions`, `Cleanup`, `TranscriptEditing`, `Multicam`, `AutoReframe`, `Stabilizer`, `VoiceIsolation`, `Looks` (LUTs), `AudioTap`, `RenderCache` (proxies, nested sequences, templates), `Delivery`, `Interchange` (FCPXML, EDL) |
 | `EditMax/MCP` | `MCPService` (MCP Swift SDK, stateless HTTP transport, bearer auth), `HTTPListener` (NWListener HTTP/1.1), `EditMaxTools` (catalog and dispatch), `UIDriver` (the `ui_*` tools) |
 | `EditMax/Chat` | `CodemaxRunner` (NDJSON over `codemax serve`), `CodemaxInstaller`, `CodemaxUpdater`, `ChatSession`, `KeychainStore` |
+| `EditMax/Plugins` | `Plugin` (a folder of skills and MCP servers, read as Claude Code writes them), `PluginStore` (what is installed and on, settings in the keychain, what the chat is given), `PluginHub` (the index, downloads checked by SHA-256); see [internals-plugins.md](internals-plugins.md) |
 | `EditMax/UI` | SwiftUI views; `Glass.swift` is the only place Liquid Glass APIs are called |
 | `EditMax/App` | `EditMaxApp`, `AppDelegate` (`EditorState.swift`), `HomeWindow`, `ProjectLibrary`, `SplashScreen`, `AppSettings`, `AppUpdater` (Sparkle), `MenuBarIcon` + `MenuBarMenu` (the menu bar extra) |
 | `agent/` | The API-key chat sidecar (Bun + TypeScript): Claude Agent SDK and Vercel AI SDK providers; compiled to `Vendor/editmax-agent` |
 | `EditMaxTests/` | XCTest target hosted in the app, with a 2 s H.264 fixture |
-| `scripts/` | `vendor-codemax.sh`, `vendor-agent.sh`, `make-icon.sh`, `icon/` |
+| `hub/` | The plugins Settings ▸ Plugins offers: `plugins/<id>/` and the generated `index.json` (`scripts/build-hub.py`) |
+| `scripts/` | `vendor-codemax.sh`, `vendor-agent.sh`, `build-hub.py`, `make-icon.sh`, `icon/` |
 
 ## One implementation of every edit
 
@@ -331,6 +333,14 @@ Flags: `-nosplash`, `-splash-preview`, `-splash-loop`, `-splash-t <seconds>` (fr
 A launch with nothing to restore goes to Home. `AppDelegate` answers `applicationShowsOpenPanelInsteadOfUntitledFile:`
 with no and handles `applicationOpenUntitledFile` by showing Home; the empty untitled document `DocumentGroup` makes
 at launch is closed 0.3 s in. Under XCTest (`AppDelegate.isTesting`) none of this runs.
+
+A click on the Dock icon always ends with a window in front of the person (`AppDelegate.reopen`). The notch drawer's
+panel is always up and on every Space, which broke the click twice over: AppKit's `hasVisibleWindows` was always true,
+so Home was never shown again once closed, and macOS never switched Spaces (to it, EditMax already had a window on
+the current one), so with Home on the desktop and the person in a full-screen app nothing appeared. The app now counts
+its own windows (`isAppWindow`: titled, not a panel, not transparent): one that is up is brought to the Space in use
+(`bringToThisSpace`; one on this Space is preferred, a full-screen one keeps its Space), else a minimized one comes
+back out, else Home is shown. Each click logs `dock-reopen` with the plan and the window.
 
 ## Welcome tour
 

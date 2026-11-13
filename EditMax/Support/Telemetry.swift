@@ -84,6 +84,8 @@ final class Telemetry: ObservableObject {
         case exportFailed = "export_failed"
         case transcribeFinished = "transcribe_finished"
         case agentTurn = "agent_turn"
+        /// A plugin was installed: where from (hub or file) and how many skills and servers, never its name.
+        case pluginInstalled = "plugin_installed"
     }
 
     func capture(_ event: Event, _ properties: [String: Any] = [:]) {

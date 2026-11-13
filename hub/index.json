@@ -1,0 +1,98 @@
+{
+  "name": "EditMax Hub",
+  "plugins": [
+    {
+      "id": "cinematic-grade",
+      "name": "Cinematic Grade",
+      "description": "Grade footage the way a colorist does: balance by the numbers first, match the shots to each other, then one look over the whole piece.",
+      "version": "1.0.0",
+      "author": "EditMax",
+      "skills": [
+        "balance-then-look",
+        "match-a-sequence"
+      ],
+      "servers": [],
+      "path": "plugins/cinematic-grade",
+      "files": [
+        {
+          "path": "plugin.json",
+          "sha256": "13aa653bd6d97ec0dd56c478f4dbee4708f4112396428204a89bbcae19f946b7",
+          "size": 357
+        },
+        {
+          "path": "skills/balance-then-look/SKILL.md",
+          "sha256": "5a311b047091865a7b6ff7990c4a07ba9998abf51c764cfb397d36f456947712",
+          "size": 2908
+        },
+        {
+          "path": "skills/match-a-sequence/SKILL.md",
+          "sha256": "2281b551739b5198dae12a03675d7e006ec9eea15817053fd77a333535f3d1fc",
+          "size": 2058
+        }
+      ],
+      "homepage": "https://github.com/SkidGod4444/editmax/tree/main/hub/plugins/cinematic-grade"
+    },
+    {
+      "id": "podcast-polish",
+      "name": "Podcast Polish",
+      "description": "Clean up a podcast or interview: voices first, steady loudness at the podcast standard, chapters from what was said.",
+      "version": "1.0.0",
+      "author": "EditMax",
+      "skills": [
+        "chapters-from-transcript",
+        "clean-dialogue"
+      ],
+      "servers": [],
+      "path": "plugins/podcast-polish",
+      "files": [
+        {
+          "path": "plugin.json",
+          "sha256": "b8f21cfbb3a4069bcc66677bd8eb74fb414163434476a4171b433c546586c4be",
+          "size": 335
+        },
+        {
+          "path": "skills/chapters-from-transcript/SKILL.md",
+          "sha256": "04bfd63d4259bcf976fa3994756c588e20b126925724566e4bb3d294eaeb2626",
+          "size": 1415
+        },
+        {
+          "path": "skills/clean-dialogue/SKILL.md",
+          "sha256": "45a03da34cebc70e914541273f9bd4011e7c707c9f92b928f76de1095bdd108f",
+          "size": 2280
+        }
+      ],
+      "homepage": "https://github.com/SkidGod4444/editmax/tree/main/hub/plugins/podcast-polish"
+    },
+    {
+      "id": "shorts-factory",
+      "name": "Shorts Factory",
+      "description": "Turn a long talk, podcast or stream into vertical Shorts and Reels: pick the moment, cut to it, reframe, caption, export.",
+      "version": "1.0.0",
+      "author": "EditMax",
+      "skills": [
+        "hook-rework",
+        "long-to-short"
+      ],
+      "servers": [],
+      "path": "plugins/shorts-factory",
+      "files": [
+        {
+          "path": "plugin.json",
+          "sha256": "caf75c47938c5119a4d55cbce1d84dad996023278634efe4ea6a97cb4c19d7d8",
+          "size": 340
+        },
+        {
+          "path": "skills/hook-rework/SKILL.md",
+          "sha256": "d4b1175dc2848342622a8b534ed521d45c60e35043db2afe8dbdf4e049801b92",
+          "size": 2152
+        },
+        {
+          "path": "skills/long-to-short/SKILL.md",
+          "sha256": "ac29fd79968e8b8adda2934841bbbeda155821290203928afc0ec76d08cb1521",
+          "size": 2766
+        }
+      ],
+      "homepage": "https://github.com/SkidGod4444/editmax/tree/main/hub/plugins/shorts-factory"
+    }
+  ]
+}

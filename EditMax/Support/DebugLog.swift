@@ -62,8 +62,25 @@ enum DebugLog {
         // Key shapes: Anthropic/OpenAI "sk-…", Google "AIza…", xAI "xai-…".
         try! NSRegularExpression(pattern: #"\b(sk-[A-Za-z0-9_\-]{8,}|AIza[A-Za-z0-9_\-]{20,}|xai-[A-Za-z0-9_\-]{8,})"#),
     ]
+    /// Values that are secret by what they are, not by their shape: what a plugin's settings resolved to (an API key
+    /// can sit in a server's argument or address). PluginStore sets them; every line is cleared of them first.
+    nonisolated(unsafe) private static var extraSecrets: [String] = []
+    private static let extraLock = NSLock()
+    nonisolated static func setExtraSecrets(_ values: [String]) {
+        let kept = Array(Set(values.filter { $0.count >= 6 })).sorted { $0.count > $1.count }   // longest first: one value may contain another
+        extraLock.lock(); extraSecrets = kept; extraLock.unlock()
+    }
+
     nonisolated static func redact(_ s: String) -> String {
         var out = s
+        extraLock.lock(); let extra = extraSecrets; extraLock.unlock()
+        for v in extra {
+            out = out.replacingOccurrences(of: v, with: "<redacted>")
+            // The same value as it is written inside a JSON string.
+            if let d = try? JSONSerialization.data(withJSONObject: [v]), let j = String(data: d, encoding: .utf8)?.dropFirst(2).dropLast(2), j != v[...] {
+                out = out.replacingOccurrences(of: String(j), with: "<redacted>")
+            }
+        }
         for (i, re) in secretPatterns.enumerated() {
             let range = NSRange(out.startIndex..., in: out)
             out = re.stringByReplacingMatches(in: out, range: range, withTemplate: i == 0 ? "\"$1\":\"<redacted>\"" : i == 1 ? "\"keys\":\"<redacted>\"" : i == 2 ? "Bearer <redacted>" : "<redacted>")

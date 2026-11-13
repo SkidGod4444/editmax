@@ -41,6 +41,12 @@ claude mcp add --transport http editmax http://127.0.0.1:19790/mcp \
 The port and token are also in `~/Library/Application Support/EditMax/mcp.json`. The menu bar icon shows whether
 agents can reach EditMax.
 
+## Teach it more
+
+[Plugins](plugins.md) add skills (how to do a kind of job, such as turning a long talk into a Short) and tools (MCP
+servers, such as a voice generator). Install them in **Settings ▸ Plugins**, from the hub or from a folder. An agent
+you connected yourself reads the skills too, with `list_skills` and `read_skill`.
+
 ## Watch it work
 
 While an agent edits, **Follow the agent** shows you where each change lands: the clip is selected, the playhead moves
@@ -55,8 +61,10 @@ so you can undo that too.
 
 ## What keeps it safe
 
-- The agent can only use EditMax's tools. In the in-app chat, file edits, shell commands and questions back to you are
-  refused.
+- The agent can only use EditMax's tools, plus the tools of [plugins](plugins.md) you turned on. In the in-app chat,
+  file edits, shell commands and questions back to you are refused.
+- A plugin's tools run without asking each time, and a plugin can run a program on your Mac. You see each command
+  and address before you install one; a plugin that is off gives the agent nothing.
 - An edit that would hide or lose something (stacking clips, trimming a clip to nothing, audio on a video track) is
   refused with a reason, not quietly adjusted.
 - The MCP server listens on this Mac only (`127.0.0.1`) and needs the token.
@@ -64,7 +72,7 @@ so you can undo that too.
 
 ## The tools
 
-There are 115 tools; the main ones are below by area. An agent usually starts with `inspect_timeline` and `list_assets`, edits, checks its work with
+There are 118 tools; the main ones are below by area. An agent usually starts with `inspect_timeline` and `list_assets`, edits, checks its work with
 `capture_frame`, and points you at the result with `set_playhead`. Clips, assets and tracks can be referred to by name,
 full id, or the first eight characters of an id.
 
@@ -81,6 +89,7 @@ full id, or the first eight characters of an id.
 | Structure | `nest_clips`, `unnest_clip`, `make_multicam`, `cut_angle`, `set_multicam`, `sync_angles`, `make_proxies`, `list_templates`, `apply_template`, `save_template`, `set_project_settings` |
 | Deliver | `export_video`, `export_timeline`, `export_chapters`, `export_batch` |
 | Safety | `restore_snapshot` |
+| Skills | `list_skills`, `read_skill` |
 | The window | `ui_layout`, `ui_click`, `ui_drag`, `ui_key`, `ui_scroll`, `ui_screenshot` |
 
 Your agent sees the full list, with each tool's parameters, when it connects.

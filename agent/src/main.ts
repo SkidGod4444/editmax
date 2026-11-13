@@ -9,10 +9,13 @@ import { errorFields, log, type EngineEvent, type McpServer, type PermissionRequ
  *   {"id":2,"method":"prompt","params":{"text":"…"}}      → text_delta / tool_call / tool_update / usage / turn_end lines, then the answer
  *   {"method":"cancel"} · {"id":3,"method":"switch","params":{"api":{…}}} · {"id":4,"method":"providers","params":{"keys"}} · {"method":"close"}
  *
+ * `mcp` is EditMax's own server first, then the servers of the plugins the person turned on (HTTP, SSE or a
+ * command on this Mac).
+ *
  * Permission policy: tools of the MCP servers the host named are allowed, everything else is refused
  * (the Claude Agent SDK is started without built-in tools, so nothing else is ever asked for).
  */
-export const VERSION = "0.1.0";
+export const VERSION = "0.2.0";
 
 type Line = Record<string, unknown>;
 
@@ -43,7 +46,7 @@ function mcpServersOf(list: any): McpServer[] {
     const t = s?.transport;
     if (!s?.name || !t) continue;
     if (t.type === "http" || t.type === "sse") out.push({ name: String(s.name), transport: { type: t.type, url: String(t.url), headers: t.headers ?? {} } });
-    else if (t.type === "stdio") out.push({ name: String(s.name), transport: { type: "stdio", command: String(t.command), args: t.args ?? [], env: t.env } });
+    else if (t.type === "stdio") out.push({ name: String(s.name), transport: { type: "stdio", command: String(t.command), args: t.args ?? [], env: t.env, cwd: t.cwd ? String(t.cwd) : undefined } });
   }
   return out;
 }

@@ -1,0 +1,8 @@
+{
+  "name": "cinematic-grade",
+  "title": "Cinematic Grade",
+  "version": "1.0.0",
+  "description": "Grade footage the way a colorist does: balance by the numbers first, match the shots to each other, then one look over the whole piece.",
+  "author": "EditMax",
+  "homepage": "https://github.com/SkidGod4444/editmax/tree/main/hub/plugins/cinematic-grade"
+}

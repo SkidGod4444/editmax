@@ -10,7 +10,7 @@ export function Agents() {
           <p className="font-mono text-[12px] tracking-[0.16em] text-white/50 uppercase">Agents</p>
           <h2 className="mt-3 text-[36px] leading-[1.04] font-light tracking-[-0.035em] text-balance sm:text-[56px]">Bring your agent. It already knows how to <span className="font-heading font-normal tracking-[-0.02em] italic">edit</span>.</h2>
           <p className="mt-5 text-[17px] leading-relaxed text-pretty text-muted-foreground">
-            EditMax runs an MCP server on your Mac with 115 tools: everything you can do by hand, plus the window itself. Connect
+            EditMax runs an MCP server on your Mac with 118 tools: everything you can do by hand, plus the window itself. Connect
             the agent you already use, or chat inside the app. While it works, the window follows along: the clip it edits is
             selected and the setting it changes scrolls into view.
           </p>

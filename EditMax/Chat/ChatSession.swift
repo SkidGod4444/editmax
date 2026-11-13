@@ -117,6 +117,9 @@ final class ChatSession: ObservableObject {
         observers.append(NotificationCenter.default.addObserver(forName: .editmaxKeysChanged, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.keysChanged() }
         })
+        observers.append(NotificationCenter.default.addObserver(forName: .editmaxPluginsChanged, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.pluginsStale = true }
+        })
     }
 
     /// Settings changed a chat default: follow it unless a turn is running on the old choice.
@@ -133,6 +136,25 @@ final class ChatSession: ObservableObject {
         keysVersion += 1
         configuredAPI = nil
         if backend == .apiKey { refreshProviders() }
+    }
+
+    /// A plugin was installed, removed, toggled or given a setting since the session was configured: a session's
+    /// skills index and MCP servers are fixed when it starts, so the next message starts a new one.
+    private var pluginsStale = false
+    /// The plugin servers the running session was given, by name (empty: only EditMax's own).
+    private(set) var sessionPlugins: [String] = []
+
+    /// Called as a message is sent. The transcript stays; the new session gets a digest of it, as after a backend switch.
+    private func applyPluginChanges() {
+        guard pluginsStale else { return }
+        pluginsStale = false
+        guard configuredAgent != nil || configuredAPI != nil else { return }
+        configuredAgent = nil; configuredAPI = nil
+        currentAssistant = nil; toolItems = [:]
+        if !items.isEmpty {
+            handoffPending = true
+            items.append(Item(kind: .note, text: "Your plugins changed, so this message starts a new session that has them. It gets a digest of the messages above, and every edit so far is in the timeline and History."))
+        }
     }
 
     var selectedAgent: CodemaxRunner.AgentInfo? { agents.first { $0.id == agent } }
@@ -227,6 +249,7 @@ final class ChatSession: ObservableObject {
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !isRunning else { return }
         DebugLog.event("chat-send", ["backend": backend == .agent ? "agent" : "api-key", "characters": text.count])   // never the prompt
+        if backend == .apiKey ? apiProblem == nil : CodemaxRunner.bundledBinary != nil { applyPluginChanges() }
         switch backend {
         case .agent:
             guard CodemaxRunner.bundledBinary != nil else { items.append(Item(kind: .error, text: "The agent runtime is missing from this build of EditMax.")); return }
@@ -300,7 +323,7 @@ final class ChatSession: ObservableObject {
 
     Reels, Shorts, TikTok (what works as of November 2026; trends move monthly, so when you can search the web, check what is trending now before \
     copying a format, and say what you found). Hook: the first frame is the payoff or the most specific shot (a result, a face mid-reaction), never a logo, \
-    a wide establishing shot or a text card; motion in the first second (a push-in with set_keyframe scale, about 1.0 to 1.08, or the subject entering); \
+    a wide establishing shot or a text card; motion in the first second (a push-in with set_keyframe scale, from the clip's current scale to about 1.08 times it, or the subject entering); \
     the promise on screen by 0.5 s and said within 3 s, with a concrete number, name or place (add_text, set_text_animation pop or words). \
     Pace: cut about 0.3 s before a line or action ends and remove every pause; a visual change every 2 to 4 s for talk, cuts on the beat every 0.6 to 1 s \
     for montage (markers on the downbeats first); a speed ramp (set_keyframe speed) or slow motion (set_smooth_slow_motion optical_flow) around one action, \
@@ -344,8 +367,11 @@ final class ChatSession: ObservableObject {
     Markdown tables for measurements. No boasting; the work speaks.
     """
 
-    private var instructions: String {
-        Self.agentInstructions + " The user's project id is \(document.id.short); pass project: \"\(document.id.short)\" to every editmax tool."
+    /// `plugins`: the plugin servers this session is given (the skills index does not depend on them).
+    private func instructions(plugins: [PluginStore.ActiveServer]) -> String {
+        let own = Self.agentInstructions + " The user's project id is \(document.id.short); pass project: \"\(document.id.short)\" to every editmax tool."
+        let extra = PluginStore.shared.instructions(servers: plugins)
+        return extra.isEmpty ? own : own + "\n\n" + extra
     }
 
     /// One card per failure, in plain words. A failed turn reports its error twice (an error event, then the turn's
@@ -389,8 +415,12 @@ final class ChatSession: ObservableObject {
             .filter { !$0.isEmpty }.joined(separator: " · ")
     }
 
-    private static func shortTool(_ title: String) -> String {
+    /// A tool row's name: EditMax's own tools bare, a plugin server's as "server · tool".
+    static func shortTool(_ title: String) -> String {
         for prefix in ["mcp__editmax__", "editmax/", "editmax:", "editmax."] where title.hasPrefix(prefix) { return String(title.dropFirst(prefix.count)) }
+        if title.hasPrefix("mcp__"), let r = title.dropFirst(5).range(of: "__") {
+            return "\(title.dropFirst(5)[..<r.lowerBound]) · \(title[r.upperBound...])"
+        }
         return title
     }
 
@@ -413,7 +443,7 @@ final class ChatSession: ObservableObject {
                 items[i].detail = output.count > 600 ? String(output.prefix(600)) + "…" : output
             } else if status == "failed", items[i].detail == nil { items[i].detail = "The call failed." }
         case .permissionAuto(let title, let decision):
-            if decision == "reject" { items.append(Item(kind: .note, text: "Refused: \(title). Only EditMax's tools are allowed.")) }
+            if decision == "reject" { items.append(Item(kind: .note, text: "Refused: \(title). Only EditMax's tools\(sessionPlugins.isEmpty ? "" : " and your plugins' tools") are allowed.")) }
         case .handoff(let from, let to, let reason):
             let name = { (id: String) in self.agents.first { $0.id == id }?.name ?? id }
             items.append(Item(kind: .note, text: "\(reason.isEmpty ? name(from) + " stopped" : reason); continuing with \(name(to))."))
@@ -423,7 +453,9 @@ final class ChatSession: ObservableObject {
             let replied = turnReplied && Self.leftAToolOpen(message)
             // A protocol breakdown or crash in the agent side of an updated codemax counts against the update; a
             // finished reply with a tool call left open is the model's doing, not the runtime's.
-            if backend == .agent, !replied, kind == "protocol" || kind == "crashed" { CodemaxUpdater.shared.noteAgentFailure("turn-\(kind)", detail: message) }
+            // Nor is a failure while a plugin's server is attached: a server that hangs or dies mid-call looks the
+            // same from here, and must not roll a healthy runtime back.
+            if backend == .agent, !replied, sessionPlugins.isEmpty, kind == "protocol" || kind == "crashed" { CodemaxUpdater.shared.noteAgentFailure("turn-\(kind)", detail: message) }
             Telemetry.shared.agentFailed(kind: replied ? "tool_left_open" : kind, backend: backend == .agent ? "agent" : "api-key",
                                          detail: Telemetry.errorKind(in: message))
             appendError(kind == "quota" ? "Out of quota: \(message)" : kind == "auth" ? (backend == .apiKey ? "Key rejected: \(message)" : "Login needed: \(message)") : message)
@@ -445,7 +477,7 @@ final class ChatSession: ObservableObject {
     private func runAgent(prompt: String) {
         isRunning = true
         let mcp = MCPService.shared
-        let instructions = self.instructions
+        var plugins = PluginStore.shared.activeServers()
         let wanted = agent
         task = Task { [weak self] in
             guard let self else { return }
@@ -469,8 +501,9 @@ final class ChatSession: ObservableObject {
                         if !self.runner.isRunning { self.configuredAgent = nil }
                         try self.runner.launch()
                         if self.configuredAgent == nil {
-                            let info = try await self.runner.configure(agent: wanted, mcpURL: mcp.url, token: mcp.token, instructions: instructions)
+                            let info = try await self.runner.configure(agent: wanted, mcpURL: mcp.url, token: mcp.token, instructions: self.instructions(plugins: plugins), plugins: plugins.map(\.configure))
                             self.configuredAgent = info.agent; self.agentStatus = Self.status(self.runner.version, info, prefix: "codemax")
+                            self.sessionPlugins = plugins.map(\.name)
                         } else if self.configuredAgent != wanted {
                             let info = try await self.runner.switchAgent(wanted)
                             self.configuredAgent = info.agent; self.agentStatus = Self.status(self.runner.version, info, prefix: "codemax")
@@ -479,6 +512,15 @@ final class ChatSession: ObservableObject {
                         break
                     } catch {
                         let msg = error.localizedDescription
+                        // A start that fails with plugin servers attached is tried without them before anything is
+                        // held against the runtime: a plugin's broken server is not the runtime's fault.
+                        if !plugins.isEmpty, self.configuredAgent == nil, attempt < 3, Self.looksLikeCodemaxFault(msg) {
+                            self.runner.close()
+                            self.items.append(Item(kind: .note, text: "\(info.name) did not start with your plugins' tools (\(msg)). Starting without \(plugins.map(\.name).joined(separator: ", ")); skills still work. Check the plugin in Settings ▸ Plugins."))
+                            DebugLog.event("plugins-left-out", ["servers": plugins.map(\.name).joined(separator: ","), "error": String(msg.prefix(300))])
+                            plugins = []
+                            continue
+                        }
                         guard attempt < 3, Self.looksLikeCodemaxFault(msg) else { throw error }
                         let rolled = CodemaxUpdater.shared.noteAgentFailure("configure", detail: msg)
                         self.runner.close(); self.configuredAgent = nil
@@ -511,7 +553,8 @@ final class ChatSession: ObservableObject {
     private func runAPI(prompt: String) {
         isRunning = true
         let mcp = MCPService.shared
-        let instructions = self.instructions
+        let plugins = PluginStore.shared.activeServers()
+        let instructions = self.instructions(plugins: plugins)
         let wanted = (provider: provider, model: model.trimmingCharacters(in: .whitespaces))
         let api = apiSettings
         turnUsage = (0, 0, 0)
@@ -522,7 +565,8 @@ final class ChatSession: ObservableObject {
                 if !self.apiRunner.isRunning { self.configuredAPI = nil }
                 try self.apiRunner.launch()
                 if self.configuredAPI == nil {
-                    let info = try await self.apiRunner.configure(agent: "api", mcpURL: mcp.url, token: mcp.token, instructions: instructions, api: api)
+                    let info = try await self.apiRunner.configure(agent: "api", mcpURL: mcp.url, token: mcp.token, instructions: instructions, api: api, plugins: plugins.map(\.configure))
+                    self.sessionPlugins = plugins.map(\.name)
                     self.configuredAPI = wanted; self.apiStatus = Self.status(self.apiRunner.version, info, prefix: "sidecar")
                 } else if self.configuredAPI! != wanted {
                     let info = try await self.apiRunner.switchAgent("api", api: api)

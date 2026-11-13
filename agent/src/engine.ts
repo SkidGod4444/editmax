@@ -1,6 +1,7 @@
 import { query, type Options as AgentOptions, type Query, type SDKMessage, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { streamText, stepCountIs, type LanguageModel, type ModelMessage, type ToolSet } from "ai";
 import { createMCPClient, type MCPClient } from "@ai-sdk/mcp";
+import { Experimental_StdioMCPTransport } from "@ai-sdk/mcp/mcp-stdio";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createGoogle } from "@ai-sdk/google";
@@ -157,6 +158,7 @@ export class ApiEngine {
       const t = s.transport;
       if (t.type === "http") mcpServers[s.name] = { type: "http", url: t.url, headers: t.headers };
       else if (t.type === "sse") mcpServers[s.name] = { type: "sse", url: t.url, headers: t.headers };
+      // The SDK's stdio entry has no working folder; a plugin's command gets its folder through its own arguments.
       else if (t.type === "stdio") mcpServers[s.name] = { type: "stdio", command: t.command, args: t.args, env: t.env };
     }
     const options: AgentOptions = {
@@ -321,22 +323,13 @@ export class ApiEngine {
     } else {
       const make = { anthropic: createAnthropic, openai: createOpenAI, google: createGoogle, xai: createXai }[p.id as Exclude<ApiProviderId, "claude-agent">];
       this.languageModel = make({ apiKey: key })(this.model!);
-      for (const s of servers) {
-        if (s.transport.type !== "http" && s.transport.type !== "sse") continue; // EditMax's server is HTTP
-        try {
-          const client = await createMCPClient({ transport: { type: s.transport.type, url: s.transport.url, headers: s.transport.headers } as any });
-          this.clients.push(client);
-          const tools = await client.tools();
-          for (const [name, t] of Object.entries(tools)) {
-            if (this.toolServer.has(name)) continue; // first server wins a name
-            this.tools[name] = t;
-            this.toolServer.set(name, s.name);
-          }
-        } catch (e) {
-          log("mcp-connect", { server: s.name, ...errorFields(e) });
-          this.emit({ type: "notice", level: "warn", title: `MCP server not connected: ${s.name}`, detail: (e as Error)?.message });
-        }
-      }
+      const connected = await connectMcpServers(servers, (s, e) => {
+        log("mcp-connect", { server: s.name, ...errorFields(e) });
+        this.emit({ type: "notice", level: "warn", title: `MCP server not connected: ${s.name}`, detail: (e as Error)?.message });
+      });
+      this.clients = connected.clients;
+      this.tools = connected.tools;
+      this.toolServer = connected.toolServer;
     }
     this.session = randomUUID();
     this.emit({ type: "session", id: this.session });
@@ -472,6 +465,40 @@ export class ApiEngine {
     for (const c of this.clients) await c.close().catch(() => {});
     this.clients = [];
   }
+}
+
+/**
+ * The tools of every server, in the host's order (EditMax's own first, then the plugins'): an HTTP or SSE address, or a
+ * command started on this Mac. A tool name two servers share goes to the first. A server that does not connect is
+ * reported and left out; the others still work.
+ */
+export async function connectMcpServers(servers: McpServer[], onFailure: (server: McpServer, error: unknown) => void = () => {}) {
+  const clients: MCPClient[] = [];
+  const tools: ToolSet = {};
+  const toolServer = new Map<string, string>();
+  for (const s of servers) {
+    const t = s.transport;
+    let client: MCPClient | undefined;
+    try {
+      client = await createMCPClient({
+        transport:
+          t.type === "stdio"
+            ? new Experimental_StdioMCPTransport({ command: t.command, args: t.args ?? [], env: { ...(process.env as Record<string, string>), ...(t.env ?? {}) }, cwd: t.cwd, stderr: "ignore" })
+            : ({ type: t.type, url: t.url, headers: t.headers } as any),
+      });
+      const found = await client.tools();
+      clients.push(client);
+      for (const [name, tool] of Object.entries(found)) {
+        if (toolServer.has(name)) continue;
+        tools[name] = tool;
+        toolServer.set(name, s.name);
+      }
+    } catch (e) {
+      await client?.close().catch(() => {});
+      onFailure(s, e);
+    }
+  }
+  return { clients, tools, toolServer };
 }
 
 function shortJson(v: unknown): string | undefined {

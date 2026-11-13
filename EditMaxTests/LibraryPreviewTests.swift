@@ -146,7 +146,7 @@ final class LibraryPreviewTests: LibraryTestCase {
         try save(scene(), "drawer-pill-open", size: pill.frame(around: pill.openBody).size, dark: true)
     }
 
-    /// Settings' four tabs at the window's own width (each scrolls inside 580 pt; shown full height here).
+    /// Settings' General, Files, Assistant and Advanced tabs at the window's own width (each scrolls inside 580 pt; shown full height here).
     func testPreviewSettingsTabs() throws {
         let size = CGSize(width: 560, height: 820)
         for dark in [true, false] {
@@ -161,6 +161,33 @@ final class LibraryPreviewTests: LibraryTestCase {
         }
     }
 
+    /// Settings ▸ Plugins with one plugin on (it needs a key and its program is missing) and the repository's hub,
+    /// then the review sheet a plugin goes through before it is installed, and its details.
+    func testPreviewPluginsSettings() async throws {
+        let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        try XCTSkipUnless(FileManager.default.fileExists(atPath: repo.appendingPathComponent("hub/index.json").path), "no checkout beside the tests")
+        let src = FileManager.default.temporaryDirectory.appendingPathComponent("preview-\(UUID().uuidString)/voiceover-kit")
+        try FileManager.default.createDirectory(at: src.appendingPathComponent("skills/voiceover"), withIntermediateDirectories: true)
+        try #"{"name": "voiceover-kit", "title": "Voiceover Kit", "version": "0.3.0", "description": "Record a narration from text and lay it under the cut.", "author": "Ada Lovelace"}"#
+            .write(to: src.appendingPathComponent("plugin.json"), atomically: true, encoding: .utf8)
+        try "---\nname: voiceover\ndescription: Write a narration for the cut, generate it as speech, and place it on its own audio track under the picture.\n---\nBody"
+            .write(to: src.appendingPathComponent("skills/voiceover/SKILL.md"), atomically: true, encoding: .utf8)
+        try #"{"mcpServers": {"speech": {"command": "uvx", "args": ["speech-mcp@1.4.2"], "env": {"SPEECH_API_KEY": "${SPEECH_API_KEY}"}}}}"#
+            .write(to: src.appendingPathComponent(".mcp.json"), atomically: true, encoding: .utf8)
+        let store = PluginStore.shared
+        let staged = try store.stage(from: src)
+        await PluginHub.shared.refresh(address: repo.appendingPathComponent("hub/index.json").absoluteString)
+        for dark in [true, false] {
+            try save(PluginReviewSheet(staged: staged) { _ in }, "plugins-review", size: CGSize(width: 500, height: 430), dark: dark)
+        }
+        let installed = try store.commit(staged, enable: true)
+        defer { store.remove(installed.id) }
+        for dark in [true, false] {
+            try save(PluginsSettings(), "settings-plugins", size: CGSize(width: 560, height: 820), dark: dark)
+            try save(PluginDetailsSheet(pluginID: installed.id) {}, "plugins-details", size: CGSize(width: 500, height: 470), dark: dark)
+        }
+    }
+
     /// Each tab has one job: nothing that belongs elsewhere (the old cross options) is on it.
     func testSettingsOptionsLiveOnTheirTab() throws {
         let tabs: [(String, AnyView, [String], [String])] = [
@@ -169,6 +196,7 @@ final class LibraryPreviewTests: LibraryTestCase {
             ("files", AnyView(FilesSettings()), ["settings.files.library.change", "settings.files.notchDrawer", "settings.files.archiveDays"],
              ["settings.general.updates.check"]),
             ("assistant", AnyView(AssistantSettings()), ["settings.assistant.backend", "settings.assistant.followAgent"], ["settings.advanced.port"]),
+            ("plugins", AnyView(PluginsSettings()), ["settings.plugins.add", "settings.plugins.hub.refresh", "settings.plugins.hub.contribute"], ["settings.assistant.backend"]),
             ("shortcuts", AnyView(ShortcutsSettings()), ["settings.shortcuts.pushToTalk", "settings.shortcuts.playPause"],
              ["settings.assistant.backend"]),
             ("advanced", AnyView(AdvancedSettings()), ["settings.advanced.port", "settings.runtime.check", "settings.runtime.auto", "settings.advanced.logs"],
@@ -180,7 +208,7 @@ final class LibraryPreviewTests: LibraryTestCase {
             for id in hasNot { XCTAssertNil(h.frame(id), "\(name) does not have \(id)") }
             h.close()
         }
-        XCTAssertEqual(SettingsView.Pane.allCases.map(\.rawValue), ["general", "files", "assistant", "shortcuts", "advanced"])
+        XCTAssertEqual(SettingsView.Pane.allCases.map(\.rawValue), ["general", "files", "assistant", "plugins", "shortcuts", "advanced"])
         XCTAssertEqual(KeychainStore.slot(forProvider: "claude-agent"), "anthropic")
         XCTAssertEqual(KeychainStore.slot(forProvider: "openai"), "openai")
         XCTAssertNil(KeychainStore.slot(forProvider: "someone-new"))

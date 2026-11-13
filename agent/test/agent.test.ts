@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { MockLanguageModelV4 } from "ai/test";
 import { tool } from "ai";
 import { z } from "zod";
-import { API_PROVIDERS, ApiEngine, apiKeyFor, apiProviderStatus, classifyApiError, describeAiError } from "../src/engine.ts";
-import type { EngineEvent } from "../src/types.ts";
+import { API_PROVIDERS, ApiEngine, apiKeyFor, apiProviderStatus, classifyApiError, describeAiError, connectMcpServers } from "../src/engine.ts";
+import type { EngineEvent, McpServer } from "../src/types.ts";
 import { Server } from "../src/main.ts";
 
 const usage = (i: number, o: number) => ({ inputTokens: { total: i, noCache: i, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: o, text: o, reasoning: 0 }, raw: {} });
@@ -163,5 +163,63 @@ describe("the sidecar protocol", () => {
       yield JSON.stringify({ method: "close" }) + "\n";
     })());
     expect(lines.find((l) => l.id === 1).error).toContain("params.api");
+  });
+});
+
+describe("plugin MCP servers", () => {
+  const fixture = new URL("./fixtures/echo-mcp.ts", import.meta.url).pathname;
+  const echo: McpServer = { name: "echo", transport: { type: "stdio", command: process.execPath, args: [fixture], env: { EDITMAX_TEST_SECRET: "from-the-plugin" } } };
+
+  test("a server started by a command gives its tools, with the plugin's environment", async () => {
+    const { clients, tools, toolServer } = await connectMcpServers([echo]);
+    try {
+      expect(toolServer.get("echo")).toBe("echo");
+      const out: any = await (tools.echo as any).execute({ text: "hi" }, { toolCallId: "t1", messages: [] });
+      expect(JSON.stringify(out)).toContain("hi (from-the-plugin)");
+    } finally {
+      for (const c of clients) await c.close();
+    }
+  });
+
+  test("a server that does not start is reported and left out; the ones after it still connect", async () => {
+    const failed: string[] = [];
+    const broken: McpServer = { name: "broken", transport: { type: "stdio", command: "/nonexistent/editmax-plugin-server" } };
+    const { clients, toolServer } = await connectMcpServers([broken, echo], (s) => failed.push(s.name));
+    try {
+      expect(failed).toEqual(["broken"]);
+      expect([...new Set(toolServer.values())]).toEqual(["echo"]);
+    } finally {
+      for (const c of clients) await c.close();
+    }
+  });
+
+  test("the first server keeps a tool name two servers share (EditMax's own comes first)", async () => {
+    const second: McpServer = { name: "second", transport: echo.transport };
+    const { clients, toolServer } = await connectMcpServers([echo, second]);
+    try {
+      expect(toolServer.get("inspect_timeline")).toBe("echo");
+    } finally {
+      for (const c of clients) await c.close();
+    }
+  });
+
+  test("configure keeps every server the host names, and allows only their tools", async () => {
+    const lines: any[] = [];
+    const s = new Server({ write: (l) => lines.push(l), engineFactory: (settings) => new ApiEngine({ ...settings, testing: { model: twoStepModel(), tools } }) });
+    const run = s.run((async function* () {
+      yield JSON.stringify({ id: 1, method: "configure", params: { api: { provider: "openai", model: "m", keys: { openai: "k" } }, mcp: [
+        { name: "editmax", transport: { type: "http", url: "http://127.0.0.1:1/mcp" } },
+        { name: "voice", transport: { type: "stdio", command: "uvx", args: ["x"], env: { A: "b" }, cwd: "/tmp" } },
+      ] } });
+      yield JSON.stringify({ method: "close" });
+    })());
+    await run;
+    expect(lines.find((l) => l.id === 1)?.result?.agent).toBe("api");
+    const allowed = (title: string) => (s as any).allowed({ id: "p", title, options: [] });
+    expect(allowed("mcp__voice__speak")).toBe(true);
+    expect(allowed("mcp__editmax__split_clip")).toBe(true);
+    expect(allowed("mcp__other__thing")).toBe(false);
+    expect(allowed("Bash")).toBe(false);
+    expect((s as any).setup.mcp[1].transport.cwd).toBe("/tmp");
   });
 });

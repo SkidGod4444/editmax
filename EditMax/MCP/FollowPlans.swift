@@ -125,6 +125,7 @@ enum FollowPlans {
         "ui_layout", "ui_drag", "ui_key", "ui_click", "ui_select", "ui_scroll", "ui_screenshot",
         // Fonts belong to the app, not to a project: nothing in the window to show.
         "list_fonts", "install_font", "add_font_files",
+        "list_skills", "read_skill",   // the agent reading a plugin's skill changes nothing in the window
     ]
 
     static func keyframeCard(_ a: FollowPlan.Args) -> InspectorAnchor? {

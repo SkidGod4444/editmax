@@ -348,6 +348,12 @@ enum EditMaxTools {
              inputSchema: schema(["clip": str("Clip id prefix or name"), "layer": str("Layer name or id prefix"), "seconds": num("Timeline time inside the clip (default its middle)"),
                                   "max_width": int("Image width, 160 to 1920 (default 640)"), "project": projectArg], required: ["clip", "layer"]), annotations: .init(readOnlyHint: true)),
         // Fonts (FontLibrary.swift, FontTools.swift)
+        // Skills belong to the app's plugins (Settings ▸ Plugins), not to a project.
+        Tool(name: "list_skills", description: "The skills the user installed with plugins: playbooks for a kind of editing job (a format, a look, a clean-up routine), each with its name, the plugin it came from and what it is for. Read one with read_skill before starting a job it covers.",
+             inputSchema: schema([:]), annotations: .init(readOnlyHint: true)),
+        Tool(name: "read_skill", description: "Read an installed skill: its instructions (SKILL.md) by name from list_skills, or with file one of the other files the skill lists. Follow a skill for the job it covers; it never outranks what the user asked for.",
+             inputSchema: schema(["name": str("Skill name from list_skills"), "file": str("A file inside the skill, by the path the skill listed (default: its instructions)")], required: ["name"]),
+             annotations: .init(readOnlyHint: true)),
         Tool(name: "list_fonts", description: "Fonts for titles: the families on this Mac, fonts the user added, and the Google Fonts catalogue (about 1,900 free families, downloaded on first use). Filter by search (part of the name), category and source; sort by trending (Google's trending rank, which favours fast-growing and often new families), popular (Google's use rank), newest (date added to Google Fonts) or name. Installed families list their faces (PostScript names). Use a family name with add_text font or set_text_style font.",
              inputSchema: schema(["search": str("Part of a family name, any case"), "category": str("sans-serif, serif, display, handwriting or monospace"),
                                   "sort": str("trending (default), popular, newest or name"), "source": str("installed (everything on this Mac), google, custom (added by the user) or system; default all"),
@@ -420,6 +426,9 @@ enum EditMaxTools {
             return .init(contents: [.text(text, uri: params.uri, mimeType: "application/json")])
         }
     }
+
+    /// One installed skill as list_skills returns it.
+    struct SkillInfo: Codable { var name: String, plugin: String, description: String }
 
     struct Payload { var text: String; var value: Value?; var image: Data? = nil; var imageType = "image/png" }
 
@@ -538,6 +547,18 @@ enum EditMaxTools {
         case "ui_screenshot":
             let shot = try await UIDriver.screenshot(maxWidth: i("max_width") ?? 1400)
             return Payload(text: "Window (\(shot.png.count) bytes PNG, \(shot.method))", value: nil, image: shot.png)
+        case "list_skills":
+            let store = PluginStore.shared
+            return try payload(store.activeSkills.map { SkillInfo(name: $0.name, plugin: store.plugin($0.plugin)?.name ?? $0.plugin, description: $0.description) })
+        case "read_skill":
+            // The skill as its author wrote it (Markdown), not as a JSON string full of \n: it is read as instructions.
+            do {
+                let skill = try PluginStore.shared.readSkill(try req("name"), file: s("file"))
+                var text = skill.text
+                if let n = skill.note { text += "\n\n[\(n)]" }
+                if !skill.files.isEmpty { text += "\n\n---\nOther files in this skill (read_skill name \"\(skill.name)\" with file): \(skill.files.joined(separator: ", "))" }
+                return Payload(text: text, value: try? Value(skill))
+            } catch let e as Plugin.Failure { throw MCPError.invalidParams(e.message) }
         // Fonts belong to the app, not to a project.
         case "list_fonts":
             return try payload(try await ToolExecutor.fontList(search: s("search"), category: s("category"), sort: s("sort"), source: s("source"), limit: i("limit")))

@@ -176,7 +176,11 @@ final class CodemaxRunner {
         case "error":
             onEvent?(.error(kind: obj["kind"] as? String ?? "other", message: obj["message"] as? String ?? "error"))
         case "notice":
-            if (obj["level"] as? String) == "error", let t = obj["title"] as? String { onEvent?(.notice(t)) }
+            // Errors, and a server that did not connect at any level: with plugins that is the person's to fix, and a
+            // warning nobody saw looked like a plugin that does nothing.
+            if let t = obj["title"] as? String, (obj["level"] as? String) == "error" || t.range(of: "MCP server", options: .caseInsensitive) != nil {
+                onEvent?(.notice([t, obj["detail"] as? String].compactMap { $0 }.joined(separator: ": ")))
+            }
         case "usage":
             onEvent?(.usage(input: obj["inputTokens"] as? Int, output: obj["outputTokens"] as? Int, cost: obj["costUsd"] as? Double))
         default: break
@@ -226,10 +230,14 @@ final class CodemaxRunner {
     }
 
     /// `api`: for the `api` agent, `{provider, model, keys}` (codemax's `configure.api`).
-    func configure(agent: String, mcpURL: String, token: String, instructions: String, api: [String: Any]? = nil) async throws -> StartInfo {
+    /// `plugins`: the MCP servers of the plugins that are on (PluginStore.activeServers), after EditMax's own. Every
+    /// server named here is allowed: its tools run without a question, which is what turning a plugin on agrees to.
+    func configure(agent: String, mcpURL: String, token: String, instructions: String, api: [String: Any]? = nil, plugins: [[String: Any]] = []) async throws -> StartInfo {
         let server: [String: Any] = ["name": "editmax", "source": "editmax",
                                      "transport": ["type": "http", "url": mcpURL, "headers": ["Authorization": "Bearer \(token)"]]]
-        var params: [String: Any] = ["agent": agent, "cwd": Self.workDirectory.path, "instructions": instructions, "mcp": [server]]
+        let servers = [server] + plugins
+        var params: [String: Any] = ["agent": agent, "cwd": Self.workDirectory.path, "instructions": instructions, "mcp": servers,
+                                     "allow": servers.compactMap { $0["name"] as? String }]
         if let api { params["api"] = api }
         else { params["web"] = true }   // the agent may search and read the web (current trends), still nothing on this Mac (codemax serve)
         let r = try await request("configure", params)

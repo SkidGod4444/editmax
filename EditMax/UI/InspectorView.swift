@@ -263,6 +263,8 @@ struct InspectorView: View {
     @ObservedObject var mcp = MCPService.shared
     @ObservedObject var installer = CodemaxInstaller.shared
     @ObservedObject private var updater = CodemaxUpdater.shared
+    @ObservedObject private var plugins = PluginStore.shared
+    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         VStack(spacing: 0) {
@@ -332,6 +334,7 @@ struct InspectorView: View {
             }
             agentRuntime
             installedAgents
+            pluginsCard
             snippet("Claude Code", mcp.claudeCodeCommand, id: "claudeCode")
             snippet("Codex CLI", mcp.codexCommand, id: "codex")
             snippet("Cursor, Claude Desktop, any JSON config", mcp.genericJSON, id: "json")
@@ -373,6 +376,16 @@ struct InspectorView: View {
             }
             InspectorFootnote(s.message).lineLimit(2)
             if let p = s.installedPath { pathRow("Location", p) }
+        }
+    }
+    /// The plugins that are on, and the way to the rest (Settings ▸ Plugins).
+    private var pluginsCard: some View {
+        let on = plugins.enabledPlugins
+        return InspectorCard("Plugins", footer: "Skills and tools added to the agent. An agent you connect yourself reads the skills too (list_skills, read_skill); a plugin's own tools reach the chat here.", trailing: {
+            Button("Manage…") { SettingsView.show(.plugins, using: openSettings) }.controlSize(.small).pointer().uiFrame("agents.plugins.manage")
+        }) {
+            if on.isEmpty { InspectorFootnote("None on. Install one from the hub in Settings.") }
+            ForEach(on) { p in InspectorValueRow(p.name, PluginsSettings.contents(p)) }
         }
     }
     /// Which agents codemax found on this Mac.

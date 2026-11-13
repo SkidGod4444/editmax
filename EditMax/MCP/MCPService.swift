@@ -40,6 +40,7 @@ final class MCPService: ObservableObject {
     IDs are 8-character prefixes shown by inspect_timeline and list_assets. Times are seconds on the timeline.
     Every edit you make is recorded as a named snapshot; the user can restore any of them, and so can you with restore_snapshot.
     Media must already exist on this Mac; import it by absolute path with import_media before inserting clips.
+    The user may have installed skills (playbooks for a kind of editing job): list_skills names them, read_skill loads one. Read a matching skill before you start.
     """
 
     func start() {
